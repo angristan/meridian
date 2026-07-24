@@ -316,7 +316,7 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
         this.app.vault,
         () => this.settings.maxFileSizeMiB * 1024 * 1024,
       )
-      const journal = new IndexedDbJournal(`meridian-sync-${this.settings.vaultId}`)
+      const journal = new IndexedDbJournal(`meridian-${this.settings.vaultId}`)
       const remote = new MeridianRemoteClient(this.settings.endpoint, new ObsidianHttpTransport())
       this.controller = new SyncController(
         vault,

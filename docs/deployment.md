@@ -8,7 +8,7 @@ Meridian uses one Worker deployment, one SQLite-backed Durable Object class, and
 2. Select the target Cloudflare account and repository name.
 3. Enter a random one-time `SETUP_TOKEN` of at least 32 bytes. Generate it with a password manager; do not reuse a password.
 4. Review the automatically provisioned resources:
-   - Worker: `meridian-sync`
+   - Worker: `meridian`
    - Durable Object class: `VaultDurableObject`
    - R2 bucket: `meridian-blobs`
 5. Deploy and copy the resulting Worker URL.

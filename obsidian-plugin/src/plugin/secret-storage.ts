@@ -1,6 +1,6 @@
 import type { SecretStorage } from "obsidian"
 
-const PENDING_PAIRING_SECRET_ID = "meridian-sync-pending-pairing"
+const PENDING_PAIRING_SECRET_ID = "meridian-pending-pairing"
 
 export class MeridianSecretStorage {
   constructor(private readonly storage: SecretStorage) {}
@@ -36,5 +36,5 @@ export function deviceSecretId(deviceId: string): string {
     .replace(/[^a-z0-9-]/g, "")
     .slice(0, 40)
   if (!suffix) throw new Error("Device ID cannot be represented in SecretStorage")
-  return `meridian-sync-device-${suffix}`
+  return `meridian-device-${suffix}`
 }

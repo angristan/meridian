@@ -7,7 +7,7 @@ describe("public setup surface", () => {
     expect(response.status).toBe(200)
     await expect(response.json()).resolves.toEqual({
       ok: true,
-      service: "meridian-sync",
+      service: "meridian",
       protocol: 1,
     })
     expect(response.headers.get("x-content-type-options")).toBe("nosniff")

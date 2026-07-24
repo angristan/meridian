@@ -12,12 +12,12 @@ Use a disposable vault with representative Markdown, images, PDFs, folders, and 
    bun run plugin:install -- --vault /absolute/path/to/test-vault
    ```
 
-3. In Obsidian, open **Settings → Community plugins**, turn off Restricted Mode, and enable **Meridian Sync**.
+3. In Obsidian, open **Settings → Community plugins**, turn off Restricted Mode, and enable **Meridian**.
 4. Start the local Worker with `bun run dev`, or enter a deployed Worker URL.
 5. Complete setup and save the recovery code outside the test vault.
 6. Reload Obsidian after each development rebuild, or use the Obsidian developer workflow of your choice.
 
-The installer refuses paths without a `.obsidian` directory and writes only `.obsidian/plugins/meridian-sync/`.
+The installer refuses paths without a `.obsidian` directory and writes only `.obsidian/plugins/meridian/`.
 
 ## iPhone beta installation
 
@@ -26,10 +26,10 @@ The recommended unpublished-plugin path is BRAT:
 1. Publish a GitHub Release containing `main.js`, `manifest.json`, and `styles.css`.
 2. Install **BRAT** from Obsidian Community Plugins on the iPhone.
 3. Add `angristan/meridian` as a beta plugin.
-4. Enable **Meridian Sync**.
+4. Enable **Meridian**.
 5. Pair the iPhone from the Mac using the one-time deep link and verify the authentication phrase on both devices.
 
-Until the repository and a release are public, the build produces `obsidian-plugin/dist/meridian-sync.zip` for manual inspection, but BRAT is the reliable mobile installation channel. Publishing a repository or release is an external write and is not performed by the local build.
+Until the repository and a release are public, the build produces `obsidian-plugin/dist/meridian.zip` for manual inspection, but BRAT is the reliable mobile installation channel. Publishing a repository or release is an external write and is not performed by the local build.
 
 ## Required scenarios
 

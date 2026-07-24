@@ -11,7 +11,7 @@ if (!vaultArgument) {
 
 const vault = resolve(vaultArgument)
 const configDir = join(vault, ".obsidian")
-const destination = join(configDir, "plugins", "meridian-sync")
+const destination = join(configDir, "plugins", "meridian")
 
 try {
   if (!(await stat(configDir)).isDirectory()) throw new Error("not a directory")
@@ -19,7 +19,7 @@ try {
   throw new Error(`${basename(vault)} is not an Obsidian vault: ${configDir} does not exist`)
 }
 
-console.log("Building Meridian Sync…")
+console.log("Building Meridian…")
 const build = Bun.spawn(["bun", "run", "plugin:build"], {
   cwd: resolve(import.meta.dir, ".."),
   stderr: "inherit",
@@ -32,5 +32,5 @@ for (const name of ["main.js", "manifest.json", "styles.css"]) {
   await cp(resolve(import.meta.dir, "..", "obsidian-plugin", "dist", name), join(destination, name))
 }
 
-console.log(`Installed Meridian Sync in ${destination}`)
-console.log("Open Obsidian, enable Community plugins, then enable Meridian Sync.")
+console.log(`Installed Meridian in ${destination}`)
+console.log("Open Obsidian, enable Community plugins, then enable Meridian.")

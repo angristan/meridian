@@ -14,7 +14,7 @@ import { type MetadataRecord, sortRevisions } from "./types"
 export class IndexedDbJournal implements JournalPort {
   private database: IDBDatabase | null = null
 
-  constructor(private readonly databaseName = "meridian-sync") {}
+  constructor(private readonly databaseName = "meridian") {}
 
   async open(): Promise<void> {
     if (this.database) return
