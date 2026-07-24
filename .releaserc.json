@@ -46,7 +46,7 @@
             "label": "Obsidian plugin styles"
           },
           {
-            "path": "obsidian-plugin/dist/meridian-sync.zip",
+            "path": "obsidian-plugin/dist/meridian.zip",
             "label": "Manual installation archive"
           }
         ]

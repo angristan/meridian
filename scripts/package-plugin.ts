@@ -14,4 +14,4 @@ const archiveEntries = Object.fromEntries(
   ),
 )
 
-await Bun.write(`${distributionDirectory}/meridian-sync.zip`, zipSync(archiveEntries, { level: 9 }))
+await Bun.write(`${distributionDirectory}/meridian.zip`, zipSync(archiveEntries, { level: 9 }))

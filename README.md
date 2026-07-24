@@ -1,6 +1,6 @@
-# Meridian Sync
+# Meridian
 
-Meridian Sync is a self-hosted, end-to-end encrypted synchronization system for Obsidian. It keeps one vault synchronized across macOS and iOS using a Worker, one SQLite-backed Durable Object, and a private R2 bucket in your own Cloudflare account.
+Meridian is a self-hosted, end-to-end encrypted synchronization system for Obsidian. It keeps one vault synchronized across macOS and iOS using a Worker, one SQLite-backed Durable Object, and a private R2 bucket in your own Cloudflare account.
 
 > [!WARNING]
 > Meridian is pre-release software. Use a disposable vault and keep an independent backup. Do not run it alongside Obsidian Sync, iCloud Drive, Dropbox, or another vault sync engine.
@@ -42,7 +42,7 @@ Cloudflare sees ciphertext sizes, timing, and device activity, but does not rece
 1. Choose a high-entropy one-time `SETUP_TOKEN` in the deployment form.
 2. Let Cloudflare provision the Worker, Durable Object namespace, and R2 bucket.
 3. Open the deployed Worker URL at `/setup` and enter the same token.
-4. Install and enable the Meridian Sync Obsidian plugin.
+4. Install and enable the Meridian Obsidian plugin.
 5. Use the setup page's **Open in Obsidian** link or paste the connection details into the plugin.
 6. Save the recovery code outside the vault before starting the first upload.
 
@@ -62,11 +62,11 @@ bun run plugin:install -- --vault /path/to/disposable-vault
 bun run dev
 ```
 
-In Obsidian, disable Restricted Mode, enable **Meridian Sync**, and connect it to the local or deployed Worker.
+In Obsidian, disable Restricted Mode, enable **Meridian**, and connect it to the local or deployed Worker.
 
 ## Test on iPhone
 
-The normal beta channel is a GitHub Release installed through [BRAT](https://github.com/TfTHacker/obsidian42-brat). The release workflow produces `main.js`, `manifest.json`, `styles.css`, and `meridian-sync.zip` for every release. See [Testing on devices](docs/testing.md) for the complete mobile flow.
+The normal beta channel is a GitHub Release installed through [BRAT](https://github.com/TfTHacker/obsidian42-brat). The release workflow produces `main.js`, `manifest.json`, `styles.css`, and `meridian.zip` for every release. See [Testing on devices](docs/testing.md) for the complete mobile flow.
 
 Obsidian community plugins cannot run continuously in the iOS background. Meridian synchronizes immediately when Obsidian opens or resumes and never relies on the WebSocket for correctness.
 

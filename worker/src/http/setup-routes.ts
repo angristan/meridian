@@ -16,7 +16,7 @@ export function registerSetupRoutes(app: WorkerApp): void {
     if (c.req.path.startsWith("/v1/")) c.header("cache-control", "no-store")
   })
 
-  app.get("/health", (c) => c.json({ ok: true, service: "meridian-sync", protocol: 1 }))
+  app.get("/health", (c) => c.json({ ok: true, service: "meridian", protocol: 1 }))
 
   app.get("/setup", (c) => {
     for (const [name, value] of Object.entries(SECURITY_HEADERS)) c.header(name, value)

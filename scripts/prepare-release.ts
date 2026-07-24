@@ -27,4 +27,4 @@ await Promise.all([
   writeJson("obsidian-plugin/package.json", pluginPackage),
 ])
 
-console.log(`Prepared Meridian Sync ${version}`)
+console.log(`Prepared Meridian ${version}`)

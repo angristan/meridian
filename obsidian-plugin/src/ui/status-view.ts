@@ -5,7 +5,7 @@ import { formatTime } from "./format-time"
 import { ConflictsModal, HistoryModal } from "./history-conflicts"
 import type { MeridianUiHost } from "./host"
 
-export const STATUS_VIEW_TYPE = "meridian-sync-status"
+export const STATUS_VIEW_TYPE = "meridian-status"
 
 export class MeridianStatusView extends ItemView {
   constructor(

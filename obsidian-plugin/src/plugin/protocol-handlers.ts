@@ -14,7 +14,6 @@ export function registerProtocolHandlers(plugin: Plugin, host: MeridianUiHost): 
   }
 
   plugin.registerObsidianProtocolHandler("meridian", handleSetupLink)
-  plugin.registerObsidianProtocolHandler("meridian-sync", handleSetupLink)
   plugin.registerObsidianProtocolHandler("meridian-pair", (parameters) => {
     const endpoint = parameters.endpoint
     const pairingId = parameters.pairing
