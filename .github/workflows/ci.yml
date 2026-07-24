@@ -30,7 +30,7 @@ jobs:
       - name: Validate
         run: bun run check
       - name: Upload plugin artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: meridian
           path: obsidian-plugin/dist/
