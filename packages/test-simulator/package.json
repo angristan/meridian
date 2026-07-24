@@ -1,0 +1,22 @@
+{
+  "name": "@meridian/test-simulator",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsc --project tsconfig.build.json",
+    "test": "vitest run",
+    "typecheck": "tsc --project tsconfig.json"
+  },
+  "dependencies": {
+    "@meridian/sync-engine": "workspace:*"
+  },
+  "devDependencies": {
+    "fast-check": "4.9.0",
+    "typescript": "7.0.2",
+    "vitest": "4.1.10"
+  }
+}

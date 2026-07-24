@@ -1,0 +1,128 @@
+.meridian-status-view {
+  container-type: inline-size;
+  padding: var(--size-4-4);
+  overflow-y: auto;
+}
+
+.meridian-status-header {
+  display: flex;
+  gap: var(--size-4-3);
+  align-items: flex-start;
+  margin-bottom: var(--size-4-5);
+}
+
+.meridian-status-dot {
+  flex: 0 0 auto;
+  width: 10px;
+  height: 10px;
+  margin-top: 0.35em;
+  border-radius: 50%;
+  background: var(--text-muted);
+  box-shadow: 0 0 0 3px var(--background-modifier-border);
+}
+
+.meridian-status-dot.is-idle {
+  background: var(--color-green);
+}
+
+.meridian-status-dot.is-error,
+.meridian-status-dot.is-offline {
+  background: var(--color-orange);
+}
+
+.meridian-status-dot.is-scanning,
+.meridian-status-dot.is-pulling,
+.meridian-status-dot.is-pushing {
+  background: var(--interactive-accent);
+}
+
+.meridian-metric-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--size-4-2);
+  margin-bottom: var(--size-4-5);
+}
+
+.meridian-metric {
+  min-width: 0;
+  padding: var(--size-4-3);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  background: var(--background-secondary);
+}
+
+.meridian-metric-label {
+  margin-bottom: var(--size-2-1);
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+
+.meridian-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--size-4-2);
+  margin-top: var(--size-4-4);
+}
+
+.meridian-callout {
+  margin: var(--size-4-3) 0;
+  padding: var(--size-4-3);
+  border-inline-start: 3px solid var(--interactive-accent);
+  border-radius: var(--radius-s);
+  background: var(--background-secondary);
+  color: var(--text-normal);
+  overflow-wrap: anywhere;
+}
+
+.meridian-callout.is-error {
+  border-inline-start-color: var(--text-error);
+}
+
+.meridian-callout.is-warning {
+  border-inline-start-color: var(--color-orange);
+}
+
+.meridian-recovery-code {
+  display: block;
+  margin: var(--size-4-4) 0;
+  padding: var(--size-4-4);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  background: var(--background-primary-alt);
+  user-select: all;
+  overflow-wrap: anywhere;
+  font-size: var(--font-ui-medium);
+  line-height: 1.6;
+}
+
+.meridian-list-row {
+  padding: var(--size-4-3) 0;
+  border-bottom: 1px solid var(--background-modifier-border);
+  overflow-wrap: anywhere;
+}
+
+.meridian-section-description {
+  margin: calc(-1 * var(--size-4-2)) 0 var(--size-4-3);
+}
+
+.meridian-status-bar {
+  cursor: pointer;
+}
+
+@container (max-width: 340px) {
+  .meridian-metric-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .meridian-actions > button {
+    flex: 1 1 100%;
+  }
+}
+
+.is-mobile .meridian-status-view {
+  padding: var(--size-4-3);
+}
+
+.is-mobile .meridian-actions > button {
+  min-height: var(--input-height);
+}

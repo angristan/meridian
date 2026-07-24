@@ -1,0 +1,14 @@
+node_modules/
+dist/
+coverage/
+.wrangler/
+.wrangler-dist/
+.dev.vars
+.env
+.env.*
+!.env.example
+.DS_Store
+*.log
+*.tsbuildinfo
+obsidian-plugin/main.js
+obsidian-plugin/styles.css

@@ -1,0 +1,10 @@
+{
+  "id": "meridian-sync",
+  "name": "Meridian Sync",
+  "version": "0.1.0",
+  "minAppVersion": "1.11.4",
+  "description": "Self-hosted, end-to-end encrypted vault sync on Cloudflare.",
+  "author": "Stanislas",
+  "authorUrl": "https://stanislas.blog",
+  "isDesktopOnly": false
+}

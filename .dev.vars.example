@@ -1,0 +1,2 @@
+# A high-entropy one-time token chosen during Deploy to Cloudflare.
+SETUP_TOKEN=replace-with-at-least-32-random-bytes
