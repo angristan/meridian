@@ -1,0 +1,20 @@
+import { Effect, type Schema } from "effect"
+import { decodeJsonEffect, runResponse } from "./effect-boundary"
+import { sessionToken } from "./session"
+import type { WorkerContext } from "./types"
+import { callVaultEffect } from "./vault-proxy"
+
+export function proxyJson<S extends Schema.ConstraintDecoder<unknown, never>>(
+  schema: S,
+  path: (c: WorkerContext) => string,
+  options: { authenticated?: boolean; method?: "POST" | "PUT" } = {},
+) {
+  return (c: WorkerContext) =>
+    runResponse(
+      Effect.gen(function* () {
+        const body = yield* decodeJsonEffect(c.req.raw, schema)
+        const token = options.authenticated ? sessionToken(c) : undefined
+        return yield* callVaultEffect(c.env, path(c), options.method ?? "POST", body, token)
+      }),
+    )
+}

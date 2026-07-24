@@ -1,0 +1,21 @@
+{
+  "source": "RFC 8949 deterministic encoding rules and Meridian protocol subset",
+  "valid": [
+    { "name": "zero", "hex": "00" },
+    { "name": "twenty-three", "hex": "17" },
+    { "name": "twenty-four", "hex": "1818" },
+    { "name": "minus-one", "hex": "20" },
+    { "name": "byte-string", "hex": "43010203" },
+    { "name": "text", "hex": "626869" },
+    { "name": "map-order-and-array", "hex": "a2616101616282f5f6" }
+  ],
+  "invalid": [
+    { "name": "non-shortest-integer", "hex": "1817" },
+    { "name": "indefinite-array", "hex": "9f01ff" },
+    { "name": "duplicate-map-key", "hex": "a2616101616102" },
+    { "name": "unordered-map-key", "hex": "a2616201616102" },
+    { "name": "tag", "hex": "c000" },
+    { "name": "float", "hex": "f90000" },
+    { "name": "trailing-data", "hex": "0000" }
+  ]
+}

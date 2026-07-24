@@ -1,0 +1,21 @@
+{
+  "name": "@meridian/worker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run --config vitest.config.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@meridian/crypto": "workspace:*",
+    "@meridian/protocol": "workspace:*",
+    "effect": "4.0.0-beta.101",
+    "hono": "4.12.31"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "0.18.8",
+    "vitest": "4.1.10"
+  }
+}

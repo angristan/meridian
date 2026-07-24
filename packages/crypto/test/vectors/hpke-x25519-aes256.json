@@ -1,0 +1,15 @@
+{
+  "source": "https://github.com/cfrg/draft-irtf-cfrg-hpke/blob/master/test-vectors.json",
+  "mode": 0,
+  "kemId": 32,
+  "kdfId": 1,
+  "aeadId": 2,
+  "info": "4f6465206f6e2061204772656369616e2055726e",
+  "ikmR": "dac33b0e9db1b59dbbea58d59a14e7b5896e9bdf98fad6891e99d1686492b9ee",
+  "ikmE": "2cd7c601cefb3d42a62b04b7a9041494c06c7843818e0ce28a8f704ae7ab20f9",
+  "publicKeyR": "430f4b9859665145a6b1ba274024487bd66f03a2dd577d7753c68d7d7d00c00c",
+  "encapsulatedKey": "6c93e09869df3402d7bf231bf540fadd35cd56be14f97178f0954db94b7fc256",
+  "aad": "436f756e742d30",
+  "plaintext": "4265617574792069732074727574682c20747275746820626561757479",
+  "ciphertext": "e5d84cd531cfb583096e7cfa9641bd3079cf3a91cda813c52deb5f512be9931980a41de125a925cdad859d5b7a"
+}

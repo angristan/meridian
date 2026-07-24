@@ -1,0 +1,56 @@
+{
+  "branches": ["main"],
+  "tagFormat": "${version}",
+  "plugins": [
+    "@semantic-release/commit-analyzer",
+    "@semantic-release/release-notes-generator",
+    [
+      "@semantic-release/changelog",
+      {
+        "changelogFile": "CHANGELOG.md"
+      }
+    ],
+    [
+      "@semantic-release/exec",
+      {
+        "prepareCmd": "bun scripts/prepare-release.ts ${nextRelease.version} && bun install --lockfile-only && bun run plugin:build"
+      }
+    ],
+    [
+      "@semantic-release/git",
+      {
+        "assets": [
+          "CHANGELOG.md",
+          "manifest.json",
+          "versions.json",
+          "obsidian-plugin/package.json",
+          "bun.lock"
+        ],
+        "message": "chore(release): ${nextRelease.version} [skip ci]\n\n${nextRelease.notes}"
+      }
+    ],
+    [
+      "@semantic-release/github",
+      {
+        "assets": [
+          {
+            "path": "obsidian-plugin/dist/main.js",
+            "label": "Obsidian plugin"
+          },
+          {
+            "path": "obsidian-plugin/dist/manifest.json",
+            "label": "Obsidian manifest"
+          },
+          {
+            "path": "obsidian-plugin/dist/styles.css",
+            "label": "Obsidian plugin styles"
+          },
+          {
+            "path": "obsidian-plugin/dist/meridian-sync.zip",
+            "label": "Manual installation archive"
+          }
+        ]
+      }
+    ]
+  ]
+}
