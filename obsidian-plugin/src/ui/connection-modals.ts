@@ -1,5 +1,6 @@
 import { type App, Modal, Notice, Setting } from "obsidian"
 import type { MeridianUiHost } from "./host"
+import { recoveryCodePresentation } from "./recovery-code"
 
 export class ConnectionModal extends Modal {
   constructor(private readonly host: MeridianUiHost) {
@@ -107,16 +108,50 @@ export class RecoveryModal extends Modal {
       cls: "meridian-callout is-warning",
       text: "Store this code outside the vault. Meridian cannot recover it, and sync is not a backup.",
     })
-    this.contentEl.createEl("code", {
+    const code = this.contentEl.createEl("code", {
       cls: "meridian-recovery-code",
-      text: this.recoveryCode,
     })
-    new Setting(this.contentEl).addButton((button) =>
-      button
-        .setButtonText("I saved it")
-        .setCta()
-        .onClick(() => this.close()),
-    )
+    let revealed = false
+    const actions = new Setting(this.contentEl)
+    actions.settingEl.addClass("meridian-recovery-actions")
+    actions
+      .addButton((button) =>
+        button.setButtonText("Copy recovery code").onClick(async () => {
+          button.setDisabled(true)
+          try {
+            await navigator.clipboard.writeText(this.recoveryCode)
+            new Notice("Recovery code copied. Clear your clipboard after storing it.")
+          } catch {
+            new Notice("Could not copy the recovery code. Reveal it and copy it manually.", 10_000)
+          } finally {
+            button.setDisabled(false)
+          }
+        }),
+      )
+      .addButton((button) => {
+        const update = () => {
+          const presentation = recoveryCodePresentation(this.recoveryCode, revealed)
+          code.setText(presentation.text)
+          code.setAttribute("aria-label", presentation.codeLabel)
+          button.setButtonText(presentation.toggleLabel)
+          button.buttonEl.setAttribute("aria-pressed", String(revealed))
+        }
+        button.onClick(() => {
+          revealed = !revealed
+          update()
+        })
+        update()
+      })
+      .addButton((button) =>
+        button
+          .setButtonText("I saved it")
+          .setCta()
+          .onClick(() => this.close()),
+      )
+  }
+
+  override onClose(): void {
+    this.contentEl.empty()
   }
 }
 
@@ -141,14 +176,37 @@ export class RecoveryConnectModal extends Modal {
           endpoint = value
         }),
       )
+    let recoveryCodeInput: HTMLInputElement | null = null
     new Setting(this.contentEl)
       .setName("Recovery code")
       .setDesc("The mdn1 code saved outside this vault. It is used locally and never stored.")
-      .addTextArea((text) =>
+      .addText((text) => {
+        recoveryCodeInput = text.inputEl
+        text.inputEl.type = "password"
+        text.inputEl.autocomplete = "off"
+        text.inputEl.spellcheck = false
+        text.inputEl.setAttribute("autocapitalize", "none")
         text.setPlaceholder("mdn1...").onChange((value) => {
           recoveryCode = value.trim()
-        }),
-      )
+        })
+      })
+      .addButton((button) => {
+        let revealed = false
+        const update = () => {
+          if (recoveryCodeInput) recoveryCodeInput.type = revealed ? "text" : "password"
+          button.setButtonText(revealed ? "Hide" : "Show")
+          button.buttonEl.setAttribute("aria-pressed", String(revealed))
+          button.buttonEl.setAttribute(
+            "aria-label",
+            revealed ? "Hide recovery code" : "Show recovery code",
+          )
+        }
+        button.onClick(() => {
+          revealed = !revealed
+          update()
+        })
+        update()
+      })
     new Setting(this.contentEl).addButton((button) =>
       button
         .setButtonText("Recover and revoke devices")

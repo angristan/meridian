@@ -82,6 +82,10 @@
   border-inline-start-color: var(--color-orange);
 }
 
+.meridian-recovery-actions .setting-item-control {
+  flex-wrap: wrap;
+}
+
 .meridian-recovery-code {
   display: block;
   margin: var(--size-4-4) 0;
@@ -123,6 +127,15 @@
   padding: var(--size-4-3);
 }
 
-.is-mobile .meridian-actions > button {
+.is-mobile .meridian-actions > button,
+.is-mobile .meridian-recovery-actions button {
   min-height: var(--input-height);
+}
+
+.is-mobile .meridian-recovery-actions .setting-item-control {
+  width: 100%;
+}
+
+.is-mobile .meridian-recovery-actions button {
+  flex: 1 1 auto;
 }
