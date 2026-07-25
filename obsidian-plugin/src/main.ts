@@ -12,6 +12,7 @@ import {
 } from "./model"
 import { ObsidianHttpTransport } from "./network/obsidian-transport"
 import { MeridianRemoteClient, normalizeEndpoint } from "./network/remote-client"
+import { createPairingDeepLink } from "./plugin/pairing-link"
 import { registerProtocolHandlers } from "./plugin/protocol-handlers"
 import { PluginScheduling } from "./plugin/scheduling"
 import { MeridianSecretStorage } from "./plugin/secret-storage"
@@ -220,14 +221,7 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
   async createPairingLink(): Promise<PairingInvitation> {
     if (!this.controller) throw new Error("Meridian is not connected")
     const pairing = await this.controller.createPairing()
-    const query = new URLSearchParams({
-      endpoint: this.settings.endpoint,
-      pairing: pairing.pairingId,
-      capability: pairing.capability,
-      vault: pairing.vaultId,
-      expires: String(pairing.expiresAt),
-    })
-    return { ...pairing, link: `obsidian://meridian-pair?${query.toString()}` }
+    return { ...pairing, link: createPairingDeepLink(this.settings.endpoint, pairing) }
   }
 
   async getPairingStatus(pairingId: string): Promise<PairingStatus> {

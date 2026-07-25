@@ -1,5 +1,6 @@
 import { Notice, type Plugin } from "obsidian"
 import { type MeridianUiHost, PairingJoinModal, SetupLinkModal } from "../ui/views"
+import { parsePairingLinkParameters } from "./pairing-link"
 
 export function registerProtocolHandlers(plugin: Plugin, host: MeridianUiHost): void {
   const handleSetupLink = (parameters: Record<string, string>) => {
@@ -15,15 +16,18 @@ export function registerProtocolHandlers(plugin: Plugin, host: MeridianUiHost): 
 
   plugin.registerObsidianProtocolHandler("meridian", handleSetupLink)
   plugin.registerObsidianProtocolHandler("meridian-pair", (parameters) => {
-    const endpoint = parameters.endpoint
-    const pairingId = parameters.pairing
-    const capability = parameters.capability
-    const vaultId = parameters.vault
-    const expiresAt = Number(parameters.expires)
-    if (!endpoint || !pairingId || !capability || !vaultId || !Number.isSafeInteger(expiresAt)) {
+    const pairing = parsePairingLinkParameters(parameters)
+    if (!pairing) {
       new Notice("The Meridian pairing link is incomplete", 8_000)
       return
     }
-    new PairingJoinModal(host, endpoint, pairingId, capability, vaultId, expiresAt).open()
+    new PairingJoinModal(
+      host,
+      pairing.endpoint,
+      pairing.pairingId,
+      pairing.capability,
+      pairing.vaultId,
+      pairing.expiresAt,
+    ).open()
   })
 }
