@@ -1,3 +1,10 @@
+## [1.1.3](https://github.com/angristan/meridian/compare/1.1.2...1.1.3) (2026-07-25)
+
+
+### Bug Fixes
+
+* generate protocol-sized pairing IDs ([4a14042](https://github.com/angristan/meridian/commit/4a14042b357593d5c7f00a4ee713321411637d6c))
+
 ## [1.1.2](https://github.com/angristan/meridian/compare/1.1.1...1.1.2) (2026-07-25)
 
 
