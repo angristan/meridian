@@ -1,3 +1,10 @@
+## [1.1.2](https://github.com/angristan/meridian/compare/1.1.1...1.1.2) (2026-07-25)
+
+
+### Bug Fixes
+
+* namespace pairing URI parameters ([6c656f6](https://github.com/angristan/meridian/commit/6c656f614e986cb83d8bffbb5a034f1006ee1147))
+
 ## [1.1.1](https://github.com/angristan/meridian/compare/1.1.0...1.1.1) (2026-07-25)
 
 
