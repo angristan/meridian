@@ -1,3 +1,10 @@
+## [1.1.1](https://github.com/angristan/meridian/compare/1.1.0...1.1.1) (2026-07-25)
+
+
+### Bug Fixes
+
+* avoid reserved vault pairing parameter ([a2ef7c6](https://github.com/angristan/meridian/commit/a2ef7c6dd90a3bcfec9608965b32e234f88aad7c))
+
 # [1.1.0](https://github.com/angristan/meridian/compare/1.0.0...1.1.0) (2026-07-25)
 
 
