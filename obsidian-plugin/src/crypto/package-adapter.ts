@@ -7,14 +7,24 @@ import type {
   PairedDeviceMaterial,
   PairingApprovalMaterial,
   PairingCapability,
+  PairingConfirmationMaterial,
+  PairingDeviceDescriptor,
   PairingJoinMaterial,
+  PairingVerificationMaterial,
   RecoveryDeviceMaterial,
   RemoteOperation,
   RevisionDraft,
   SetupClaim,
 } from "../model"
 import { createFirstDevice, loadDevice, recoverDevice, signChallenge } from "./device-workflows"
-import { approvePairing, consumePairingResult, createPairingJoin } from "./pairing-workflows"
+import {
+  approvePairing,
+  consumePairingResult,
+  createPairingConfirmation,
+  createPairingJoin,
+  inspectPairingVerification,
+  verifyPairingConfirmation,
+} from "./pairing-workflows"
 import { decryptRevision, encryptRevision } from "./revision-workflows"
 
 /** Browser-only bridge from plugin workflows to the reviewed shared crypto package. */
@@ -58,8 +68,11 @@ class PackageCryptoPort implements CryptoPort {
     return decryptRevision(device, operation, loadBlob)
   }
 
-  createPairingJoin(pairing: PairingCapability): Promise<PairingJoinMaterial> {
-    return createPairingJoin(pairing)
+  createPairingJoin(
+    pairing: PairingCapability,
+    descriptor: PairingDeviceDescriptor,
+  ): Promise<PairingJoinMaterial> {
+    return createPairingJoin(pairing, descriptor)
   }
 
   approvePairing(
@@ -70,11 +83,33 @@ class PackageCryptoPort implements CryptoPort {
     return approvePairing(device, candidatePackage, certificates)
   }
 
+  inspectPairingVerification(
+    pendingSecret: string,
+    verificationPreview: string,
+  ): Promise<PairingVerificationMaterial> {
+    return inspectPairingVerification(pendingSecret, verificationPreview)
+  }
+
+  createPairingConfirmation(
+    pendingSecret: string,
+    transferHash: string,
+  ): Promise<PairingConfirmationMaterial> {
+    return createPairingConfirmation(pendingSecret, transferHash)
+  }
+
+  verifyPairingConfirmation(
+    candidatePackage: string,
+    confirmation: PairingConfirmationMaterial,
+  ): Promise<boolean> {
+    return verifyPairingConfirmation(candidatePackage, confirmation)
+  }
+
   consumePairingResult(
     pendingSecret: string,
     hpkeTransfer: string,
     confirmedPhrase: string,
+    expectedTransferHash: string,
   ): Promise<PairedDeviceMaterial> {
-    return consumePairingResult(pendingSecret, hpkeTransfer, confirmedPhrase)
+    return consumePairingResult(pendingSecret, hpkeTransfer, confirmedPhrase, expectedTransferHash)
   }
 }

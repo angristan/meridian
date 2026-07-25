@@ -34,6 +34,9 @@ export interface MeridianUiHost {
     capability: string,
   ): Promise<PairingStatus>
   approvePairing(pairingId: string): Promise<string>
+  confirmPairingOwner(pairingId: string): Promise<void>
+  completePairingOwner(pairingId: string): void
+  rejectPairing(pairingId: string): Promise<void>
   joinPairing(
     endpoint: string,
     pairingId: string,
@@ -41,10 +44,11 @@ export interface MeridianUiHost {
     vaultId: string,
     expiresAt: number,
   ): Promise<void>
-  finishPairing(
+  preparePairingVerification(
     endpoint: string,
     pairingId: string,
     capability: string,
-    verificationPhrase: string,
-  ): Promise<void>
+  ): Promise<string>
+  finishPairing(endpoint: string, pairingId: string, capability: string): Promise<void>
+  cancelPairing(endpoint: string, pairingId: string, capability: string): Promise<void>
 }

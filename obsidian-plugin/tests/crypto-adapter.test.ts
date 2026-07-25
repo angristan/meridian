@@ -68,12 +68,15 @@ describe("shared crypto adapter", () => {
     const crypto = createPackageCryptoPort()
     const ownerClaim = await crypto.createFirstDevice("setup-session", "claim-challenge")
     const owner = await crypto.loadDevice(ownerClaim.keyBundle)
-    const joining = await crypto.createPairingJoin({
-      pairingId: randomId(),
-      capability: randomId(32),
-      vaultId: owner.vaultId,
-      expiresAt: Date.now() + 300_000,
-    })
+    const joining = await crypto.createPairingJoin(
+      {
+        pairingId: randomId(),
+        capability: randomId(32),
+        vaultId: owner.vaultId,
+        expiresAt: Date.now() + 300_000,
+      },
+      { deviceName: "Test iPhone", platform: "iOS" },
+    )
     expect(stringField(joining.payload, "requestProof")).toBe(
       stringField(JSON.parse(joining.candidatePackage), "requestProof"),
     )
@@ -85,10 +88,32 @@ describe("shared crypto adapter", () => {
       ownerCertificate,
     ])
     const approvalPayload = record(approval.payload)
+    const releasePayload = record(approval.releasePayload)
+    const verification = await crypto.inspectPairingVerification(
+      joining.pendingSecret,
+      stringField(approvalPayload, "verificationPreview"),
+    )
+    expect(verification.verificationPhrase).toBe(approval.verificationPhrase)
+    expect(verification.transferHash).toBe(approval.transferHash)
+    const confirmation = await crypto.createPairingConfirmation(
+      joining.pendingSecret,
+      verification.transferHash,
+    )
+    expect(confirmation.transferHash).toBe(verification.transferHash)
+    await expect(
+      crypto.verifyPairingConfirmation(joining.candidatePackage, confirmation),
+    ).resolves.toBe(true)
+    await expect(
+      crypto.verifyPairingConfirmation(joining.candidatePackage, {
+        ...confirmation,
+        transferHash: randomId(32),
+      }),
+    ).resolves.toBe(false)
     const paired = await crypto.consumePairingResult(
       joining.pendingSecret,
-      stringField(approvalPayload, "hpkeTransfer"),
-      approval.verificationPhrase,
+      stringField(releasePayload, "hpkeTransfer"),
+      verification.verificationPhrase,
+      verification.transferHash,
     )
     const member = await crypto.loadDevice(paired.keyBundle)
     const encrypted = await crypto.encryptRevision(member, {

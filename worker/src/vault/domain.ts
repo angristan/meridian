@@ -28,6 +28,8 @@ export type DeviceRow = {
   authorized_by: string | null
   revoked_at: number | null
   revoked_operation_id: string | null
+  device_name: string | null
+  platform: string | null
 }
 
 export type SessionContext = {
@@ -138,5 +140,5 @@ export function cleanupExpired(sql: SqlStorage, now: number): void {
   sql.exec("DELETE FROM auth_challenges WHERE expires_at <= ?", now)
   sql.exec("DELETE FROM recovery_challenges WHERE expires_at <= ?", now)
   sql.exec("DELETE FROM sessions WHERE expires_at <= ?", now)
-  sql.exec("DELETE FROM pairings WHERE expires_at <= ? AND status != 'approved'", now)
+  sql.exec("DELETE FROM pairings WHERE expires_at <= ?", now)
 }

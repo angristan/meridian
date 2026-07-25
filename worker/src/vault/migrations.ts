@@ -157,5 +157,89 @@ export function migrateVaultSchema(sql: SqlStorage, transactionSync: Transaction
       }
       sql.exec("INSERT INTO _sql_schema_migrations (id, applied_at) VALUES (2, ?)", Date.now())
     })
+    version = 2
+  }
+
+  if (version < 3) {
+    transactionSync(() => {
+      const devicesDefinition =
+        sql
+          .exec<{ sql: string | null }>(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'devices'",
+          )
+          .one().sql ?? ""
+      if (!devicesDefinition.includes("device_name")) {
+        sql.exec("ALTER TABLE devices ADD COLUMN device_name TEXT")
+      }
+      if (!devicesDefinition.includes("platform")) {
+        sql.exec("ALTER TABLE devices ADD COLUMN platform TEXT")
+      }
+      const pairingsDefinition =
+        sql
+          .exec<{ sql: string | null }>(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'pairings'",
+          )
+          .one().sql ?? ""
+      if (pairingsDefinition.includes("verification_started_at")) {
+        sql.exec("INSERT INTO _sql_schema_migrations (id, applied_at) VALUES (3, ?)", Date.now())
+        return
+      }
+
+      sql.exec(`
+        CREATE TABLE pairings_v3 (
+          pairing_id TEXT PRIMARY KEY,
+          capability_hash TEXT NOT NULL UNIQUE,
+          initiator_device_id TEXT NOT NULL,
+          status TEXT NOT NULL CHECK (
+            status IN (
+              'pending', 'joined', 'verifying', 'confirmed', 'released', 'completed', 'canceled'
+            )
+          ),
+          created_at INTEGER NOT NULL,
+          expires_at INTEGER NOT NULL,
+          candidate_device_id TEXT,
+          candidate_signing_public_key TEXT,
+          candidate_hpke_public_key TEXT,
+          candidate_device_name TEXT,
+          candidate_platform TEXT,
+          candidate_proof TEXT,
+          candidate_request_proof TEXT,
+          joined_at INTEGER,
+          certificate TEXT,
+          transcript_hash TEXT,
+          verification_preview TEXT,
+          approval_signature TEXT,
+          hpke_transfer TEXT,
+          verification_started_at INTEGER,
+          initiator_confirmed_at INTEGER,
+          candidate_confirmed_at INTEGER,
+          candidate_confirmation_signature TEXT,
+          completion_signature TEXT,
+          completed_at INTEGER,
+          canceled_at INTEGER,
+          canceled_by TEXT
+        );
+        INSERT INTO pairings_v3 (
+          pairing_id, capability_hash, initiator_device_id, status, created_at, expires_at,
+          candidate_device_id, candidate_signing_public_key, candidate_hpke_public_key,
+          candidate_proof, candidate_request_proof, certificate, transcript_hash,
+          approval_signature, hpke_transfer, verification_started_at, initiator_confirmed_at,
+          candidate_confirmed_at, completed_at
+        )
+        SELECT pairing_id, capability_hash, initiator_device_id,
+          CASE status WHEN 'approved' THEN 'completed' ELSE status END,
+          created_at, expires_at, candidate_device_id, candidate_signing_public_key,
+          candidate_hpke_public_key, candidate_proof, candidate_request_proof, certificate,
+          transcript_hash, approval_signature, hpke_transfer, approved_at,
+          CASE WHEN status = 'approved' THEN approved_at END,
+          CASE WHEN status = 'approved' THEN approved_at END,
+          CASE WHEN status = 'approved' THEN approved_at END
+        FROM pairings;
+        DROP TABLE pairings;
+        ALTER TABLE pairings_v3 RENAME TO pairings;
+        CREATE INDEX pairings_expiry ON pairings(expires_at);
+      `)
+      sql.exec("INSERT INTO _sql_schema_migrations (id, applied_at) VALUES (3, ?)", Date.now())
+    })
   }
 }

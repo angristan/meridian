@@ -13,11 +13,13 @@ import {
   type EpochDeclaration,
   type EpochDeclarationBody,
   epochSigningBytes,
+  type Hash,
   type HpkeTransfer,
   operationSigningBytes,
   type PairingContext,
   Permission,
   pairingTransferSigningBytes,
+  pairingVerificationPreviewSigningBytes,
   type SignedCheckpoint,
   type SignedOperation,
 } from "@meridian/protocol"
@@ -157,6 +159,32 @@ export function verifyPairingTransferSignature(
 ): boolean {
   return verify(
     pairingTransferSigningBytes(context, transfer, approverDeviceId),
+    signature,
+    approverPublicKey,
+  )
+}
+
+export function signPairingVerificationPreview(
+  context: PairingContext,
+  approverDeviceId: DeviceId,
+  transferHash: Hash,
+  approverPrivateKey: Ed25519PrivateKey,
+) {
+  return sign(
+    pairingVerificationPreviewSigningBytes(context, approverDeviceId, transferHash),
+    approverPrivateKey,
+  )
+}
+
+export function verifyPairingVerificationPreviewSignature(
+  context: PairingContext,
+  approverDeviceId: DeviceId,
+  transferHash: Hash,
+  signature: ReturnType<typeof signPairingVerificationPreview>,
+  approverPublicKey: Ed25519PublicKey,
+): boolean {
+  return verify(
+    pairingVerificationPreviewSigningBytes(context, approverDeviceId, transferHash),
     signature,
     approverPublicKey,
   )

@@ -80,6 +80,8 @@ export interface PairingJoinRequestSigningInput {
   readonly deviceId: string
   readonly signingPublicKey: string
   readonly hpkePublicKey: string
+  readonly deviceName: string
+  readonly platform: string
 }
 
 export function pairingJoinRequestSigningBytes(input: PairingJoinRequestSigningInput): Uint8Array {
@@ -89,6 +91,8 @@ export function pairingJoinRequestSigningBytes(input: PairingJoinRequestSigningI
     ["device-id", input.deviceId],
     ["signing-public-key", input.signingPublicKey],
     ["hpke-public-key", input.hpkePublicKey],
+    ["device-name", input.deviceName],
+    ["platform", input.platform],
   ])
 }
 
@@ -115,6 +119,37 @@ export function pairingApprovalRequestSigningBytes(
     ["certificate", input.certificate],
     ["transcript-hash", input.transcriptHash],
     ["hpke-transfer", input.hpkeTransfer],
+  ])
+}
+
+export interface PairingCandidateStateSigningInput {
+  readonly vaultId: string
+  readonly pairingId: string
+  readonly candidateDeviceId: string
+  readonly transferHash: string
+}
+
+export function pairingCandidateConfirmationSigningBytes(
+  input: PairingCandidateStateSigningInput,
+): Uint8Array {
+  return pairingCandidateStateSigningBytes("pairing-candidate-confirmation/v1", input)
+}
+
+export function pairingCompletionSigningBytes(
+  input: PairingCandidateStateSigningInput,
+): Uint8Array {
+  return pairingCandidateStateSigningBytes("pairing-completion/v1", input)
+}
+
+function pairingCandidateStateSigningBytes(
+  domain: string,
+  input: PairingCandidateStateSigningInput,
+): Uint8Array {
+  return signedHttpMessage(domain, [
+    ["vault-id", input.vaultId],
+    ["pairing-id", input.pairingId],
+    ["candidate-device-id", input.candidateDeviceId],
+    ["transfer-hash", input.transferHash],
   ])
 }
 

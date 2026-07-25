@@ -2,6 +2,7 @@ import type { SecretStorage } from "obsidian"
 
 const PENDING_PAIRING_SECRET_PREFIX = "meridian-pending-pairing"
 const PENDING_PAIRING_RESULT_PREFIX = "meridian-pending-pairing-result"
+const PENDING_PAIRING_RELEASE_PREFIX = "meridian-pending-pairing-release"
 
 export class MeridianSecretStorage {
   constructor(private readonly storage: SecretStorage) {}
@@ -34,9 +35,18 @@ export class MeridianSecretStorage {
     return this.storage.getSecret(pairingSecretId(PENDING_PAIRING_RESULT_PREFIX, pairingId))
   }
 
+  setPendingPairingRelease(pairingId: string, release: string): void {
+    this.storage.setSecret(pairingSecretId(PENDING_PAIRING_RELEASE_PREFIX, pairingId), release)
+  }
+
+  getPendingPairingRelease(pairingId: string): string | null {
+    return this.storage.getSecret(pairingSecretId(PENDING_PAIRING_RELEASE_PREFIX, pairingId))
+  }
+
   clearPendingPairing(pairingId: string): void {
     this.storage.setSecret(pairingSecretId(PENDING_PAIRING_SECRET_PREFIX, pairingId), "")
     this.storage.setSecret(pairingSecretId(PENDING_PAIRING_RESULT_PREFIX, pairingId), "")
+    this.storage.setSecret(pairingSecretId(PENDING_PAIRING_RELEASE_PREFIX, pairingId), "")
   }
 }
 

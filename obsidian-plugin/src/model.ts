@@ -213,6 +213,11 @@ export interface AuthChallengeProof {
   signature: string
 }
 
+export interface PairingDeviceDescriptor {
+  deviceName: string
+  platform: string
+}
+
 export interface PairingJoinMaterial {
   payload: unknown
   candidatePackage: string
@@ -221,13 +226,26 @@ export interface PairingJoinMaterial {
 
 export interface PairingApprovalMaterial {
   payload: unknown
+  releasePayload: unknown
   verificationPhrase: string
+  transferHash: string
+}
+
+export interface PairingVerificationMaterial {
+  verificationPhrase: string
+  transferHash: string
+}
+
+export interface PairingConfirmationMaterial {
+  transferHash: string
+  proof: string
 }
 
 export interface PairedDeviceMaterial {
   vaultId: string
   deviceId: string
   keyBundle: string
+  completion: PairingConfirmationMaterial
 }
 
 export interface CryptoPort {
@@ -248,16 +266,32 @@ export interface CryptoPort {
     operation: RemoteOperation,
     loadBlob: (blobId: string) => Promise<ArrayBuffer>,
   ): Promise<DecryptedRevision>
-  createPairingJoin(pairing: PairingCapability): Promise<PairingJoinMaterial>
+  createPairingJoin(
+    pairing: PairingCapability,
+    descriptor: PairingDeviceDescriptor,
+  ): Promise<PairingJoinMaterial>
   approvePairing(
     device: DeviceKeyMaterial,
     candidatePackage: string,
     certificates: string[],
   ): Promise<PairingApprovalMaterial>
+  inspectPairingVerification(
+    pendingSecret: string,
+    verificationPreview: string,
+  ): Promise<PairingVerificationMaterial>
+  createPairingConfirmation(
+    pendingSecret: string,
+    transferHash: string,
+  ): Promise<PairingConfirmationMaterial>
+  verifyPairingConfirmation(
+    candidatePackage: string,
+    confirmation: PairingConfirmationMaterial,
+  ): Promise<boolean>
   consumePairingResult(
     pendingSecret: string,
     hpkeTransfer: string,
     confirmedPhrase: string,
+    expectedTransferHash: string,
   ): Promise<PairedDeviceMaterial>
 }
 
@@ -274,6 +308,8 @@ export interface RemoteDevice {
   role: "owner" | "member"
   authorizedAt: number
   revokedAt: number | null
+  deviceName: string | null
+  platform: string | null
 }
 
 export interface PairingCapability {
@@ -287,22 +323,41 @@ export interface PairingInvitation extends PairingCapability {
   link: string
 }
 
+export type PairingState =
+  | "pending"
+  | "joined"
+  | "verifying"
+  | "confirmed"
+  | "released"
+  | "completed"
+  | "canceled"
+
 export interface PairingStatus {
   pairingId: string
-  status: "pending" | "joined" | "approved"
+  status: PairingState
   expiresAt: number
+  requestedAt?: number
+  ownerConfirmed: boolean
+  candidateConfirmed: boolean
+  candidateConfirmation?: PairingConfirmationMaterial
   candidatePackage?: string
+  candidate?: PairingDeviceDescriptor & {
+    deviceId: string
+    signingPublicKey: string
+    hpkePublicKey: string
+  }
 }
 
 export interface PairingResult {
   pairingId: string
-  status: "pending" | "joined" | "approved"
+  status: PairingState
   deviceId?: string
   certificate?: string
   transcriptHash?: string
+  verificationPreview?: string
   approvalSignature?: string
   hpkeTransfer?: string
-  approvedAt?: number
+  verificationStartedAt?: number
 }
 
 export interface RemotePort {
@@ -313,12 +368,19 @@ export interface RemotePort {
   getBlob(blobId: string): Promise<ArrayBuffer>
   commit(envelope: unknown, idempotencyKey: string): Promise<{ cursor: number; logHash: string }>
   listDevices(): Promise<RemoteDevice[]>
+  updateDeviceDescriptor(descriptor: PairingDeviceDescriptor): Promise<void>
   createPairing(): Promise<PairingCapability>
   getPairingStatus(pairingId: string): Promise<PairingStatus>
   getPairingProgress(pairingId: string, capability: string): Promise<PairingStatus>
   joinPairing(pairingId: string, payload: unknown): Promise<PairingResult>
   approvePairing(pairingId: string, payload: unknown): Promise<PairingResult>
+  releasePairing(pairingId: string, payload: unknown): Promise<PairingResult>
   getPairingResult(pairingId: string, capability: string): Promise<PairingResult>
+  confirmPairingOwner(pairingId: string): Promise<PairingResult>
+  confirmPairingCandidate(pairingId: string, payload: unknown): Promise<PairingResult>
+  completePairing(pairingId: string, payload: unknown): Promise<PairingResult>
+  cancelPairing(pairingId: string, capability: string): Promise<PairingResult>
+  rejectPairing(pairingId: string): Promise<PairingResult>
   connectNotifications(
     after: number,
     onCursor: (cursor: number) => void,

@@ -28,7 +28,9 @@ The recommended unpublished-plugin path is BRAT:
 3. Add `angristan/meridian` as a beta plugin.
 4. Enable **Meridian**.
 5. On the Mac, create a five-minute pairing QR code from **Meridian status → Devices**.
-6. Scan it with the iPhone, approve the relayed request on the Mac, and enter the matching verification phrase on the iPhone. Candidate packages and pairing IDs never need manual transfer.
+6. Scan it with the iPhone. On the Mac, review the signed device name, platform, and short ID, then continue to verification.
+7. Compare the phrase automatically shown on both devices and tap **Phrases match** on each. Repeated phrase items are valid.
+8. Confirm that the QR disappears after the request, both modals close after the signed completion acknowledgement, the iPhone starts syncing, and the named iPhone appears in the Mac device registry. Candidate packages and pairing IDs never need manual transfer.
 
 Until the repository and a release are public, the build produces `obsidian-plugin/dist/meridian.zip` for manual inspection, but BRAT is the reliable mobile installation channel. Publishing a repository or release is an external write and is not performed by the local build.
 
@@ -57,8 +59,8 @@ Until the repository and a release are public, the build produces `obsidian-plug
 
 ### Security lifecycle
 
-- Pair a second device and verify the authentication phrase.
-- Verify the device registry and that invalid or expired pairing capabilities are rejected.
+- Pair a second device and verify the automatically displayed phrase on both screens.
+- Verify that the encrypted transfer stays unavailable until both confirmations, cancellation authorizes no device, completion updates both screens, and invalid or expired capabilities are rejected.
 - Recover from the saved recovery material in a fresh disposable vault; verify all previous sessions are revoked and new writes use the rotated epoch.
 - Present stale cursors, duplicate operations, changed chunk order, and tampered ciphertext; all must fail safely.
 

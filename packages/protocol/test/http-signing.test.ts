@@ -1,6 +1,9 @@
 import {
   deviceAuthSigningBytes,
   httpOperationSigningBytes,
+  pairingCandidateConfirmationSigningBytes,
+  pairingCompletionSigningBytes,
+  pairingJoinRequestSigningBytes,
   setupClaimSigningBytes,
   signedHttpMessage,
 } from "../src/index.js"
@@ -33,6 +36,37 @@ describe("HTTP signing frames", () => {
     )
     expect(setupClaimSigningBytes(base)).not.toEqual(
       setupClaimSigningBytes({ ...base, challenge: "other" }),
+    )
+  })
+
+  it("binds pairing metadata and separates confirmation from completion", () => {
+    const join = {
+      vaultId: "vault",
+      pairingId: "pairing",
+      deviceId: "candidate",
+      signingPublicKey: "signing",
+      hpkePublicKey: "hpke",
+      deviceName: "Stanislas’s iPhone",
+      platform: "iOS",
+    }
+    expect(pairingJoinRequestSigningBytes(join)).not.toEqual(
+      pairingJoinRequestSigningBytes({ ...join, deviceName: "Other phone" }),
+    )
+    expect(pairingJoinRequestSigningBytes(join)).not.toEqual(
+      pairingJoinRequestSigningBytes({ ...join, platform: "Android" }),
+    )
+
+    const state = {
+      vaultId: "vault",
+      pairingId: "pairing",
+      candidateDeviceId: "candidate",
+      transferHash: "hash",
+    }
+    expect(pairingCandidateConfirmationSigningBytes(state)).not.toEqual(
+      pairingCompletionSigningBytes(state),
+    )
+    expect(pairingCandidateConfirmationSigningBytes(state)).not.toEqual(
+      pairingCandidateConfirmationSigningBytes({ ...state, transferHash: "other" }),
     )
   })
 

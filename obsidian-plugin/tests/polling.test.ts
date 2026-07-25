@@ -5,11 +5,11 @@ describe("pairing polling", () => {
   it("uses a bounded backoff and stops at approval", async () => {
     let now = 0
     const waits: number[] = []
-    const states: Array<"pending" | "joined" | "approved"> = ["pending", "joined", "approved"]
+    const states: Array<"pending" | "joined" | "verifying"> = ["pending", "joined", "verifying"]
 
     const result = await pollUntil({
-      read: async () => ({ status: states.shift() ?? "approved" }),
-      isDone: (value) => value.status === "approved",
+      read: async () => ({ status: states.shift() ?? "verifying" }),
+      isDone: (value) => value.status === "verifying",
       expiresAt: 10_000,
       signal: new AbortController().signal,
       now: () => now,
@@ -19,7 +19,7 @@ describe("pairing polling", () => {
       },
     })
 
-    expect(result.status).toBe("approved")
+    expect(result.status).toBe("verifying")
     expect(waits).toEqual([1_000, 1_000])
     expect([0, 2, 3, 5, 8].map(pairingPollDelay)).toEqual([1_000, 1_000, 2_000, 2_000, 3_000])
   })

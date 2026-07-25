@@ -3,11 +3,22 @@ import {
   serializeEncryptedRecoveryPackage,
   sign as signBytes,
 } from "@meridian/crypto"
-import { type Ed25519PrivateKey, encodeDeviceCertificate } from "@meridian/protocol"
+import {
+  type Ed25519PrivateKey,
+  encodeDeviceCertificate,
+  pairingCandidateConfirmationSigningBytes,
+  pairingCompletionSigningBytes,
+} from "@meridian/protocol"
 import { env, runInDurableObject, SELF } from "cloudflare:test"
 import { describe, expect, it } from "vitest"
-import { base64UrlDecode, base64UrlEncode, randomToken, ZERO_HASH } from "../src/encoding"
-import type { Operation, PairingApproval, PairingJoin, SetupClaim } from "../src/schemas"
+import { base64UrlDecode, base64UrlEncode, randomToken, sha256, ZERO_HASH } from "../src/encoding"
+import type {
+  Operation,
+  PairingApproval,
+  PairingJoin,
+  PairingRelease,
+  SetupClaim,
+} from "../src/schemas"
 import {
   authSigningMessage,
   operationSigningMessage,
@@ -141,7 +152,7 @@ describe("Meridian Worker integration", () => {
       const migration = state.storage.sql
         .exec<{ version: number }>("SELECT MAX(id) AS version FROM _sql_schema_migrations")
         .one()
-      expect(migration.version).toBe(2)
+      expect(migration.version).toBe(3)
       const tables = state.storage.sql
         .exec<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table'")
         .toArray()
@@ -155,6 +166,8 @@ describe("Meridian Worker integration", () => {
         )
         .one().sql
       expect(pairingsDefinition).toContain("candidate_request_proof")
+      expect(pairingsDefinition).toContain("verification_preview")
+      expect(pairingsDefinition).toContain("'completed'")
     })
   })
 
@@ -170,7 +183,7 @@ describe("Meridian Worker integration", () => {
       const migration = state.storage.sql
         .exec<{ version: number }>("SELECT MAX(id) AS version FROM _sql_schema_migrations")
         .one()
-      expect(migration.version).toBe(2)
+      expect(migration.version).toBe(3)
       expect(
         state.storage.sql
           .exec<{ name: string }>(
@@ -184,6 +197,17 @@ describe("Meridian Worker integration", () => {
   it("claims once, authenticates, appends idempotently, and proxies private blobs", async () => {
     const { deviceId, sessionToken, signingKey, vaultId } = await setupAndAuthenticate()
     const authorization = { authorization: `Bearer ${sessionToken}` }
+    const descriptorResponse = await SELF.fetch("https://example.test/v1/device/descriptor", {
+      method: "PUT",
+      headers: { ...authorization, "content-type": "application/json" },
+      body: JSON.stringify({ deviceName: "Test Mac", platform: "macOS" }),
+    })
+    expect(descriptorResponse.status).toBe(200)
+    await expect(descriptorResponse.json()).resolves.toMatchObject({
+      deviceId,
+      deviceName: "Test Mac",
+      platform: "macOS",
+    })
 
     const unsignedOperation: Operation = {
       operationId: randomToken(18),
@@ -254,11 +278,13 @@ describe("Meridian Worker integration", () => {
     }
     expect(base64UrlDecode(pairing.pairingId).byteLength).toBe(16)
     const candidateKey = await createSigningKey()
-    const candidateId = randomToken(18)
+    const candidateId = randomToken(16)
     const candidate = {
       deviceId: candidateId,
       signingPublicKey: await publicKey(candidateKey),
       hpkePublicKey: base64UrlEncode(randomBytes(32)),
+      deviceName: "Test iPhone",
+      platform: "iOS",
     }
     const pendingStatus = await SELF.fetch(
       `https://example.test/v1/pairings/${pairing.pairingId}`,
@@ -324,14 +350,19 @@ describe("Meridian Worker integration", () => {
     )
     expect(unauthenticatedStatus.status).toBe(401)
 
-    const unsignedApproval: PairingApproval = {
-      certificate: base64UrlEncode(randomBytes(96)),
-      transcriptHash: base64UrlEncode(randomBytes(32)),
-      approvalSignature: base64UrlEncode(randomBytes(64)),
-      hpkeTransfer: base64UrlEncode(randomBytes(128)),
-    }
+    const transferBytes = randomBytes(128)
+    const transferHash = base64UrlEncode(await sha256(transferBytes))
     const approval: PairingApproval = {
-      ...unsignedApproval,
+      certificate: base64UrlEncode(randomBytes(96)),
+      transcriptHash: transferHash,
+      verificationPreview: base64UrlEncode(randomBytes(128)),
+    }
+    const unsignedRelease: PairingRelease = {
+      approvalSignature: base64UrlEncode(randomBytes(64)),
+      hpkeTransfer: base64UrlEncode(transferBytes),
+    }
+    const release: PairingRelease = {
+      ...unsignedRelease,
       approvalSignature: await sign(
         signingKey,
         pairingApprovalSigningMessage(
@@ -342,7 +373,7 @@ describe("Meridian Worker integration", () => {
             signing_public_key: candidate.signingPublicKey,
             hpke_public_key: candidate.hpkePublicKey,
           },
-          unsignedApproval,
+          { ...approval, ...unsignedRelease },
         ),
       ),
     }
@@ -356,18 +387,7 @@ describe("Meridian Worker integration", () => {
     )
     expect(approvalResponse.status).toBe(200)
 
-    const approvedProgress = await SELF.fetch(
-      `https://example.test/v1/pairings/${pairing.pairingId}/status`,
-      {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ capability: pairing.capability }),
-      },
-    )
-    expect(approvedProgress.status).toBe(200)
-    await expect(approvedProgress.json()).resolves.toMatchObject({ status: "approved" })
-
-    const resultResponse = await SELF.fetch(
+    const verificationResult = await SELF.fetch(
       `https://example.test/v1/pairings/${pairing.pairingId}/result`,
       {
         method: "POST",
@@ -375,12 +395,71 @@ describe("Meridian Worker integration", () => {
         body: JSON.stringify({ capability: pairing.capability }),
       },
     )
-    expect(resultResponse.status).toBe(200)
-    await expect(resultResponse.json()).resolves.toMatchObject({
-      status: "approved",
-      deviceId: candidateId,
+    expect(verificationResult.status).toBe(200)
+    const verificationBody = (await verificationResult.json()) as Record<string, unknown>
+    expect(verificationBody).toMatchObject({
+      status: "verifying",
+      transcriptHash: transferHash,
+      verificationPreview: approval.verificationPreview,
     })
-    const consumedResult = await SELF.fetch(
+    expect(verificationBody).not.toHaveProperty("hpkeTransfer")
+
+    const earlyAuth = await SELF.fetch("https://example.test/v1/auth/challenge", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ deviceId: candidateId }),
+    })
+    expect(earlyAuth.status).toBe(404)
+
+    const candidateConfirmation = {
+      capability: pairing.capability,
+      transferHash,
+      proof: await sign(
+        candidateKey,
+        pairingCandidateConfirmationSigningBytes({
+          vaultId,
+          pairingId: pairing.pairingId,
+          candidateDeviceId: candidateId,
+          transferHash,
+        }),
+      ),
+    }
+    const candidateConfirmationResponse = await SELF.fetch(
+      `https://example.test/v1/pairings/${pairing.pairingId}/confirm-candidate`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(candidateConfirmation),
+      },
+    )
+    expect(candidateConfirmationResponse.status).toBe(200)
+    await expect(candidateConfirmationResponse.json()).resolves.toMatchObject({
+      status: "verifying",
+    })
+
+    const ownerConfirmationResponse = await SELF.fetch(
+      `https://example.test/v1/pairings/${pairing.pairingId}/confirm-owner`,
+      {
+        method: "POST",
+        headers: { ...authorization, "content-type": "application/json" },
+        body: "{}",
+      },
+    )
+    expect(ownerConfirmationResponse.status).toBe(200)
+    await expect(ownerConfirmationResponse.json()).resolves.toMatchObject({ status: "confirmed" })
+
+    const confirmedStatus = await SELF.fetch(
+      `https://example.test/v1/pairings/${pairing.pairingId}`,
+      { headers: authorization },
+    )
+    await expect(confirmedStatus.json()).resolves.toMatchObject({
+      status: "confirmed",
+      candidateConfirmation: {
+        transferHash,
+        proof: candidateConfirmation.proof,
+      },
+    })
+    const withheldResult = await SELF.fetch(
       `https://example.test/v1/pairings/${pairing.pairingId}/result`,
       {
         method: "POST",
@@ -388,9 +467,145 @@ describe("Meridian Worker integration", () => {
         body: JSON.stringify({ capability: pairing.capability }),
       },
     )
-    expect(consumedResult.status).toBe(410)
+    const withheldBody = (await withheldResult.json()) as Record<string, unknown>
+    expect(withheldBody).toMatchObject({ status: "confirmed" })
+    expect(withheldBody).not.toHaveProperty("hpkeTransfer")
+
+    const releaseResponse = await SELF.fetch(
+      `https://example.test/v1/pairings/${pairing.pairingId}/release`,
+      {
+        method: "POST",
+        headers: { ...authorization, "content-type": "application/json" },
+        body: JSON.stringify(release),
+      },
+    )
+    expect(releaseResponse.status).toBe(200)
+    await expect(releaseResponse.json()).resolves.toMatchObject({ status: "released" })
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const releasedResult = await SELF.fetch(
+        `https://example.test/v1/pairings/${pairing.pairingId}/result`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ capability: pairing.capability }),
+        },
+      )
+      expect(releasedResult.status).toBe(200)
+      await expect(releasedResult.json()).resolves.toMatchObject({
+        status: "released",
+        deviceId: candidateId,
+        hpkeTransfer: release.hpkeTransfer,
+      })
+    }
+
+    const completion = {
+      capability: pairing.capability,
+      transferHash,
+      proof: await sign(
+        candidateKey,
+        pairingCompletionSigningBytes({
+          vaultId,
+          pairingId: pairing.pairingId,
+          candidateDeviceId: candidateId,
+          transferHash,
+        }),
+      ),
+    }
+    const completionResponse = await SELF.fetch(
+      `https://example.test/v1/pairings/${pairing.pairingId}/complete`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(completion),
+      },
+    )
+    expect(completionResponse.status).toBe(200)
+    await expect(completionResponse.json()).resolves.toMatchObject({ status: "completed" })
+    const completedResult = await SELF.fetch(
+      `https://example.test/v1/pairings/${pairing.pairingId}/result`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ capability: pairing.capability }),
+      },
+    )
+    await expect(completedResult.json()).resolves.toMatchObject({
+      status: "completed",
+      hpkeTransfer: release.hpkeTransfer,
+    })
+
+    const devicesAfterPairing = await SELF.fetch("https://example.test/v1/devices", {
+      headers: authorization,
+    })
+    await expect(devicesAfterPairing.json()).resolves.toMatchObject({
+      devices: expect.arrayContaining([
+        expect.objectContaining({
+          deviceId: candidateId,
+          deviceName: "Test iPhone",
+          platform: "iOS",
+        }),
+      ]),
+    })
 
     const candidateSession = await authenticateDevice(vaultId, candidateId, candidateKey)
+
+    const canceledPairingResponse = await SELF.fetch("https://example.test/v1/pairings", {
+      method: "POST",
+      headers: { ...authorization, "content-type": "application/json" },
+      body: JSON.stringify({ expiresInSeconds: 300 }),
+    })
+    const canceledPairing = (await canceledPairingResponse.json()) as {
+      pairingId: string
+      capability: string
+    }
+    const canceledCandidateKey = await createSigningKey()
+    const canceledCandidate = {
+      deviceId: randomToken(16),
+      signingPublicKey: await publicKey(canceledCandidateKey),
+      hpkePublicKey: base64UrlEncode(randomBytes(32)),
+      deviceName: "Canceled phone",
+      platform: "iOS",
+    }
+    const canceledUnsignedJoin: PairingJoin = {
+      capability: canceledPairing.capability,
+      device: canceledCandidate,
+      proof: base64UrlEncode(randomBytes(64)),
+      requestProof: base64UrlEncode(randomBytes(64)),
+    }
+    const canceledJoin: PairingJoin = {
+      ...canceledUnsignedJoin,
+      proof: await sign(
+        canceledCandidateKey,
+        pairingJoinSigningMessage(vaultId, canceledPairing.pairingId, canceledUnsignedJoin),
+      ),
+    }
+    const canceledJoinResponse = await SELF.fetch(
+      `https://example.test/v1/pairings/${canceledPairing.pairingId}/join`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(canceledJoin),
+      },
+    )
+    expect(canceledJoinResponse.status).toBe(200)
+    const cancelResponse = await SELF.fetch(
+      `https://example.test/v1/pairings/${canceledPairing.pairingId}/cancel`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ capability: canceledPairing.capability }),
+      },
+    )
+    expect(cancelResponse.status).toBe(200)
+    await expect(cancelResponse.json()).resolves.toMatchObject({ status: "canceled" })
+    const canceledAuth = await SELF.fetch("https://example.test/v1/auth/challenge", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ deviceId: canceledCandidate.deviceId }),
+    })
+    expect(canceledAuth.status).toBe(404)
+
     const unsignedRevocation: Operation = {
       operationId: randomToken(18),
       authorDeviceId: deviceId,

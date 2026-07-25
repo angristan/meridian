@@ -111,7 +111,7 @@ Local vault use remains available offline. Push/pull is idempotent and resumable
 | Nonce reuse | fresh revision keys, random 96-bit nonces, per-revision duplicate registry | faulty RNG can still be catastrophic; platform RNG is trusted |
 | Replay/duplicate requests | stable operation/idempotency IDs and append transaction | resource exhaustion still needs server rate limits |
 | Stolen session | short expiry, exact authorization checks | bearer can act until expiry, bounded by certificate permissions |
-| Pairing MITM/substitution | new-device proof, full signed transcript, HPKE context/AAD, certificate chain, 40-bit compared phrase, one-use expiry | user can approve a mismatched phrase or attacker can guess at 1 in 2^40 per attempt |
+| Pairing MITM/substitution | signed device descriptor, ciphertext-free verification preview, two explicit phrase confirmations, owner-local HPKE transfer withholding, full signed transcript, certificate chain, 40-bit phrase, short expiry | user can confirm a mismatched phrase or attacker can guess at 1 in 2^40 per attempt |
 | Lost device | revoke certificate, reject later operations/sessions, rotate epoch | downloaded history and old keys cannot be erased |
 | Malicious recovery package | AES-GCM, vault-bound AAD, signed epoch/checkpoint, recovery sequence | all-device-loss rollback newer than independent checkpoint may go undetected |
 | Server rollback | persisted cursor/hash/generation, signed transferred checkpoints | isolated split views are not fully detectable |

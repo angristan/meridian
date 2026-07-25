@@ -1,4 +1,10 @@
-import type { PairingResult, PairingStatus, RemoteDevice, RemoteOperation } from "../model"
+import type {
+  PairingResult,
+  PairingState,
+  PairingStatus,
+  RemoteDevice,
+  RemoteOperation,
+} from "../model"
 import type { HttpResponse } from "./transport"
 
 export function assertSuccess(response: HttpResponse, label: string): void {
@@ -31,6 +37,8 @@ export function parseDevice(value: unknown): RemoteDevice {
     role,
     authorizedAt: requiredNumber(value, "authorizedAt"),
     revokedAt: value.revokedAt === null ? null : requiredNumber(value, "revokedAt"),
+    deviceName: typeof value.deviceName === "string" ? value.deviceName : null,
+    platform: typeof value.platform === "string" ? value.platform : null,
   }
 }
 
@@ -41,17 +49,30 @@ export function parsePairingStatus(value: unknown): PairingStatus {
     pairingId: requiredString(value, "pairingId"),
     status,
     expiresAt: requiredNumber(value, "expiresAt"),
+    ownerConfirmed: value.ownerConfirmed === true,
+    candidateConfirmed: value.candidateConfirmed === true,
+  }
+  if (typeof value.requestedAt === "number") result.requestedAt = value.requestedAt
+  if (isRecord(value.candidateConfirmation)) {
+    result.candidateConfirmation = {
+      transferHash: requiredString(value.candidateConfirmation, "transferHash"),
+      proof: requiredString(value.candidateConfirmation, "proof"),
+    }
   }
   if (isRecord(value.candidate)) {
-    result.candidatePackage = JSON.stringify({
+    const candidate = {
       pairingId: requiredString(value.candidate, "pairingId"),
       vaultId: requiredString(value.candidate, "vaultId"),
       expiresAt: requiredNumber(value.candidate, "expiresAt"),
       deviceId: requiredString(value.candidate, "deviceId"),
       signingPublicKey: requiredString(value.candidate, "signingPublicKey"),
       hpkePublicKey: requiredString(value.candidate, "hpkePublicKey"),
+      deviceName: requiredString(value.candidate, "deviceName"),
+      platform: requiredString(value.candidate, "platform"),
       requestProof: requiredString(value.candidate, "requestProof"),
-    })
+    }
+    result.candidate = candidate
+    result.candidatePackage = JSON.stringify(candidate)
   }
   return result
 }
@@ -67,17 +88,28 @@ export function parsePairingResult(value: unknown): PairingResult {
     "deviceId",
     "certificate",
     "transcriptHash",
+    "verificationPreview",
     "approvalSignature",
     "hpkeTransfer",
   ] as const) {
     if (typeof value[key] === "string") result[key] = value[key]
   }
-  if (typeof value.approvedAt === "number") result.approvedAt = value.approvedAt
+  if (typeof value.verificationStartedAt === "number") {
+    result.verificationStartedAt = value.verificationStartedAt
+  }
   return result
 }
 
-function pairingStatusValue(value: unknown): "pending" | "joined" | "approved" {
-  if (value !== "pending" && value !== "joined" && value !== "approved") {
+function pairingStatusValue(value: unknown): PairingState {
+  if (
+    value !== "pending" &&
+    value !== "joined" &&
+    value !== "verifying" &&
+    value !== "confirmed" &&
+    value !== "released" &&
+    value !== "completed" &&
+    value !== "canceled"
+  ) {
     throw new Error("Server returned an invalid pairing status")
   }
   return value

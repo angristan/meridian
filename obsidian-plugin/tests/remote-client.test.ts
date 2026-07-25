@@ -133,10 +133,12 @@ describe("Meridian remote client", () => {
           deviceId: "candidate-id",
           signingPublicKey: "signing-key",
           hpkePublicKey: "hpke-key",
+          deviceName: "Test iPhone",
+          platform: "iOS",
           requestProof: "request-proof",
         },
       }),
-      response({ pairingId: "pairing-id", status: "approved", expiresAt: 1_000 }),
+      response({ pairingId: "pairing-id", status: "verifying", expiresAt: 1_000 }),
     ])
     const client = new MeridianRemoteClient("https://example.test", transport)
 
@@ -149,7 +151,7 @@ describe("Meridian remote client", () => {
       deviceId: "candidate-id",
       requestProof: "request-proof",
     })
-    expect(progress.status).toBe("approved")
+    expect(progress.status).toBe("verifying")
     expect(transport.requests[2]?.headers?.authorization).toBe("Bearer session-token")
     expect(transport.requests[3]?.headers?.authorization).toBeUndefined()
     expect(transport.requests[3]?.body).toBe(JSON.stringify({ capability: "capability" }))

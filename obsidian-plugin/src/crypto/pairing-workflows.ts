@@ -3,10 +3,14 @@ import {
   createPairingDeviceRequest,
   createPendingPairingDevice,
   deserializePairingPackage,
+  deserializePairingVerificationPreview,
+  inspectPairingVerificationPreview,
   preparePairingEpochPackage,
   serializePairingPackage,
+  serializePairingVerificationPreview,
   sha256,
   sign,
+  verify,
 } from "@meridian/crypto"
 import {
   bytesToHex,
@@ -16,7 +20,10 @@ import {
   ed25519PublicKey,
   ed25519Signature,
   encodeDeviceCertificate,
+  hashBytes,
   pairingApprovalRequestSigningBytes,
+  pairingCandidateConfirmationSigningBytes,
+  pairingCompletionSigningBytes,
   pairingId,
   pairingJoinRequestSigningBytes,
   vaultId,
@@ -28,7 +35,10 @@ import type {
   PairedDeviceMaterial,
   PairingApprovalMaterial,
   PairingCapability,
+  PairingConfirmationMaterial,
+  PairingDeviceDescriptor,
   PairingJoinMaterial,
+  PairingVerificationMaterial,
 } from "../model"
 import { fromBase64Url, toBase64Url } from "../platform/bytes"
 import { deviceBundle, parseStoredSecret, serializeStoredDeviceSecret } from "./device-secret"
@@ -40,6 +50,8 @@ interface CandidatePackage {
   readonly deviceId: string
   readonly signingPublicKey: string
   readonly hpkePublicKey: string
+  readonly deviceName: string
+  readonly platform: string
   readonly requestProof: string
 }
 
@@ -48,12 +60,16 @@ interface PendingPairingSecret extends CandidatePackage {
   readonly hpkePrivateKey: string
 }
 
-export async function createPairingJoin(pairing: PairingCapability): Promise<PairingJoinMaterial> {
+export async function createPairingJoin(
+  pairing: PairingCapability,
+  descriptor: PairingDeviceDescriptor,
+): Promise<PairingJoinMaterial> {
   const pending = await createPendingPairingDevice()
   const request = createPairingDeviceRequest(
     pairingId(fromBase64Url(pairing.pairingId)),
     vaultId(fromBase64Url(pairing.vaultId)),
     pending,
+    descriptor,
   )
   const candidate: CandidatePackage = {
     pairingId: pairing.pairingId,
@@ -62,6 +78,8 @@ export async function createPairingJoin(pairing: PairingCapability): Promise<Pai
     deviceId: toBase64Url(pending.deviceId),
     signingPublicKey: toBase64Url(pending.signingPublicKey),
     hpkePublicKey: toBase64Url(pending.hpkePublicKey),
+    deviceName: request.deviceName,
+    platform: request.platform,
     requestProof: toBase64Url(request.proofOfPossession),
   }
   const workerProof = sign(
@@ -71,6 +89,8 @@ export async function createPairingJoin(pairing: PairingCapability): Promise<Pai
       deviceId: candidate.deviceId,
       signingPublicKey: candidate.signingPublicKey,
       hpkePublicKey: candidate.hpkePublicKey,
+      deviceName: candidate.deviceName,
+      platform: candidate.platform,
     }),
     pending.signingPrivateKey,
   )
@@ -86,6 +106,8 @@ export async function createPairingJoin(pairing: PairingCapability): Promise<Pai
         deviceId: candidate.deviceId,
         signingPublicKey: candidate.signingPublicKey,
         hpkePublicKey: candidate.hpkePublicKey,
+        deviceName: candidate.deviceName,
+        platform: candidate.platform,
       },
       proof: toBase64Url(workerProof),
       requestProof: candidate.requestProof,
@@ -108,6 +130,8 @@ export async function approvePairing(
     deviceId: deviceId(fromBase64Url(candidate.deviceId)),
     signingPublicKey: ed25519PublicKey(fromBase64Url(candidate.signingPublicKey)),
     hpkePublicKey: x25519PublicKey(fromBase64Url(candidate.hpkePublicKey)),
+    deviceName: candidate.deviceName,
+    platform: candidate.platform,
     proofOfPossession: ed25519Signature(fromBase64Url(candidate.requestProof)),
   }
   const chain = certificates.map((value) => decodeDeviceCertificate(fromBase64Url(value)))
@@ -128,11 +152,15 @@ export async function approvePairing(
     expiresAt: candidate.expiresAt,
   })
   const transfer = serializePairingPackage(prepared.package)
+  const verificationPreview = serializePairingVerificationPreview(prepared.preview)
   const certificate = encodeDeviceCertificate(prepared.package.context.certificate)
   const transcriptHash = toBase64Url(await sha256(transfer))
-  const unsigned = {
+  const verificationPayload = {
     certificate: toBase64Url(certificate),
     transcriptHash,
+    verificationPreview: toBase64Url(verificationPreview),
+  }
+  const releasePayload = {
     hpkeTransfer: toBase64Url(transfer),
   }
   const approvalSignature = sign(
@@ -149,34 +177,111 @@ export async function approvePairing(
     bundle.signingPrivateKey,
   )
   return {
-    payload: { ...unsigned, approvalSignature: toBase64Url(approvalSignature) },
+    payload: verificationPayload,
+    releasePayload: { ...releasePayload, approvalSignature: toBase64Url(approvalSignature) },
     verificationPhrase: prepared.verificationPhrase,
+    transferHash: transcriptHash,
   }
+}
+
+export async function inspectPairingVerification(
+  pendingSecret: string,
+  verificationPreview: string,
+): Promise<PairingVerificationMaterial> {
+  const pending = parsePendingSecret(pendingSecret)
+  const inspected = await inspectPairingVerificationPreview(
+    pendingDevice(pending),
+    deserializePairingVerificationPreview(fromBase64Url(verificationPreview)),
+    Date.now(),
+  )
+  return {
+    verificationPhrase: inspected.verificationPhrase,
+    transferHash: toBase64Url(inspected.transferHash),
+  }
+}
+
+export async function createPairingConfirmation(
+  pendingSecret: string,
+  transferHash: string,
+): Promise<PairingConfirmationMaterial> {
+  const pending = parsePendingSecret(pendingSecret)
+  return {
+    transferHash,
+    proof: toBase64Url(
+      sign(
+        pairingCandidateConfirmationSigningBytes({
+          vaultId: pending.vaultId,
+          pairingId: pending.pairingId,
+          candidateDeviceId: pending.deviceId,
+          transferHash,
+        }),
+        ed25519PrivateKey(fromBase64Url(pending.signingPrivateKey)),
+      ),
+    ),
+  }
+}
+
+export async function verifyPairingConfirmation(
+  candidatePackage: string,
+  confirmation: PairingConfirmationMaterial,
+): Promise<boolean> {
+  const candidate = parseCandidatePackage(candidatePackage)
+  return verify(
+    pairingCandidateConfirmationSigningBytes({
+      vaultId: candidate.vaultId,
+      pairingId: candidate.pairingId,
+      candidateDeviceId: candidate.deviceId,
+      transferHash: confirmation.transferHash,
+    }),
+    ed25519Signature(fromBase64Url(confirmation.proof)),
+    ed25519PublicKey(fromBase64Url(candidate.signingPublicKey)),
+  )
 }
 
 export async function consumePairingResult(
   pendingSecret: string,
   hpkeTransfer: string,
   confirmedPhrase: string,
+  expectedTransferHash: string,
 ): Promise<PairedDeviceMaterial> {
   const pending = parsePendingSecret(pendingSecret)
   const packageValue = deserializePairingPackage(fromBase64Url(hpkeTransfer))
   const bundle = await consumePairingEpochPackage({
-    pending: {
-      deviceId: deviceId(fromBase64Url(pending.deviceId)),
-      signingPrivateKey: ed25519PrivateKey(fromBase64Url(pending.signingPrivateKey)),
-      signingPublicKey: ed25519PublicKey(fromBase64Url(pending.signingPublicKey)),
-      hpkePrivateKey: x25519PrivateKey(fromBase64Url(pending.hpkePrivateKey)),
-      hpkePublicKey: x25519PublicKey(fromBase64Url(pending.hpkePublicKey)),
-    },
+    pending: pendingDevice(pending),
     package: packageValue,
+    expectedTransferHash: hashBytes(fromBase64Url(expectedTransferHash)),
     confirmedVerificationPhrase: confirmedPhrase,
     now: Date.now(),
   })
+  const completion = {
+    transferHash: expectedTransferHash,
+    proof: toBase64Url(
+      sign(
+        pairingCompletionSigningBytes({
+          vaultId: pending.vaultId,
+          pairingId: pending.pairingId,
+          candidateDeviceId: pending.deviceId,
+          transferHash: expectedTransferHash,
+        }),
+        ed25519PrivateKey(fromBase64Url(pending.signingPrivateKey)),
+      ),
+    ),
+  }
   return {
     vaultId: toBase64Url(bundle.vaultId),
     deviceId: toBase64Url(bundle.deviceId),
     keyBundle: serializeStoredDeviceSecret(bundle, packageValue.context.recoveryPublicKey),
+    completion,
+  }
+}
+
+function pendingDevice(pending: PendingPairingSecret) {
+  return {
+    deviceId: deviceId(fromBase64Url(pending.deviceId)),
+    signingPrivateKey: ed25519PrivateKey(fromBase64Url(pending.signingPrivateKey)),
+    signingPublicKey: ed25519PublicKey(fromBase64Url(pending.signingPublicKey)),
+    hpkePrivateKey: x25519PrivateKey(fromBase64Url(pending.hpkePrivateKey)),
+    hpkePublicKey: x25519PublicKey(fromBase64Url(pending.hpkePublicKey)),
   }
 }
 
@@ -190,6 +295,8 @@ function parseCandidatePackage(serialized: string): CandidatePackage {
     deviceId: requireString(value, "deviceId"),
     signingPublicKey: requireString(value, "signingPublicKey"),
     hpkePublicKey: requireString(value, "hpkePublicKey"),
+    deviceName: requireString(value, "deviceName"),
+    platform: requireString(value, "platform"),
     requestProof: requireString(value, "requestProof"),
   }
 }

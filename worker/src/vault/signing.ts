@@ -23,6 +23,7 @@ import type {
   Operation,
   PairingApproval,
   PairingJoin,
+  PairingRelease,
   SetupClaim,
   Snapshot,
 } from "../schemas"
@@ -120,6 +121,8 @@ export function pairingJoinSigningMessage(
     deviceId: join.device.deviceId,
     signingPublicKey: join.device.signingPublicKey,
     hpkePublicKey: join.device.hpkePublicKey,
+    deviceName: join.device.deviceName,
+    platform: join.device.platform,
   })
 }
 
@@ -127,7 +130,7 @@ export function pairingApprovalSigningMessage(
   vaultId: string,
   pairingId: string,
   candidate: Pick<DeviceRow, "device_id" | "signing_public_key" | "hpke_public_key">,
-  approval: PairingApproval,
+  approval: PairingApproval & PairingRelease,
 ): Uint8Array {
   return pairingApprovalRequestSigningBytes({
     vaultId,

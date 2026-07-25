@@ -183,14 +183,16 @@ A server challenge contains challenge ID, vault/device IDs, 32 random bytes, and
 ## Pairing
 
 1. The new device generates both keypairs and a random device ID.
-2. It signs a proof-of-possession request binding the pairing, vault, device, and both public keys.
-3. The server relays that public candidate package to the authenticated initiating device. The initiator polls its authenticated status endpoint; the candidate polls a capability-scoped status endpoint that never returns or consumes the encrypted result. Polling is bounded by the pairing expiry and transports no private key material.
-4. The existing device verifies the relayed request and creates a child certificate.
-5. The pairing context binds the request, child certificate, complete issuer chain, recovery public key, current signed epoch, signed checkpoint, expiry, and complete suite.
-6. Both devices compute SHA-256 over the canonical context and verify the same five-word phrase. Each byte maps to one of 256 fixed prefix/suffix words, yielding a 40-bit manual check.
-7. After explicit user confirmation, the approver uses RFC 9180 HPKE base mode. `info` is SHA-256 of the context and AEAD associated data is the complete context. Plaintext binds vault, epoch, epoch key, checkpoint cursor, and checkpoint hash.
-8. The approver signs context, encapsulated key, ciphertext, and approver ID together.
-9. The new device validates the complete certificate chain, transfer signature, epoch signature, checkpoint signature, expiry, identity, and confirmed phrase before HPKE open.
+2. It signs a proof-of-possession request binding the pairing, vault, device, both public keys, and its self-declared device name and platform.
+3. The server relays that public candidate package to the authenticated initiating device. The QR disappears as soon as that identity is fixed.
+4. The existing device verifies the relayed request, creates a child certificate, and prepares an RFC 9180 HPKE transfer that remains only in its SecretStorage. `info` is SHA-256 of the context and AEAD associated data is the complete context. Plaintext binds vault, epoch, epoch key, checkpoint cursor, and checkpoint hash.
+5. The pairing context binds the signed device descriptor, child certificate, complete issuer chain, recovery public key, current signed epoch, signed checkpoint, expiry, and complete suite.
+6. The existing device uploads only a signed, ciphertext-free verification preview containing the context and SHA-256 hash of the locally withheld full transfer. The server does not receive the encrypted vault keys yet.
+7. Both devices validate the preview, automatically display the same five-item phrase, and explicitly confirm that it matches. Each item maps one digest byte to one of 256 fixed prefix/suffix combinations, yielding a 40-bit manual check; repeated items are valid.
+8. The existing device locally verifies the candidate’s signed confirmation. Only then does it upload the hash-bound encrypted transfer for relay. Before then, even a malicious server cooperating with a QR holder has neither an authorized device nor vault key material.
+9. The new device verifies that the released transfer matches the confirmed hash, then validates the complete certificate chain, transfer signature, epoch signature, checkpoint signature, expiry, identity, and phrase before HPKE open.
+10. The new device persists the recovered key bundle and signs a completion acknowledgement.
+11. The server atomically inserts the device into the authorized registry only after that acknowledgement. Cancellation or expiry before release leaves no authorized device and removes the withheld transfer.
 
 A pairing capability is server-side, short-lived, and single-use. The QR code is only a transport for that capability. Obsidian pairing URIs prefix every query parameter with `meridian` and never use Obsidian-reserved routing keys such as `vault`. Server relay and polling are not substitutes for proof-of-possession, signed transcript validation, HPKE, or phrase verification.
 

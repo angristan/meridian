@@ -3,9 +3,14 @@ import {
   AuthSessionSchema,
   CheckpointSchema,
   CreatePairingSchema,
+  DeviceDescriptorSchema,
+  EmptyObjectSchema,
   OperationSchema,
   PairingApprovalSchema,
+  PairingCancelSchema,
+  PairingCandidateConfirmationSchema,
   PairingJoinSchema,
+  PairingReleaseSchema,
   PairingResultSchema,
   RecoveryClaimSchema,
   RevokeDeviceSchema,
@@ -39,6 +44,13 @@ export function registerApiRoutes(app: WorkerApp): void {
   )
   app.get("/v1/devices", (c) =>
     runResponse(callVaultEffect(c.env, "/v1/devices", "GET", undefined, sessionToken(c))),
+  )
+  app.put(
+    "/v1/device/descriptor",
+    proxyJson(DeviceDescriptorSchema, () => "/v1/device/descriptor", {
+      authenticated: true,
+      method: "PUT",
+    }),
   )
   app.post(
     "/v1/devices/:id/revoke",
@@ -86,10 +98,55 @@ export function registerApiRoutes(app: WorkerApp): void {
     ),
   )
   app.post(
+    "/v1/pairings/:id/release",
+    proxyJson(
+      PairingReleaseSchema,
+      (c) => `/v1/pairings/${encodeURIComponent(requiredParam(c, "id"))}/release`,
+      { authenticated: true },
+    ),
+  )
+  app.post(
     "/v1/pairings/:id/result",
     proxyJson(
       PairingResultSchema,
       (c) => `/v1/pairings/${encodeURIComponent(requiredParam(c, "id"))}/result`,
+    ),
+  )
+  app.post(
+    "/v1/pairings/:id/confirm-owner",
+    proxyJson(
+      EmptyObjectSchema,
+      (c) => `/v1/pairings/${encodeURIComponent(requiredParam(c, "id"))}/confirm-owner`,
+      { authenticated: true },
+    ),
+  )
+  app.post(
+    "/v1/pairings/:id/confirm-candidate",
+    proxyJson(
+      PairingCandidateConfirmationSchema,
+      (c) => `/v1/pairings/${encodeURIComponent(requiredParam(c, "id"))}/confirm-candidate`,
+    ),
+  )
+  app.post(
+    "/v1/pairings/:id/complete",
+    proxyJson(
+      PairingCandidateConfirmationSchema,
+      (c) => `/v1/pairings/${encodeURIComponent(requiredParam(c, "id"))}/complete`,
+    ),
+  )
+  app.post(
+    "/v1/pairings/:id/cancel",
+    proxyJson(
+      PairingCancelSchema,
+      (c) => `/v1/pairings/${encodeURIComponent(requiredParam(c, "id"))}/cancel`,
+    ),
+  )
+  app.post(
+    "/v1/pairings/:id/reject",
+    proxyJson(
+      EmptyObjectSchema,
+      (c) => `/v1/pairings/${encodeURIComponent(requiredParam(c, "id"))}/reject`,
+      { authenticated: true },
     ),
   )
   app.post(

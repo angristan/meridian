@@ -2,6 +2,8 @@ import {
   type AuthChallenge,
   bytesEqual,
   bytesToHex,
+  decodeCanonical,
+  ed25519Signature,
   encodeDeviceCertificate,
   pairingId,
 } from "@meridian/protocol"
@@ -18,18 +20,24 @@ import {
   deserializeDeviceKeyBundle,
   deserializeEncryptedRecoveryPackage,
   deserializePairingPackage,
+  deserializePairingVerificationPreview,
   deviceEpochKey,
   encryptFileRevision,
   parseRecoveryCode,
+  inspectPairingVerificationPreview,
   preparePairingEpochPackage,
   recoverDeviceFromPackage,
   recoveryClaimSigningBytes,
   serializeDeviceKeyBundle,
   serializeEncryptedRecoveryPackage,
   serializePairingPackage,
+  serializePairingVerificationPreview,
+  sha256,
   signAuthChallenge,
+  signPairingVerificationPreview,
   signRecoveryClaim,
   verify,
+  verifyPairingDeviceRequest,
 } from "../src/index.js"
 
 const textEncoder = new TextEncoder()
@@ -153,11 +161,19 @@ describe("plugin-facing cryptography workflows", () => {
   it("prepares, serializes, verifies, and consumes a pairing epoch package", async () => {
     const first = await createFirstDeviceClaimBundle()
     const pending = await createPendingPairingDevice()
-    const request = createPairingDeviceRequest(
-      pairingId(new Uint8Array(16).fill(8)),
-      first.device.vaultId,
-      pending,
-    )
+    const pairingIdentifier = pairingId(new Uint8Array(16).fill(8))
+    const request = createPairingDeviceRequest(pairingIdentifier, first.device.vaultId, pending, {
+      deviceName: "Stanislas’s iPhone",
+      platform: "iOS",
+    })
+    expect(verifyPairingDeviceRequest(request)).toBe(true)
+    expect(verifyPairingDeviceRequest({ ...request, deviceName: "Substituted phone" })).toBe(false)
+    expect(() =>
+      createPairingDeviceRequest(pairingIdentifier, first.device.vaultId, pending, {
+        deviceName: "x".repeat(81),
+        platform: "iOS",
+      }),
+    ).toThrow(/between 1 and 80/)
     const prepared = await preparePairingEpochPackage({
       approver: first.device,
       request,
@@ -165,11 +181,147 @@ describe("plugin-facing cryptography workflows", () => {
       authorizationChain: [first.device.certificate],
       expiresAt: Date.now() + 60_000,
     })
-    const transported = deserializePairingPackage(serializePairingPackage(prepared.package))
+    const serializedPackage = serializePairingPackage(prepared.package)
+    expect(bytesEqual(prepared.preview.transferHash, await sha256(serializedPackage))).toBe(true)
+    expect(prepared.preview.context.newDeviceName).toBe("Stanislas’s iPhone")
+    expect(prepared.preview.context.newDevicePlatform).toBe("iOS")
+
+    const serializedPreview = serializePairingVerificationPreview(prepared.preview)
+    const previewEnvelope = decodeCanonical(serializedPreview) as Record<string, unknown>
+    expect(Object.keys(previewEnvelope).sort()).toEqual([
+      "approverDeviceId",
+      "context",
+      "signature",
+      "transferHash",
+    ])
+    expect(previewEnvelope).not.toHaveProperty("transfer")
+    const transportedPreview = deserializePairingVerificationPreview(serializedPreview)
+    const inspected = await inspectPairingVerificationPreview(
+      pending,
+      transportedPreview,
+      Date.now(),
+    )
+    expect(inspected.verificationPhrase).toBe(prepared.verificationPhrase)
+    expect(bytesEqual(inspected.transferHash, prepared.preview.transferHash)).toBe(true)
+
+    const tamperedHash = new Uint8Array(transportedPreview.transferHash)
+    tamperedHash[0] = (tamperedHash[0] ?? 0) ^ 1
+    await expect(
+      inspectPairingVerificationPreview(
+        pending,
+        {
+          ...transportedPreview,
+          transferHash: tamperedHash as typeof transportedPreview.transferHash,
+        },
+        Date.now(),
+      ),
+    ).rejects.toThrow(/preview signature/)
+
+    const invalidCheckpointSignature = new Uint8Array(
+      transportedPreview.context.checkpoint.signature,
+    )
+    invalidCheckpointSignature[0] = (invalidCheckpointSignature[0] ?? 0) ^ 1
+    const invalidCheckpointContext = {
+      ...transportedPreview.context,
+      checkpoint: {
+        ...transportedPreview.context.checkpoint,
+        signature: ed25519Signature(invalidCheckpointSignature),
+      },
+    }
+    await expect(
+      inspectPairingVerificationPreview(
+        pending,
+        {
+          ...transportedPreview,
+          context: invalidCheckpointContext,
+          signature: signPairingVerificationPreview(
+            invalidCheckpointContext,
+            transportedPreview.approverDeviceId,
+            transportedPreview.transferHash,
+            first.device.signingPrivateKey,
+          ),
+        },
+        Date.now(),
+      ),
+    ).rejects.toThrow(/checkpoint signature/)
+
+    const invalidEpochSignature = new Uint8Array(transportedPreview.context.epoch.signature)
+    invalidEpochSignature[0] = (invalidEpochSignature[0] ?? 0) ^ 1
+    const invalidEpochContext = {
+      ...transportedPreview.context,
+      epoch: {
+        ...transportedPreview.context.epoch,
+        signature: ed25519Signature(invalidEpochSignature),
+      },
+    }
+    await expect(
+      inspectPairingVerificationPreview(
+        pending,
+        {
+          ...transportedPreview,
+          context: invalidEpochContext,
+          signature: signPairingVerificationPreview(
+            invalidEpochContext,
+            transportedPreview.approverDeviceId,
+            transportedPreview.transferHash,
+            first.device.signingPrivateKey,
+          ),
+        },
+        Date.now(),
+      ),
+    ).rejects.toThrow(/epoch signature/)
+
+    const rootCertificate = transportedPreview.context.authorizationChain[0]
+    if (rootCertificate === undefined) throw new Error("expected an authorization root")
+    const invalidRootSignature = new Uint8Array(rootCertificate.signature)
+    invalidRootSignature[0] = (invalidRootSignature[0] ?? 0) ^ 1
+    const invalidChainContext = {
+      ...transportedPreview.context,
+      authorizationChain: [
+        {
+          ...rootCertificate,
+          signature: ed25519Signature(invalidRootSignature),
+        },
+      ],
+    }
+    await expect(
+      inspectPairingVerificationPreview(
+        pending,
+        {
+          ...transportedPreview,
+          context: invalidChainContext,
+          signature: signPairingVerificationPreview(
+            invalidChainContext,
+            transportedPreview.approverDeviceId,
+            transportedPreview.transferHash,
+            first.device.signingPrivateKey,
+          ),
+        },
+        Date.now(),
+      ),
+    ).rejects.toThrow(/certificate/)
+
+    const transported = deserializePairingPackage(serializedPackage)
+    const tamperedCiphertext = new Uint8Array(transported.transfer.ciphertext)
+    tamperedCiphertext[0] = (tamperedCiphertext[0] ?? 0) ^ 1
+    await expect(
+      consumePairingEpochPackage({
+        pending,
+        package: {
+          ...transported,
+          transfer: { ...transported.transfer, ciphertext: tamperedCiphertext },
+        },
+        expectedTransferHash: inspected.transferHash,
+        confirmedVerificationPhrase: inspected.verificationPhrase,
+        now: Date.now(),
+      }),
+    ).rejects.toThrow(/verified preview/)
+
     const paired = await consumePairingEpochPackage({
       pending,
       package: transported,
-      confirmedVerificationPhrase: prepared.verificationPhrase,
+      expectedTransferHash: inspected.transferHash,
+      confirmedVerificationPhrase: inspected.verificationPhrase,
       now: Date.now(),
     })
     expect(bytesEqual(paired.vaultEpochKey, first.device.vaultEpochKey)).toBe(true)

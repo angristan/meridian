@@ -1,4 +1,5 @@
 import {
+  assertPairingDeviceMetadata,
   bytesEqual,
   bytesToHex,
   type CborValue,
@@ -16,8 +17,12 @@ import {
   encodeCanonical,
   epochId,
   epochSigningBytes,
+  hashBytes,
+  type Hash,
   type PairingContext,
+  type PairingDeviceMetadata,
   type PairingId,
+  type PairingVerificationPreview,
   Permission,
   pairingContextToCbor,
   pairingInfoBytes,
@@ -30,9 +35,11 @@ import {
 import {
   signDeviceCertificate,
   signPairingTransfer,
+  signPairingVerificationPreview,
   validateDeviceCertificate,
   verifyCheckpoint,
   verifyPairingTransferSignature,
+  verifyPairingVerificationPreviewSignature,
 } from "./authorization.js"
 import { AuthorizationError, CryptoError } from "./errors.js"
 import { sha256 } from "./hash.js"
@@ -86,7 +93,7 @@ export interface PendingPairingDevice {
   readonly hpkePublicKey: X25519PublicKey
 }
 
-export interface PairingDeviceRequest {
+export interface PairingDeviceRequest extends PairingDeviceMetadata {
   readonly pairingId: PairingId
   readonly vaultId: ReturnType<typeof vaultId>
   readonly deviceId: DeviceId
@@ -111,6 +118,7 @@ function pairingRequestBytes(
   pairingIdentifier: PairingId,
   vault: ReturnType<typeof vaultId>,
   pending: PendingPairingDevice,
+  metadata: PairingDeviceMetadata,
 ): Uint8Array {
   return encodeCanonical({
     domain: "meridian/v1/pairing-request",
@@ -119,6 +127,8 @@ function pairingRequestBytes(
     deviceId: pending.deviceId,
     signingPublicKey: pending.signingPublicKey,
     hpkePublicKey: pending.hpkePublicKey,
+    deviceName: metadata.deviceName,
+    platform: metadata.platform,
   })
 }
 
@@ -126,33 +136,44 @@ export function createPairingDeviceRequest(
   pairingIdentifier: PairingId,
   vault: ReturnType<typeof vaultId>,
   pending: PendingPairingDevice,
+  metadata: PairingDeviceMetadata,
 ): PairingDeviceRequest {
+  assertPairingDeviceMetadata(metadata)
   return {
     pairingId: pairingIdentifier,
     vaultId: vault,
     deviceId: pending.deviceId,
     signingPublicKey: pending.signingPublicKey,
     hpkePublicKey: pending.hpkePublicKey,
+    deviceName: metadata.deviceName,
+    platform: metadata.platform,
     proofOfPossession: sign(
-      pairingRequestBytes(pairingIdentifier, vault, pending),
+      pairingRequestBytes(pairingIdentifier, vault, pending, metadata),
       pending.signingPrivateKey,
     ),
   }
 }
 
 export function verifyPairingDeviceRequest(request: PairingDeviceRequest): boolean {
-  return verify(
-    encodeCanonical({
-      domain: "meridian/v1/pairing-request",
-      pairingId: request.pairingId,
-      vaultId: request.vaultId,
-      deviceId: request.deviceId,
-      signingPublicKey: request.signingPublicKey,
-      hpkePublicKey: request.hpkePublicKey,
-    }),
-    request.proofOfPossession,
-    request.signingPublicKey,
-  )
+  try {
+    assertPairingDeviceMetadata(request)
+    return verify(
+      encodeCanonical({
+        domain: "meridian/v1/pairing-request",
+        pairingId: request.pairingId,
+        vaultId: request.vaultId,
+        deviceId: request.deviceId,
+        signingPublicKey: request.signingPublicKey,
+        hpkePublicKey: request.hpkePublicKey,
+        deviceName: request.deviceName,
+        platform: request.platform,
+      }),
+      request.proofOfPossession,
+      request.signingPublicKey,
+    )
+  } catch {
+    return false
+  }
 }
 
 export async function pairingVerificationPhrase(context: PairingContext): Promise<string> {
@@ -174,6 +195,7 @@ export interface PreparePairingInput {
 export interface PreparedPairingPackage {
   readonly package: SignedPairingTransfer
   readonly verificationPhrase: string
+  readonly preview: PairingVerificationPreview
 }
 
 export async function preparePairingEpochPackage(
@@ -223,6 +245,8 @@ export async function preparePairingEpochPackage(
     newDeviceId: input.request.deviceId,
     newDeviceSigningPublicKey: input.request.signingPublicKey,
     newDeviceHpkePublicKey: input.request.hpkePublicKey,
+    newDeviceName: input.request.deviceName,
+    newDevicePlatform: input.request.platform,
     certificate,
     authorizationChain: input.authorizationChain,
     recoveryPublicKey: input.recoveryPublicKey,
@@ -257,7 +281,23 @@ export async function preparePairingEpochPackage(
       input.approver.signingPrivateKey,
     ),
   }
-  return { package: signed, verificationPhrase: await pairingVerificationPhrase(context) }
+  const transferHash = await sha256(serializePairingPackage(signed))
+  const preview: PairingVerificationPreview = {
+    context,
+    approverDeviceId: input.approver.deviceId,
+    transferHash,
+    signature: signPairingVerificationPreview(
+      context,
+      input.approver.deviceId,
+      transferHash,
+      input.approver.signingPrivateKey,
+    ),
+  }
+  return {
+    package: signed,
+    verificationPhrase: await pairingVerificationPhrase(context),
+    preview,
+  }
 }
 
 export function serializePairingPackage(value: SignedPairingTransfer): Uint8Array {
@@ -268,6 +308,15 @@ export function serializePairingPackage(value: SignedPairingTransfer): Uint8Arra
       ciphertext: value.transfer.ciphertext,
     },
     approverDeviceId: value.approverDeviceId,
+    signature: value.signature,
+  })
+}
+
+export function serializePairingVerificationPreview(value: PairingVerificationPreview): Uint8Array {
+  return encodeCanonical({
+    context: pairingContextToCbor(value.context),
+    approverDeviceId: value.approverDeviceId,
+    transferHash: value.transferHash,
     signature: value.signature,
   })
 }
@@ -290,6 +339,27 @@ function fixed(value: CborValue | undefined, length: number, label: string): Uin
     throw new CryptoError("INVALID_PAIRING_PACKAGE", `${label} must contain ${length} bytes`)
   }
   return value
+}
+
+export function deserializePairingVerificationPreview(
+  encoded: Uint8Array,
+): PairingVerificationPreview {
+  const envelope = record(decodeCanonical(encoded), "pairing verification preview")
+  if (
+    Object.keys(envelope).sort().join("\0") !==
+    ["approverDeviceId", "context", "signature", "transferHash"].join("\0")
+  ) {
+    throw new CryptoError(
+      "INVALID_PAIRING_PACKAGE",
+      "Pairing verification preview has missing or unknown fields",
+    )
+  }
+  return {
+    context: decodePairingContextValue(envelope.context as CborValue),
+    approverDeviceId: deviceId(fixed(envelope.approverDeviceId, 16, "approver device ID")),
+    transferHash: hashBytes(fixed(envelope.transferHash, 32, "pairing transfer hash")),
+    signature: ed25519Signature(fixed(envelope.signature, 64, "preview signature")),
+  }
 }
 
 export function deserializePairingPackage(encoded: Uint8Array): SignedPairingTransfer {
@@ -324,62 +394,91 @@ export function deserializePairingPackage(encoded: Uint8Array): SignedPairingTra
   }
 }
 
-export interface ConsumePairingInput {
-  readonly pending: PendingPairingDevice
-  readonly package: SignedPairingTransfer
-  readonly confirmedVerificationPhrase: string
-  readonly now: number
-}
-
-export async function consumePairingEpochPackage(
-  input: ConsumePairingInput,
-): Promise<DeviceKeyBundle> {
-  const context = input.package.context
-  if (context.expiresAt <= input.now) throw new AuthorizationError("Pairing package has expired")
+function validatePairingContext(
+  pending: PendingPairingDevice,
+  context: PairingContext,
+  approverDeviceId: DeviceId,
+  now: number,
+): DeviceCertificate {
+  if (!Number.isSafeInteger(now) || now < 0) {
+    throw new AuthorizationError("Pairing verification time is invalid")
+  }
+  if (context.expiresAt <= now) throw new AuthorizationError("Pairing package has expired")
+  try {
+    assertPairingDeviceMetadata({
+      deviceName: context.newDeviceName,
+      platform: context.newDevicePlatform,
+    })
+  } catch {
+    throw new AuthorizationError("Pairing device metadata is invalid")
+  }
   if (
-    !bytesEqual(context.newDeviceId, input.pending.deviceId) ||
-    !bytesEqual(context.newDeviceSigningPublicKey, input.pending.signingPublicKey) ||
-    !bytesEqual(context.newDeviceHpkePublicKey, input.pending.hpkePublicKey)
+    !bytesEqual(context.newDeviceId, pending.deviceId) ||
+    !bytesEqual(context.newDeviceSigningPublicKey, pending.signingPublicKey) ||
+    !bytesEqual(context.newDeviceHpkePublicKey, pending.hpkePublicKey)
   ) {
     throw new AuthorizationError("Pairing package substituted the new device identity")
   }
-  const phrase = await pairingVerificationPhrase(context)
-  if (phrase !== input.confirmedVerificationPhrase) {
-    throw new AuthorizationError("Pairing verification phrase was not confirmed")
+  if (
+    !bytesEqual(context.certificate.body.vaultId, context.vaultId) ||
+    !bytesEqual(context.certificate.body.deviceId, context.newDeviceId) ||
+    !bytesEqual(context.certificate.body.signingPublicKey, context.newDeviceSigningPublicKey) ||
+    !bytesEqual(context.certificate.body.hpkePublicKey, context.newDeviceHpkePublicKey) ||
+    !bytesEqual(context.certificate.body.epochId, context.epoch.body.epochId)
+  ) {
+    throw new AuthorizationError("Pairing certificate does not match the candidate identity")
   }
 
-  const byId = new Map(
-    context.authorizationChain.map((certificate) => [
-      bytesToHex(certificate.body.certificateId),
-      certificate,
-    ]),
-  )
-  const approver = context.authorizationChain.find((certificate) =>
-    bytesEqual(certificate.body.deviceId, input.package.approverDeviceId),
-  )
-  if (approver === undefined) throw new AuthorizationError("Pairing approver certificate is absent")
-  validateDeviceCertificate(context.certificate, {
+  const byId = new Map<string, DeviceCertificate>()
+  for (const certificate of context.authorizationChain) {
+    const id = bytesToHex(certificate.body.certificateId)
+    if (byId.has(id)) {
+      throw new AuthorizationError("Pairing authorization chain contains duplicate certificates")
+    }
+    byId.set(id, certificate)
+  }
+  const approver = context.authorizationChain[0]
+  if (
+    approver === undefined ||
+    !bytesEqual(approver.body.deviceId, approverDeviceId) ||
+    context.certificate.body.issuer.kind !== "device" ||
+    !bytesEqual(context.certificate.body.issuer.certificateId, approver.body.certificateId)
+  ) {
+    throw new AuthorizationError("Pairing approver certificate is absent")
+  }
+  const validatedChain = validateDeviceCertificate(context.certificate, {
     recoveryPublicKey: context.recoveryPublicKey,
     lookup: (id) => byId.get(bytesToHex(id)),
     atCursor: context.checkpoint.body.cursor,
-    atTime: input.now,
+    atTime: now,
   })
   if (
-    !verifyPairingTransferSignature(
-      context,
-      input.package.transfer,
-      input.package.approverDeviceId,
-      input.package.signature,
-      approver.body.signingPublicKey,
+    validatedChain.length !== context.authorizationChain.length + 1 ||
+    context.authorizationChain.some(
+      (certificate, index) =>
+        !bytesEqual(
+          certificate.body.certificateId,
+          validatedChain[index + 1]?.body.certificateId ?? new Uint8Array(),
+        ),
     )
   ) {
-    throw new AuthorizationError("Pairing transcript signature is invalid")
+    throw new AuthorizationError("Pairing authorization chain is not the exact certificate chain")
+  }
+
+  if (
+    !bytesEqual(context.checkpoint.body.vaultId, context.vaultId) ||
+    !bytesEqual(context.checkpoint.body.epochId, context.epoch.body.epochId)
+  ) {
+    throw new AuthorizationError("Pairing checkpoint does not match the vault epoch")
   }
   const checkpointSigner = context.authorizationChain.find((certificate) =>
     bytesEqual(certificate.body.deviceId, context.checkpoint.body.signerDeviceId),
   )
   if (checkpointSigner === undefined || !verifyCheckpoint(context.checkpoint, checkpointSigner)) {
     throw new AuthorizationError("Pairing checkpoint signature is invalid")
+  }
+  if (!bytesEqual(context.epoch.body.vaultId, context.vaultId)) {
+    throw new AuthorizationError("Pairing epoch targets another vault")
   }
   const epochSigner =
     context.epoch.body.createdBy === "recovery"
@@ -392,6 +491,77 @@ export async function consumePairingEpochPackage(
     !verify(epochSigningBytes(context.epoch.body), context.epoch.signature, epochSigner)
   ) {
     throw new AuthorizationError("Pairing epoch signature is invalid")
+  }
+  return approver
+}
+
+export interface InspectedPairingVerification {
+  readonly verificationPhrase: string
+  readonly transferHash: Hash
+}
+
+export async function inspectPairingVerificationPreview(
+  pending: PendingPairingDevice,
+  preview: PairingVerificationPreview,
+  now: number,
+): Promise<InspectedPairingVerification> {
+  if (!(preview.transferHash instanceof Uint8Array) || preview.transferHash.byteLength !== 32) {
+    throw new AuthorizationError("Pairing verification preview transfer hash is invalid")
+  }
+  const approver = validatePairingContext(pending, preview.context, preview.approverDeviceId, now)
+  if (
+    !verifyPairingVerificationPreviewSignature(
+      preview.context,
+      preview.approverDeviceId,
+      preview.transferHash,
+      preview.signature,
+      approver.body.signingPublicKey,
+    )
+  ) {
+    throw new AuthorizationError("Pairing verification preview signature is invalid")
+  }
+  return {
+    verificationPhrase: await pairingVerificationPhrase(preview.context),
+    transferHash: preview.transferHash,
+  }
+}
+
+export interface ConsumePairingInput {
+  readonly pending: PendingPairingDevice
+  readonly package: SignedPairingTransfer
+  readonly expectedTransferHash: Hash
+  readonly confirmedVerificationPhrase: string
+  readonly now: number
+}
+
+export async function consumePairingEpochPackage(
+  input: ConsumePairingInput,
+): Promise<DeviceKeyBundle> {
+  const context = input.package.context
+  const approver = validatePairingContext(
+    input.pending,
+    context,
+    input.package.approverDeviceId,
+    input.now,
+  )
+  const actualTransferHash = await sha256(serializePairingPackage(input.package))
+  if (!bytesEqual(actualTransferHash, input.expectedTransferHash)) {
+    throw new AuthorizationError("Pairing transfer does not match the verified preview")
+  }
+  if (
+    !verifyPairingTransferSignature(
+      context,
+      input.package.transfer,
+      input.package.approverDeviceId,
+      input.package.signature,
+      approver.body.signingPublicKey,
+    )
+  ) {
+    throw new AuthorizationError("Pairing transcript signature is invalid")
+  }
+  const phrase = await pairingVerificationPhrase(context)
+  if (phrase !== input.confirmedVerificationPhrase) {
+    throw new AuthorizationError("Pairing verification phrase was not confirmed")
   }
 
   const plaintext = await hpkeOpen(

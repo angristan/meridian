@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest"
 import {
   acceptAuthorizedEpoch,
   assertConsistentHighWaterMark,
+  assertPairingDeviceMetadata,
   CIPHER_SUITE,
   certificateId,
   type DeviceCertificate,
@@ -64,6 +65,24 @@ describe("protocol wire models", () => {
     expect(() =>
       decodeDeviceCertificate(encodeCanonical({ body, signature: valid.signature })),
     ).toThrow(/unknown fields/)
+  })
+
+  it("validates display metadata by Unicode character count", () => {
+    expect(() =>
+      assertPairingDeviceMetadata({ deviceName: "Stanislas’s iPhone", platform: "iOS" }),
+    ).not.toThrow()
+    expect(() => assertPairingDeviceMetadata({ deviceName: "", platform: "iOS" })).toThrow(
+      /between 1 and 80/,
+    )
+    expect(() =>
+      assertPairingDeviceMetadata({ deviceName: "iPhone", platform: "x".repeat(33) }),
+    ).toThrow(/between 1 and 32/)
+    expect(() =>
+      assertPairingDeviceMetadata({ deviceName: "📱".repeat(80), platform: "iOS" }),
+    ).not.toThrow()
+    expect(() =>
+      assertPairingDeviceMetadata({ deviceName: "invalid-\ud800", platform: "iOS" }),
+    ).toThrow(/valid Unicode/)
   })
 
   it("rejects rollback and downgrade", () => {

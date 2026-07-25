@@ -171,6 +171,17 @@ export class MeridianRemoteClient implements RemotePort {
     return result.devices.map(parseDevice)
   }
 
+  async updateDeviceDescriptor(descriptor: {
+    deviceName: string
+    platform: string
+  }): Promise<void> {
+    await this.jsonRequest("/v1/device/descriptor", {
+      method: "PUT",
+      body: descriptor,
+      authenticated: true,
+    })
+  }
+
   async createPairing(): Promise<PairingCapability> {
     const result = await this.jsonRequest("/v1/pairings", {
       method: "POST",
@@ -224,12 +235,72 @@ export class MeridianRemoteClient implements RemotePort {
     )
   }
 
+  async releasePairing(pairingId: string, payload: unknown): Promise<PairingResult> {
+    return parsePairingResult(
+      await this.jsonRequest(`/v1/pairings/${encodeURIComponent(pairingId)}/release`, {
+        method: "POST",
+        body: payload,
+        authenticated: true,
+      }),
+    )
+  }
+
   async getPairingResult(pairingId: string, capability: string): Promise<PairingResult> {
     return parsePairingResult(
       await this.jsonRequest(`/v1/pairings/${encodeURIComponent(pairingId)}/result`, {
         method: "POST",
         body: { capability },
         authenticated: false,
+      }),
+    )
+  }
+
+  async confirmPairingOwner(pairingId: string): Promise<PairingResult> {
+    return parsePairingResult(
+      await this.jsonRequest(`/v1/pairings/${encodeURIComponent(pairingId)}/confirm-owner`, {
+        method: "POST",
+        body: {},
+        authenticated: true,
+      }),
+    )
+  }
+
+  async confirmPairingCandidate(pairingId: string, payload: unknown): Promise<PairingResult> {
+    return parsePairingResult(
+      await this.jsonRequest(`/v1/pairings/${encodeURIComponent(pairingId)}/confirm-candidate`, {
+        method: "POST",
+        body: payload,
+        authenticated: false,
+      }),
+    )
+  }
+
+  async completePairing(pairingId: string, payload: unknown): Promise<PairingResult> {
+    return parsePairingResult(
+      await this.jsonRequest(`/v1/pairings/${encodeURIComponent(pairingId)}/complete`, {
+        method: "POST",
+        body: payload,
+        authenticated: false,
+      }),
+    )
+  }
+
+  async cancelPairing(pairingId: string, capability: string): Promise<PairingResult> {
+    return parsePairingResult(
+      await this.jsonRequest(`/v1/pairings/${encodeURIComponent(pairingId)}/cancel`, {
+        method: "POST",
+        body: { capability },
+        authenticated: false,
+      }),
+    )
+  }
+
+  async rejectPairing(pairingId: string): Promise<PairingResult> {
+    return parsePairingResult(
+      await this.jsonRequest(`/v1/pairings/${encodeURIComponent(pairingId)}/reject`, {
+        method: "POST",
+        body: {},
+        authenticated: true,
       }),
     )
   }

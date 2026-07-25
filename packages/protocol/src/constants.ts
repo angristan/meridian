@@ -23,6 +23,7 @@ export const Domain = Object.freeze({
   Operation: "meridian/v1/operation",
   PairingInfo: "meridian/v1/pairing-info",
   PairingTransfer: "meridian/v1/pairing-transfer",
+  PairingVerificationPreview: "meridian/v1/pairing-verification-preview",
   RecoveryPackage: "meridian/v1/recovery-package",
 } as const)
 

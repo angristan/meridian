@@ -10,9 +10,11 @@ import type {
   ScannedFileSnapshot,
   PairingApprovalMaterial,
   PairingCapability,
+  PairingConfirmationMaterial,
   PairingJoinMaterial,
   PairingResult,
   PairingStatus,
+  PairingVerificationMaterial,
   RemoteChanges,
   RemoteDevice,
   RemoteOperation,
@@ -188,6 +190,18 @@ export class FakeCrypto implements CryptoPort {
     throw new Error("Not implemented by fake")
   }
 
+  async inspectPairingVerification(): Promise<PairingVerificationMaterial> {
+    throw new Error("Not implemented by fake")
+  }
+
+  async createPairingConfirmation(): Promise<PairingConfirmationMaterial> {
+    throw new Error("Not implemented by fake")
+  }
+
+  async verifyPairingConfirmation(): Promise<boolean> {
+    throw new Error("Not implemented by fake")
+  }
+
   async consumePairingResult(): Promise<PairedDeviceMaterial> {
     throw new Error("Not implemented by fake")
   }
@@ -233,6 +247,8 @@ export class FakeRemote implements RemotePort {
     return []
   }
 
+  async updateDeviceDescriptor(): Promise<void> {}
+
   async createPairing(): Promise<PairingCapability> {
     throw new Error("Not implemented by fake")
   }
@@ -253,7 +269,31 @@ export class FakeRemote implements RemotePort {
     throw new Error("Not implemented by fake")
   }
 
+  async releasePairing(): Promise<PairingResult> {
+    throw new Error("Not implemented by fake")
+  }
+
   async getPairingResult(): Promise<PairingResult> {
+    throw new Error("Not implemented by fake")
+  }
+
+  async confirmPairingOwner(): Promise<PairingResult> {
+    throw new Error("Not implemented by fake")
+  }
+
+  async confirmPairingCandidate(): Promise<PairingResult> {
+    throw new Error("Not implemented by fake")
+  }
+
+  async completePairing(): Promise<PairingResult> {
+    throw new Error("Not implemented by fake")
+  }
+
+  async cancelPairing(): Promise<PairingResult> {
+    throw new Error("Not implemented by fake")
+  }
+
+  async rejectPairing(): Promise<PairingResult> {
     throw new Error("Not implemented by fake")
   }
 

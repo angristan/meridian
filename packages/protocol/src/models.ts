@@ -140,12 +140,19 @@ export interface LogEntry {
   readonly entryHash: Hash
 }
 
+export interface PairingDeviceMetadata {
+  readonly deviceName: string
+  readonly platform: string
+}
+
 export interface PairingContext {
   readonly pairingId: PairingId
   readonly vaultId: VaultId
   readonly newDeviceId: DeviceId
   readonly newDeviceSigningPublicKey: Ed25519PublicKey
   readonly newDeviceHpkePublicKey: X25519PublicKey
+  readonly newDeviceName: string
+  readonly newDevicePlatform: string
   readonly certificate: DeviceCertificate
   readonly authorizationChain: readonly DeviceCertificate[]
   readonly recoveryPublicKey: Ed25519PublicKey
@@ -164,6 +171,14 @@ export interface SignedPairingTransfer {
   readonly context: PairingContext
   readonly transfer: HpkeTransfer
   readonly approverDeviceId: DeviceId
+  readonly signature: Ed25519Signature
+}
+
+/** Signed transcript metadata safe to release before the encrypted transfer. */
+export interface PairingVerificationPreview {
+  readonly context: PairingContext
+  readonly approverDeviceId: DeviceId
+  readonly transferHash: Hash
   readonly signature: Ed25519Signature
 }
 

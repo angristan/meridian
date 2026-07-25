@@ -3,7 +3,9 @@ import type {
   CryptoPort,
   DeviceKeyMaterial,
   LocalRevision,
+  PairingApprovalMaterial,
   PairingCapability,
+  PairingDeviceDescriptor,
   PairingStatus,
   RemoteDevice,
   RemotePort,
@@ -39,6 +41,10 @@ export class SyncController {
     private readonly crypto: CryptoPort,
     private readonly categories: () => Record<ConfigCategory, boolean>,
     private readonly onStatus: (status: SyncStatus) => void,
+    private readonly deviceDescriptor: () => PairingDeviceDescriptor = () => ({
+      deviceName: "Meridian device",
+      platform: "Unknown",
+    }),
   ) {
     const revisionLoader = new RevisionLoader(remote, crypto)
     const applier = new OperationApplier(vault, journal, remote, crypto, revisionLoader, categories)
@@ -129,7 +135,9 @@ export class SyncController {
     return this.remote.getPairingStatus(pairingId)
   }
 
-  async approvePairing(pairingId: string): Promise<string> {
+  async approvePairing(
+    pairingId: string,
+  ): Promise<{ approval: PairingApprovalMaterial; candidatePackage: string }> {
     const device = this.requireDevice()
     const pairing = await this.remote.getPairingStatus(pairingId)
     if (!pairing.candidatePackage) {
@@ -142,7 +150,19 @@ export class SyncController {
       devices.map((entry) => entry.certificate),
     )
     await this.remote.approvePairing(pairingId, approval.payload)
-    return approval.verificationPhrase
+    return { approval, candidatePackage: pairing.candidatePackage }
+  }
+
+  async confirmPairingOwner(pairingId: string): Promise<void> {
+    await this.remote.confirmPairingOwner(pairingId)
+  }
+
+  async releasePairing(pairingId: string, payload: unknown): Promise<void> {
+    await this.remote.releasePairing(pairingId, payload)
+  }
+
+  async rejectPairing(pairingId: string): Promise<void> {
+    await this.remote.rejectPairing(pairingId)
   }
 
   async repairLocalIndex(): Promise<void> {
@@ -203,6 +223,7 @@ export class SyncController {
     if (this.authenticated) return
     if (!networkAvailable()) throw new Error("No network connection")
     await this.remote.authenticate(device, this.crypto)
+    await this.remote.updateDeviceDescriptor(this.deviceDescriptor())
     this.authenticated = true
     this.startNotifications()
   }

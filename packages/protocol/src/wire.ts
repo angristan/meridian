@@ -3,6 +3,7 @@ import {
   certificateId,
   type DeviceId,
   deviceId,
+  type Hash,
   ed25519PublicKey,
   ed25519Signature,
   epochId,
@@ -20,9 +21,13 @@ import type {
   EpochDeclaration,
   EpochDeclarationBody,
   PairingContext,
+  PairingDeviceMetadata,
   Signed,
   SignedCheckpoint,
 } from "./models.js"
+
+const utf8Encoder = new TextEncoder()
+const utf8Decoder = new TextDecoder()
 
 export class ProtocolDecodeError extends Error {
   constructor(message: string) {
@@ -62,6 +67,23 @@ function bytes(value: CborValue | undefined, length: number, label: string): Uin
 function text(value: CborValue | undefined, label: string): string {
   if (typeof value !== "string") throw new ProtocolDecodeError(`${label} must be text`)
   return value
+}
+
+function boundedText(value: CborValue | undefined, maximum: number, label: string): string {
+  const decoded = text(value, label)
+  if (utf8Decoder.decode(utf8Encoder.encode(decoded)) !== decoded) {
+    throw new ProtocolDecodeError(`${label} must be valid Unicode text`)
+  }
+  const length = [...decoded].length
+  if (length < 1 || length > maximum) {
+    throw new ProtocolDecodeError(`${label} must contain between 1 and ${maximum} characters`)
+  }
+  return decoded
+}
+
+export function assertPairingDeviceMetadata(metadata: PairingDeviceMetadata): void {
+  boundedText(metadata.deviceName, 80, "pairing device name")
+  boundedText(metadata.platform, 32, "pairing device platform")
 }
 
 function integer(value: CborValue | undefined, label: string): number {
@@ -358,12 +380,18 @@ export function decodeCheckpoint(encoded: Uint8Array): SignedCheckpoint {
 }
 
 export function pairingContextToCbor(context: PairingContext): CborValue {
+  assertPairingDeviceMetadata({
+    deviceName: context.newDeviceName,
+    platform: context.newDevicePlatform,
+  })
   return {
     pairingId: context.pairingId,
     vaultId: context.vaultId,
     newDeviceId: context.newDeviceId,
     newDeviceSigningPublicKey: context.newDeviceSigningPublicKey,
     newDeviceHpkePublicKey: context.newDeviceHpkePublicKey,
+    newDeviceName: context.newDeviceName,
+    newDevicePlatform: context.newDevicePlatform,
     certificate: deviceCertificateToCbor(context.certificate),
     authorizationChain: context.authorizationChain.map(deviceCertificateToCbor),
     recoveryPublicKey: context.recoveryPublicKey,
@@ -384,6 +412,8 @@ export function decodePairingContextValue(value: CborValue): PairingContext {
       "newDeviceId",
       "newDeviceSigningPublicKey",
       "newDeviceHpkePublicKey",
+      "newDeviceName",
+      "newDevicePlatform",
       "certificate",
       "authorizationChain",
       "recoveryPublicKey",
@@ -411,6 +441,8 @@ export function decodePairingContextValue(value: CborValue): PairingContext {
     newDeviceHpkePublicKey: x25519PublicKey(
       bytes(context.newDeviceHpkePublicKey, 32, "new HPKE public key"),
     ),
+    newDeviceName: boundedText(context.newDeviceName, 80, "new device name"),
+    newDevicePlatform: boundedText(context.newDevicePlatform, 32, "new device platform"),
     certificate: decodeDeviceCertificateValue(context.certificate as CborValue),
     authorizationChain: chain,
     recoveryPublicKey: ed25519PublicKey(
@@ -439,6 +471,18 @@ export function pairingTransferSigningBytes(
       ciphertext: transfer.ciphertext,
     },
     approverDeviceId,
+  })
+}
+
+export function pairingVerificationPreviewSigningBytes(
+  context: PairingContext,
+  approverDeviceId: DeviceId,
+  transferHash: Hash,
+): Uint8Array {
+  return signaturePayload(Domain.PairingVerificationPreview, {
+    context: pairingContextToCbor(context),
+    approverDeviceId,
+    transferHash,
   })
 }
 

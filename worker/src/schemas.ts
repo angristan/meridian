@@ -9,6 +9,11 @@ export const DevicePublicIdentitySchema = Schema.Struct({
 
 export type DevicePublicIdentity = typeof DevicePublicIdentitySchema.Type
 
+export const DeviceDescriptorSchema = Schema.Struct({
+  deviceName: Schema.String,
+  platform: Schema.String,
+})
+
 export const SetupSessionRequestSchema = Schema.Struct({ token: Schema.String })
 
 export const SetupClaimSchema = Schema.Struct({
@@ -51,9 +56,11 @@ export const PairingJoinSchema = Schema.Struct({
     deviceId: Schema.String,
     signingPublicKey: Schema.String,
     hpkePublicKey: Schema.String,
+    deviceName: Schema.String,
+    platform: Schema.String,
   }),
   proof: Schema.String,
-  requestProof: Schema.optionalKey(Schema.String),
+  requestProof: Schema.String,
 })
 
 export type PairingJoin = typeof PairingJoinSchema.Type
@@ -61,13 +68,29 @@ export type PairingJoin = typeof PairingJoinSchema.Type
 export const PairingApprovalSchema = Schema.Struct({
   certificate: Schema.String,
   transcriptHash: Schema.String,
-  approvalSignature: Schema.String,
-  hpkeTransfer: Schema.String,
+  verificationPreview: Schema.String,
 })
 
 export type PairingApproval = typeof PairingApprovalSchema.Type
 
+export const PairingReleaseSchema = Schema.Struct({
+  approvalSignature: Schema.String,
+  hpkeTransfer: Schema.String,
+})
+
+export type PairingRelease = typeof PairingReleaseSchema.Type
+
 export const PairingResultSchema = Schema.Struct({ capability: Schema.String })
+
+export const PairingCandidateConfirmationSchema = Schema.Struct({
+  capability: Schema.String,
+  transferHash: Schema.String,
+  proof: Schema.String,
+})
+
+export type PairingCandidateConfirmation = typeof PairingCandidateConfirmationSchema.Type
+
+export const PairingCancelSchema = Schema.Struct({ capability: Schema.String })
 
 export const OperationTypeSchema = Schema.Literals([
   "revision",
