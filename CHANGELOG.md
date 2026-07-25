@@ -1,3 +1,10 @@
+# [1.2.0](https://github.com/angristan/meridian/compare/1.1.3...1.2.0) (2026-07-25)
+
+
+### Features
+
+* improve secure device pairing ([8a99730](https://github.com/angristan/meridian/commit/8a99730b5f4106cc52ebff7084152a96da9f9b42))
+
 ## [1.1.3](https://github.com/angristan/meridian/compare/1.1.2...1.1.3) (2026-07-25)
 
 
