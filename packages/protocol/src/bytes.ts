@@ -1,5 +1,7 @@
 const brand: unique symbol = Symbol("meridian.protocol.bytes.brand")
 
+export const IDENTIFIER_BYTES = 16
+
 export type BrandedBytes<Name extends string> = Uint8Array & {
   readonly [brand]: Name
 }
@@ -35,7 +37,7 @@ function checkedBytes<Name extends string>(value: Uint8Array, length: number, na
 }
 
 export const idBytes = <Name extends string>(value: Uint8Array, name: Name) =>
-  checkedBytes(value, 16, name)
+  checkedBytes(value, IDENTIFIER_BYTES, name)
 
 export const hashBytes = (value: Uint8Array) => checkedBytes(value, 32, "Hash") as Hash
 export const ed25519PublicKey = (value: Uint8Array) =>

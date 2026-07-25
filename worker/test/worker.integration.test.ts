@@ -6,7 +6,7 @@ import {
 import { type Ed25519PrivateKey, encodeDeviceCertificate } from "@meridian/protocol"
 import { env, runInDurableObject, SELF } from "cloudflare:test"
 import { describe, expect, it } from "vitest"
-import { base64UrlEncode, randomToken, ZERO_HASH } from "../src/encoding"
+import { base64UrlDecode, base64UrlEncode, randomToken, ZERO_HASH } from "../src/encoding"
 import type { Operation, PairingApproval, PairingJoin, SetupClaim } from "../src/schemas"
 import {
   authSigningMessage,
@@ -252,6 +252,7 @@ describe("Meridian Worker integration", () => {
       pairingId: string
       capability: string
     }
+    expect(base64UrlDecode(pairing.pairingId).byteLength).toBe(16)
     const candidateKey = await createSigningKey()
     const candidateId = randomToken(18)
     const candidate = {

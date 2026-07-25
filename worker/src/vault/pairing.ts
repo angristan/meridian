@@ -1,3 +1,4 @@
+import { IDENTIFIER_BYTES } from "@meridian/protocol"
 import { assertIdentifier, hashToken, randomToken, verifyEd25519 } from "../encoding"
 import { assert, HttpError } from "../errors"
 import {
@@ -67,7 +68,7 @@ export class VaultPairing {
     )
     const now = Date.now()
     cleanupExpired(this.sql, now)
-    const pairingId = randomToken(18)
+    const pairingId = randomToken(IDENTIFIER_BYTES)
     const capability = randomToken()
     const expiresAt = now + ttl * 1_000
     this.sql.exec(
