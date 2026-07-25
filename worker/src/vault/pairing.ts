@@ -82,6 +82,79 @@ export class VaultPairing {
     return json({ pairingId, capability, vaultId: session.vaultId, expiresAt }, { status: 201 })
   }
 
+  async pairingStatus(request: Request, pairingId: string): Promise<Response> {
+    assertIdentifier(pairingId, "pairingId")
+    const session = await authenticate(this.sql, request)
+    const row = this.sql
+      .exec<{
+        initiator_device_id: string
+        status: string
+        expires_at: number
+        candidate_device_id: string | null
+        candidate_signing_public_key: string | null
+        candidate_hpke_public_key: string | null
+        candidate_request_proof: string | null
+      }>(
+        `SELECT initiator_device_id, status, expires_at, candidate_device_id,
+                candidate_signing_public_key, candidate_hpke_public_key,
+                candidate_request_proof
+         FROM pairings WHERE pairing_id = ?`,
+        pairingId,
+      )
+      .toArray()[0]
+    assert(row, new HttpError(404, "pairing_not_found", "Pairing request does not exist"))
+    assert(
+      row.initiator_device_id === session.deviceId,
+      new HttpError(403, "wrong_initiator", "Pairing belongs to another device"),
+    )
+    assert(
+      row.expires_at > Date.now(),
+      new HttpError(410, "pairing_expired", "Pairing request expired"),
+    )
+
+    const candidate =
+      row.candidate_device_id &&
+      row.candidate_signing_public_key &&
+      row.candidate_hpke_public_key &&
+      row.candidate_request_proof
+        ? {
+            pairingId,
+            vaultId: session.vaultId,
+            expiresAt: row.expires_at,
+            deviceId: row.candidate_device_id,
+            signingPublicKey: row.candidate_signing_public_key,
+            hpkePublicKey: row.candidate_hpke_public_key,
+            requestProof: row.candidate_request_proof,
+          }
+        : undefined
+    return json({
+      pairingId,
+      status: row.status,
+      expiresAt: row.expires_at,
+      relayAvailable: candidate !== undefined,
+      ...(candidate === undefined ? {} : { candidate }),
+    })
+  }
+
+  async pairingProgress(request: Request, pairingId: string): Promise<Response> {
+    assertIdentifier(pairingId, "pairingId")
+    const input = decode(PairingResultSchema, await requestJson(request))
+    const capabilityHash = await hashToken(input.capability)
+    const row = this.sql
+      .exec<{ status: string; expires_at: number }>(
+        "SELECT status, expires_at FROM pairings WHERE pairing_id = ? AND capability_hash = ?",
+        pairingId,
+        capabilityHash,
+      )
+      .toArray()[0]
+    assert(row, new HttpError(404, "pairing_not_found", "Pairing capability is invalid"))
+    assert(
+      row.expires_at > Date.now(),
+      new HttpError(410, "pairing_expired", "Pairing request expired"),
+    )
+    return json({ pairingId, status: row.status, expiresAt: row.expires_at })
+  }
+
   async joinPairing(request: Request, pairingId: string): Promise<Response> {
     assertIdentifier(pairingId, "pairingId")
     const join = decode(PairingJoinSchema, await requestJson(request))
@@ -89,6 +162,7 @@ export class VaultPairing {
     validatePublicKey(join.device.signingPublicKey, "signingPublicKey")
     validatePublicKey(join.device.hpkePublicKey, "hpkePublicKey")
     validateSignature(join.proof)
+    if (join.requestProof !== undefined) validateSignature(join.requestProof)
     const vault = vaultState(this.sql)
     assert(vault, new HttpError(409, "not_claimed", "This deployment has not been claimed"))
 
@@ -129,12 +203,13 @@ export class VaultPairing {
     const updated = this.sql.exec(
       `UPDATE pairings SET
         status = 'joined', candidate_device_id = ?, candidate_signing_public_key = ?,
-        candidate_hpke_public_key = ?, candidate_proof = ?
+        candidate_hpke_public_key = ?, candidate_proof = ?, candidate_request_proof = ?
        WHERE pairing_id = ? AND capability_hash = ? AND status = 'pending' AND expires_at > ?`,
       join.device.deviceId,
       join.device.signingPublicKey,
       join.device.hpkePublicKey,
       join.proof,
+      join.requestProof ?? null,
       pairingId,
       capabilityHash,
       now,

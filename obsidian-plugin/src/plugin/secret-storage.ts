@@ -1,6 +1,7 @@
 import type { SecretStorage } from "obsidian"
 
-const PENDING_PAIRING_SECRET_ID = "meridian-pending-pairing"
+const PENDING_PAIRING_SECRET_PREFIX = "meridian-pending-pairing"
+const PENDING_PAIRING_RESULT_PREFIX = "meridian-pending-pairing-result"
 
 export class MeridianSecretStorage {
   constructor(private readonly storage: SecretStorage) {}
@@ -17,24 +18,42 @@ export class MeridianSecretStorage {
     this.storage.setSecret(deviceSecretId(deviceId), "")
   }
 
-  setPendingPairing(secret: string): void {
-    this.storage.setSecret(PENDING_PAIRING_SECRET_ID, secret)
+  setPendingPairing(pairingId: string, secret: string): void {
+    this.storage.setSecret(pairingSecretId(PENDING_PAIRING_SECRET_PREFIX, pairingId), secret)
   }
 
-  getPendingPairing(): string | null {
-    return this.storage.getSecret(PENDING_PAIRING_SECRET_ID)
+  getPendingPairing(pairingId: string): string | null {
+    return this.storage.getSecret(pairingSecretId(PENDING_PAIRING_SECRET_PREFIX, pairingId))
   }
 
-  clearPendingPairing(): void {
-    this.storage.setSecret(PENDING_PAIRING_SECRET_ID, "")
+  setPendingPairingResult(pairingId: string, result: string): void {
+    this.storage.setSecret(pairingSecretId(PENDING_PAIRING_RESULT_PREFIX, pairingId), result)
+  }
+
+  getPendingPairingResult(pairingId: string): string | null {
+    return this.storage.getSecret(pairingSecretId(PENDING_PAIRING_RESULT_PREFIX, pairingId))
+  }
+
+  clearPendingPairing(pairingId: string): void {
+    this.storage.setSecret(pairingSecretId(PENDING_PAIRING_SECRET_PREFIX, pairingId), "")
+    this.storage.setSecret(pairingSecretId(PENDING_PAIRING_RESULT_PREFIX, pairingId), "")
   }
 }
 
 export function deviceSecretId(deviceId: string): string {
-  const suffix = deviceId
+  const suffix = secretSuffix(deviceId, "Device ID")
+  return `meridian-device-${suffix}`
+}
+
+function pairingSecretId(prefix: string, pairingId: string): string {
+  return `${prefix}-${secretSuffix(pairingId, "Pairing ID")}`
+}
+
+function secretSuffix(value: string, label: string): string {
+  const suffix = value
     .toLowerCase()
     .replace(/[^a-z0-9-]/g, "")
     .slice(0, 40)
-  if (!suffix) throw new Error("Device ID cannot be represented in SecretStorage")
-  return `meridian-device-${suffix}`
+  if (!suffix) throw new Error(`${label} cannot be represented in SecretStorage`)
+  return suffix
 }

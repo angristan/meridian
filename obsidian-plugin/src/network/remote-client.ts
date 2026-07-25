@@ -5,6 +5,7 @@ import type {
   EncryptedBlob,
   PairingCapability,
   PairingResult,
+  PairingStatus,
   RemoteChanges,
   RemoteDevice,
   RemotePort,
@@ -20,6 +21,7 @@ import {
   parseJsonBody,
   parseOperation,
   parsePairingResult,
+  parsePairingStatus,
   requiredNumber,
   requiredString,
 } from "./response-parsers"
@@ -181,6 +183,25 @@ export class MeridianRemoteClient implements RemotePort {
       vaultId: requiredString(result, "vaultId"),
       expiresAt: requiredNumber(result, "expiresAt"),
     }
+  }
+
+  async getPairingStatus(pairingId: string): Promise<PairingStatus> {
+    return parsePairingStatus(
+      await this.jsonRequest(`/v1/pairings/${encodeURIComponent(pairingId)}`, {
+        method: "GET",
+        authenticated: true,
+      }),
+    )
+  }
+
+  async getPairingProgress(pairingId: string, capability: string): Promise<PairingStatus> {
+    return parsePairingStatus(
+      await this.jsonRequest(`/v1/pairings/${encodeURIComponent(pairingId)}/status`, {
+        method: "POST",
+        body: { capability },
+        authenticated: false,
+      }),
+    )
   }
 
   async joinPairing(pairingId: string, payload: unknown): Promise<PairingResult> {

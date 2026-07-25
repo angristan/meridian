@@ -6,6 +6,8 @@ import {
   INITIAL_STATUS,
   type LocalRevision,
   type MeridianSettings,
+  type PairingInvitation,
+  type PairingStatus,
   type SyncStatus,
 } from "./model"
 import { ObsidianHttpTransport } from "./network/obsidian-transport"
@@ -215,7 +217,7 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
     return this.controller?.devices() ?? []
   }
 
-  async createPairingLink(): Promise<string> {
+  async createPairingLink(): Promise<PairingInvitation> {
     if (!this.controller) throw new Error("Meridian is not connected")
     const pairing = await this.controller.createPairing()
     const query = new URLSearchParams({
@@ -225,12 +227,27 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
       vault: pairing.vaultId,
       expires: String(pairing.expiresAt),
     })
-    return `obsidian://meridian-pair?${query.toString()}`
+    return { ...pairing, link: `obsidian://meridian-pair?${query.toString()}` }
   }
 
-  async approvePairing(pairingId: string, candidatePackage: string): Promise<string> {
+  async getPairingStatus(pairingId: string): Promise<PairingStatus> {
     if (!this.controller) throw new Error("Meridian is not connected")
-    return this.controller.approvePairing(pairingId, candidatePackage)
+    return this.controller.pairingStatus(pairingId)
+  }
+
+  async getPairingProgress(
+    endpoint: string,
+    pairingId: string,
+    capability: string,
+  ): Promise<PairingStatus> {
+    const normalizedEndpoint = normalizeEndpoint(endpoint)
+    const remote = new MeridianRemoteClient(normalizedEndpoint, new ObsidianHttpTransport())
+    return remote.getPairingProgress(pairingId, capability)
+  }
+
+  async approvePairing(pairingId: string): Promise<string> {
+    if (!this.controller) throw new Error("Meridian is not connected")
+    return this.controller.approvePairing(pairingId)
   }
 
   async joinPairing(
@@ -239,18 +256,27 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
     capability: string,
     vaultId: string,
     expiresAt: number,
-  ): Promise<string> {
+  ): Promise<void> {
     const normalizedEndpoint = normalizeEndpoint(endpoint)
     const remote = new MeridianRemoteClient(normalizedEndpoint, new ObsidianHttpTransport())
+    const progress = await remote.getPairingProgress(pairingId, capability)
+    if (progress.status !== "pending") {
+      if (this.secrets.getPendingPairing(pairingId)) return
+      throw new Error("This pairing request was joined by another local attempt")
+    }
     const joining = await this.cryptoPort.createPairingJoin({
       pairingId,
       capability,
       vaultId,
       expiresAt,
     })
-    this.secrets.setPendingPairing(joining.pendingSecret)
-    await remote.joinPairing(pairingId, joining.payload)
-    return joining.candidatePackage
+    this.secrets.setPendingPairing(pairingId, joining.pendingSecret)
+    try {
+      await remote.joinPairing(pairingId, joining.payload)
+    } catch (error) {
+      this.secrets.clearPendingPairing(pairingId)
+      throw error
+    }
   }
 
   async finishPairing(
@@ -260,20 +286,25 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
     verificationPhrase: string,
   ): Promise<void> {
     const normalizedEndpoint = normalizeEndpoint(endpoint)
-    const pendingSecret = this.secrets.getPendingPairing()
+    const pendingSecret = this.secrets.getPendingPairing(pairingId)
     if (!pendingSecret) throw new Error("Pending pairing keys are missing")
     const remote = new MeridianRemoteClient(normalizedEndpoint, new ObsidianHttpTransport())
-    const result = await remote.getPairingResult(pairingId, capability)
-    if (result.status !== "approved" || !result.hpkeTransfer) {
-      throw new Error("The existing device has not approved this pairing yet")
+    let hpkeTransfer = this.secrets.getPendingPairingResult(pairingId)
+    if (!hpkeTransfer) {
+      const result = await remote.getPairingResult(pairingId, capability)
+      if (result.status !== "approved" || !result.hpkeTransfer) {
+        throw new Error("The existing device has not approved this pairing yet")
+      }
+      hpkeTransfer = result.hpkeTransfer
+      this.secrets.setPendingPairingResult(pairingId, hpkeTransfer)
     }
     const paired = await this.cryptoPort.consumePairingResult(
       pendingSecret,
-      result.hpkeTransfer,
+      hpkeTransfer,
       verificationPhrase,
     )
     this.secrets.setDeviceKeyBundle(paired.deviceId, paired.keyBundle)
-    this.secrets.clearPendingPairing()
+    this.secrets.clearPendingPairing(pairingId)
     this.settings = {
       ...this.settings,
       enabled: true,

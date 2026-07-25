@@ -27,7 +27,8 @@ The recommended unpublished-plugin path is BRAT:
 2. Install **BRAT** from Obsidian Community Plugins on the iPhone.
 3. Add `angristan/meridian` as a beta plugin.
 4. Enable **Meridian**.
-5. Pair the iPhone from the Mac using the one-time deep link and verify the authentication phrase on both devices.
+5. On the Mac, create a five-minute pairing QR code from **Meridian status → Devices**.
+6. Scan it with the iPhone, approve the relayed request on the Mac, and enter the matching verification phrase on the iPhone. Candidate packages and pairing IDs never need manual transfer.
 
 Until the repository and a release are public, the build produces `obsidian-plugin/dist/meridian.zip` for manual inspection, but BRAT is the reliable mobile installation channel. Publishing a repository or release is an external write and is not performed by the local build.
 

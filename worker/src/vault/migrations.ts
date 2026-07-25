@@ -17,17 +17,16 @@ export function migrateVaultSchema(sql: SqlStorage, transactionSync: Transaction
   const row = sql
     .exec<{ version: number }>("SELECT COALESCE(MAX(id), 0) AS version FROM _sql_schema_migrations")
     .one()
-  if (row.version >= 1) return
+  let version = row.version
 
-  // Pre-migration builds created the same v1 tables without a migrations ledger. Adopt them
-  // instead of attempting to recreate populated tables when upgrading an existing deployment.
-  if (hasLegacyVaultState) {
-    sql.exec("INSERT INTO _sql_schema_migrations (id, applied_at) VALUES (1, ?)", Date.now())
-    return
-  }
-
-  transactionSync(() => {
-    sql.exec(`
+  if (version < 1) {
+    // Pre-migration builds created the same v1 tables without a migrations ledger. Adopt them
+    // instead of attempting to recreate populated tables when upgrading an existing deployment.
+    if (hasLegacyVaultState) {
+      sql.exec("INSERT INTO _sql_schema_migrations (id, applied_at) VALUES (1, ?)", Date.now())
+    } else {
+      transactionSync(() => {
+        sql.exec(`
       CREATE TABLE vault_state (
         singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
         vault_id TEXT NOT NULL UNIQUE,
@@ -139,6 +138,24 @@ export function migrateVaultSchema(sql: SqlStorage, transactionSync: Transaction
       );
       CREATE INDEX snapshots_cursor ON snapshots(cursor DESC, created_at DESC);
     `)
-    sql.exec("INSERT INTO _sql_schema_migrations (id, applied_at) VALUES (1, ?)", Date.now())
-  })
+        sql.exec("INSERT INTO _sql_schema_migrations (id, applied_at) VALUES (1, ?)", Date.now())
+      })
+    }
+    version = 1
+  }
+
+  if (version < 2) {
+    transactionSync(() => {
+      const pairingsDefinition =
+        sql
+          .exec<{ sql: string | null }>(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'pairings'",
+          )
+          .one().sql ?? ""
+      if (!pairingsDefinition.includes("candidate_request_proof")) {
+        sql.exec("ALTER TABLE pairings ADD COLUMN candidate_request_proof TEXT")
+      }
+      sql.exec("INSERT INTO _sql_schema_migrations (id, applied_at) VALUES (2, ?)", Date.now())
+    })
+  }
 }

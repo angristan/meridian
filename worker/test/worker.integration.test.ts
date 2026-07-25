@@ -141,7 +141,7 @@ describe("Meridian Worker integration", () => {
       const migration = state.storage.sql
         .exec<{ version: number }>("SELECT MAX(id) AS version FROM _sql_schema_migrations")
         .one()
-      expect(migration.version).toBe(1)
+      expect(migration.version).toBe(2)
       const tables = state.storage.sql
         .exec<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table'")
         .toArray()
@@ -149,6 +149,12 @@ describe("Meridian Worker integration", () => {
       expect(tables).toContain("operations")
       expect(tables).toContain("devices")
       expect(tables).toContain("snapshots")
+      const pairingsDefinition = state.storage.sql
+        .exec<{ sql: string }>(
+          "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'pairings'",
+        )
+        .one().sql
+      expect(pairingsDefinition).toContain("candidate_request_proof")
     })
   })
 
@@ -164,7 +170,7 @@ describe("Meridian Worker integration", () => {
       const migration = state.storage.sql
         .exec<{ version: number }>("SELECT MAX(id) AS version FROM _sql_schema_migrations")
         .one()
-      expect(migration.version).toBe(1)
+      expect(migration.version).toBe(2)
       expect(
         state.storage.sql
           .exec<{ name: string }>(
@@ -253,10 +259,33 @@ describe("Meridian Worker integration", () => {
       signingPublicKey: await publicKey(candidateKey),
       hpkePublicKey: base64UrlEncode(randomBytes(32)),
     }
+    const pendingStatus = await SELF.fetch(
+      `https://example.test/v1/pairings/${pairing.pairingId}`,
+      { headers: authorization },
+    )
+    expect(pendingStatus.status).toBe(200)
+    await expect(pendingStatus.json()).resolves.toMatchObject({
+      pairingId: pairing.pairingId,
+      status: "pending",
+      relayAvailable: false,
+    })
+    const pendingProgress = await SELF.fetch(
+      `https://example.test/v1/pairings/${pairing.pairingId}/status`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ capability: pairing.capability }),
+      },
+    )
+    expect(pendingProgress.status).toBe(200)
+    await expect(pendingProgress.json()).resolves.toMatchObject({ status: "pending" })
+
+    const requestProof = base64UrlEncode(randomBytes(64))
     const unsignedJoin: PairingJoin = {
       capability: pairing.capability,
       device: candidate,
       proof: base64UrlEncode(randomBytes(64)),
+      requestProof,
     }
     const join: PairingJoin = {
       ...unsignedJoin,
@@ -274,6 +303,25 @@ describe("Meridian Worker integration", () => {
       },
     )
     expect(joinResponse.status).toBe(200)
+
+    const joinedStatus = await SELF.fetch(`https://example.test/v1/pairings/${pairing.pairingId}`, {
+      headers: authorization,
+    })
+    expect(joinedStatus.status).toBe(200)
+    await expect(joinedStatus.json()).resolves.toMatchObject({
+      status: "joined",
+      relayAvailable: true,
+      candidate: {
+        pairingId: pairing.pairingId,
+        vaultId,
+        deviceId: candidateId,
+        requestProof,
+      },
+    })
+    const unauthenticatedStatus = await SELF.fetch(
+      `https://example.test/v1/pairings/${pairing.pairingId}`,
+    )
+    expect(unauthenticatedStatus.status).toBe(401)
 
     const unsignedApproval: PairingApproval = {
       certificate: base64UrlEncode(randomBytes(96)),
@@ -306,6 +354,17 @@ describe("Meridian Worker integration", () => {
       },
     )
     expect(approvalResponse.status).toBe(200)
+
+    const approvedProgress = await SELF.fetch(
+      `https://example.test/v1/pairings/${pairing.pairingId}/status`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ capability: pairing.capability }),
+      },
+    )
+    expect(approvedProgress.status).toBe(200)
+    await expect(approvedProgress.json()).resolves.toMatchObject({ status: "approved" })
 
     const resultResponse = await SELF.fetch(
       `https://example.test/v1/pairings/${pairing.pairingId}/result`,

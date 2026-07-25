@@ -1,4 +1,4 @@
-import type { PairingResult, RemoteDevice, RemoteOperation } from "../model"
+import type { PairingResult, PairingStatus, RemoteDevice, RemoteOperation } from "../model"
 import type { HttpResponse } from "./transport"
 
 export function assertSuccess(response: HttpResponse, label: string): void {
@@ -34,12 +34,31 @@ export function parseDevice(value: unknown): RemoteDevice {
   }
 }
 
+export function parsePairingStatus(value: unknown): PairingStatus {
+  if (!isRecord(value)) throw new Error("Server returned an invalid pairing status")
+  const status = pairingStatusValue(value.status)
+  const result: PairingStatus = {
+    pairingId: requiredString(value, "pairingId"),
+    status,
+    expiresAt: requiredNumber(value, "expiresAt"),
+  }
+  if (isRecord(value.candidate)) {
+    result.candidatePackage = JSON.stringify({
+      pairingId: requiredString(value.candidate, "pairingId"),
+      vaultId: requiredString(value.candidate, "vaultId"),
+      expiresAt: requiredNumber(value.candidate, "expiresAt"),
+      deviceId: requiredString(value.candidate, "deviceId"),
+      signingPublicKey: requiredString(value.candidate, "signingPublicKey"),
+      hpkePublicKey: requiredString(value.candidate, "hpkePublicKey"),
+      requestProof: requiredString(value.candidate, "requestProof"),
+    })
+  }
+  return result
+}
+
 export function parsePairingResult(value: unknown): PairingResult {
   if (!isRecord(value)) throw new Error("Server returned an invalid pairing result")
-  const status = value.status
-  if (status !== "pending" && status !== "joined" && status !== "approved") {
-    throw new Error("Server returned an invalid pairing status")
-  }
+  const status = pairingStatusValue(value.status)
   const result: PairingResult = {
     pairingId: requiredString(value, "pairingId"),
     status,
@@ -55,6 +74,13 @@ export function parsePairingResult(value: unknown): PairingResult {
   }
   if (typeof value.approvedAt === "number") result.approvedAt = value.approvedAt
   return result
+}
+
+function pairingStatusValue(value: unknown): "pending" | "joined" | "approved" {
+  if (value !== "pending" && value !== "joined" && value !== "approved") {
+    throw new Error("Server returned an invalid pairing status")
+  }
+  return value
 }
 
 export function parseOperation(value: unknown): RemoteOperation {

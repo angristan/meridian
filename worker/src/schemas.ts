@@ -53,6 +53,7 @@ export const PairingJoinSchema = Schema.Struct({
     hpkePublicKey: Schema.String,
   }),
   proof: Schema.String,
+  requestProof: Schema.optionalKey(Schema.String),
 })
 
 export type PairingJoin = typeof PairingJoinSchema.Type

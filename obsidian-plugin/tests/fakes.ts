@@ -12,6 +12,7 @@ import type {
   PairingCapability,
   PairingJoinMaterial,
   PairingResult,
+  PairingStatus,
   RemoteChanges,
   RemoteDevice,
   RemoteOperation,
@@ -233,6 +234,14 @@ export class FakeRemote implements RemotePort {
   }
 
   async createPairing(): Promise<PairingCapability> {
+    throw new Error("Not implemented by fake")
+  }
+
+  async getPairingStatus(): Promise<PairingStatus> {
+    throw new Error("Not implemented by fake")
+  }
+
+  async getPairingProgress(): Promise<PairingStatus> {
     throw new Error("Not implemented by fake")
   }
 

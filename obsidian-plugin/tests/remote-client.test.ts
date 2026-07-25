@@ -117,6 +117,44 @@ describe("Meridian remote client", () => {
     })
   })
 
+  it("polls relayed pairing state without consuming the result", async () => {
+    const transport = new QueueTransport([
+      response({ challengeId: "challenge-id", challenge: "challenge" }),
+      response({ sessionToken: "session-token" }),
+      response({
+        pairingId: "pairing-id",
+        status: "joined",
+        expiresAt: 1_000,
+        relayAvailable: true,
+        candidate: {
+          pairingId: "pairing-id",
+          vaultId: "vault-id",
+          expiresAt: 1_000,
+          deviceId: "candidate-id",
+          signingPublicKey: "signing-key",
+          hpkePublicKey: "hpke-key",
+          requestProof: "request-proof",
+        },
+      }),
+      response({ pairingId: "pairing-id", status: "approved", expiresAt: 1_000 }),
+    ])
+    const client = new MeridianRemoteClient("https://example.test", transport)
+
+    await client.authenticate(TEST_DEVICE, new FakeCrypto())
+    const relayed = await client.getPairingStatus("pairing-id")
+    const progress = await client.getPairingProgress("pairing-id", "capability")
+
+    expect(JSON.parse(relayed.candidatePackage ?? "null")).toMatchObject({
+      pairingId: "pairing-id",
+      deviceId: "candidate-id",
+      requestProof: "request-proof",
+    })
+    expect(progress.status).toBe("approved")
+    expect(transport.requests[2]?.headers?.authorization).toBe("Bearer session-token")
+    expect(transport.requests[3]?.headers?.authorization).toBeUndefined()
+    expect(transport.requests[3]?.body).toBe(JSON.stringify({ capability: "capability" }))
+  })
+
   it("uses the public bounded recovery endpoints without a session", async () => {
     const transport = new QueueTransport([
       response({ encryptedRecoveryPackage: "package" }),

@@ -3,6 +3,8 @@ import type {
   ConflictRecord,
   LocalRevision,
   MeridianSettings,
+  PairingInvitation,
+  PairingStatus,
   RemoteDevice,
   SyncStatus,
 } from "../model"
@@ -24,15 +26,21 @@ export interface MeridianUiHost {
   resolveConflict(id: string): Promise<void>
   openPath(path: string): Promise<void>
   getDevices(): Promise<RemoteDevice[]>
-  createPairingLink(): Promise<string>
-  approvePairing(pairingId: string, candidatePackage: string): Promise<string>
+  createPairingLink(): Promise<PairingInvitation>
+  getPairingStatus(pairingId: string): Promise<PairingStatus>
+  getPairingProgress(
+    endpoint: string,
+    pairingId: string,
+    capability: string,
+  ): Promise<PairingStatus>
+  approvePairing(pairingId: string): Promise<string>
   joinPairing(
     endpoint: string,
     pairingId: string,
     capability: string,
     vaultId: string,
     expiresAt: number,
-  ): Promise<string>
+  ): Promise<void>
   finishPairing(
     endpoint: string,
     pairingId: string,

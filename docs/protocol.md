@@ -184,14 +184,15 @@ A server challenge contains challenge ID, vault/device IDs, 32 random bytes, and
 
 1. The new device generates both keypairs and a random device ID.
 2. It signs a proof-of-possession request binding the pairing, vault, device, and both public keys.
-3. The existing device verifies the request and creates a child certificate.
-4. The pairing context binds the request, child certificate, complete issuer chain, recovery public key, current signed epoch, signed checkpoint, expiry, and complete suite.
-5. Both devices compute SHA-256 over the canonical context and display the same five-word verification phrase. Each byte maps to one of 256 fixed prefix/suffix words, yielding a 40-bit manual check.
-6. After explicit user confirmation, the approver uses RFC 9180 HPKE base mode. `info` is SHA-256 of the context and AEAD associated data is the complete context. Plaintext binds vault, epoch, epoch key, checkpoint cursor, and checkpoint hash.
-7. The approver signs context, encapsulated key, ciphertext, and approver ID together.
-8. The new device validates the complete certificate chain, transfer signature, epoch signature, checkpoint signature, expiry, identity, and confirmed phrase before HPKE open.
+3. The server relays that public candidate package to the authenticated initiating device. The initiator polls its authenticated status endpoint; the candidate polls a capability-scoped status endpoint that never returns or consumes the encrypted result. Polling is bounded by the pairing expiry and transports no private key material.
+4. The existing device verifies the relayed request and creates a child certificate.
+5. The pairing context binds the request, child certificate, complete issuer chain, recovery public key, current signed epoch, signed checkpoint, expiry, and complete suite.
+6. Both devices compute SHA-256 over the canonical context and verify the same five-word phrase. Each byte maps to one of 256 fixed prefix/suffix words, yielding a 40-bit manual check.
+7. After explicit user confirmation, the approver uses RFC 9180 HPKE base mode. `info` is SHA-256 of the context and AEAD associated data is the complete context. Plaintext binds vault, epoch, epoch key, checkpoint cursor, and checkpoint hash.
+8. The approver signs context, encapsulated key, ciphertext, and approver ID together.
+9. The new device validates the complete certificate chain, transfer signature, epoch signature, checkpoint signature, expiry, identity, and confirmed phrase before HPKE open.
 
-A pairing capability is server-side, short-lived, and single-use. It is not a substitute for transcript verification.
+A pairing capability is server-side, short-lived, and single-use. The QR code is only a transport for that capability. Server relay and polling are not substitutes for proof-of-possession, signed transcript validation, HPKE, or phrase verification.
 
 ## Recovery
 

@@ -74,6 +74,9 @@ describe("shared crypto adapter", () => {
       vaultId: owner.vaultId,
       expiresAt: Date.now() + 300_000,
     })
+    expect(stringField(joining.payload, "requestProof")).toBe(
+      stringField(JSON.parse(joining.candidatePackage), "requestProof"),
+    )
     const ownerCertificate = stringField(
       record(ownerClaim.publicClaim).initialDevice,
       "certificate",

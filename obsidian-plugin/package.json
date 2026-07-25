@@ -12,9 +12,11 @@
   "dependencies": {
     "@meridian/crypto": "workspace:*",
     "@meridian/protocol": "workspace:*",
-    "@meridian/sync-engine": "workspace:*"
+    "@meridian/sync-engine": "workspace:*",
+    "qrcode": "1.5.4"
   },
   "devDependencies": {
+    "@types/qrcode": "1.5.6",
     "esbuild": "0.28.1",
     "obsidian": "1.13.1",
     "typescript": "7.0.2",

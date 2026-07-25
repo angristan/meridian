@@ -88,6 +88,7 @@ export async function createPairingJoin(pairing: PairingCapability): Promise<Pai
         hpkePublicKey: candidate.hpkePublicKey,
       },
       proof: toBase64Url(workerProof),
+      requestProof: candidate.requestProof,
     },
     candidatePackage: JSON.stringify(candidate),
     pendingSecret: JSON.stringify(secret),

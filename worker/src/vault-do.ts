@@ -101,6 +101,14 @@ export class VaultDurableObject extends DurableObject<VaultDurableObjectEnv> {
         return this.notifications.websocket(request, session)
       }
 
+      const pairingMatch = /^\/v1\/pairings\/([^/]+)$/.exec(pathname)
+      const pairingId = pairingMatch?.at(1)
+      if (request.method === "GET" && pairingId !== undefined)
+        return await this.pairing.pairingStatus(request, pairingId)
+      const progressMatch = /^\/v1\/pairings\/([^/]+)\/status$/.exec(pathname)
+      const progressId = progressMatch?.at(1)
+      if (request.method === "POST" && progressId !== undefined)
+        return await this.pairing.pairingProgress(request, progressId)
       const joinMatch = /^\/v1\/pairings\/([^/]+)\/join$/.exec(pathname)
       const joinId = joinMatch?.at(1)
       if (request.method === "POST" && joinId !== undefined)

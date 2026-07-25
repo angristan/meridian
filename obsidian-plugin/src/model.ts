@@ -283,6 +283,17 @@ export interface PairingCapability {
   expiresAt: number
 }
 
+export interface PairingInvitation extends PairingCapability {
+  link: string
+}
+
+export interface PairingStatus {
+  pairingId: string
+  status: "pending" | "joined" | "approved"
+  expiresAt: number
+  candidatePackage?: string
+}
+
 export interface PairingResult {
   pairingId: string
   status: "pending" | "joined" | "approved"
@@ -303,6 +314,8 @@ export interface RemotePort {
   commit(envelope: unknown, idempotencyKey: string): Promise<{ cursor: number; logHash: string }>
   listDevices(): Promise<RemoteDevice[]>
   createPairing(): Promise<PairingCapability>
+  getPairingStatus(pairingId: string): Promise<PairingStatus>
+  getPairingProgress(pairingId: string, capability: string): Promise<PairingStatus>
   joinPairing(pairingId: string, payload: unknown): Promise<PairingResult>
   approvePairing(pairingId: string, payload: unknown): Promise<PairingResult>
   getPairingResult(pairingId: string, capability: string): Promise<PairingResult>

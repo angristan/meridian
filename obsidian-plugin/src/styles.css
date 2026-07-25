@@ -86,6 +86,20 @@
   flex-wrap: wrap;
 }
 
+.meridian-pairing-qr {
+  display: flex;
+  justify-content: center;
+  margin: var(--size-4-4) 0;
+}
+
+.meridian-pairing-qr canvas {
+  max-width: min(240px, 100%);
+  height: auto;
+  padding: var(--size-4-2);
+  border-radius: var(--radius-m);
+  background: #fff;
+}
+
 .meridian-recovery-code {
   display: block;
   margin: var(--size-4-4) 0;

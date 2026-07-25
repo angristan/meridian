@@ -52,6 +52,24 @@ export function registerApiRoutes(app: WorkerApp): void {
     "/v1/pairings",
     proxyJson(CreatePairingSchema, () => "/v1/pairings", { authenticated: true }),
   )
+  app.get("/v1/pairings/:id", (c) =>
+    runResponse(
+      callVaultEffect(
+        c.env,
+        `/v1/pairings/${encodeURIComponent(requiredParam(c, "id"))}`,
+        "GET",
+        undefined,
+        sessionToken(c),
+      ),
+    ),
+  )
+  app.post(
+    "/v1/pairings/:id/status",
+    proxyJson(
+      PairingResultSchema,
+      (c) => `/v1/pairings/${encodeURIComponent(requiredParam(c, "id"))}/status`,
+    ),
+  )
   app.post(
     "/v1/pairings/:id/join",
     proxyJson(

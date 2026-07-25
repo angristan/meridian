@@ -4,6 +4,7 @@ import type {
   DeviceKeyMaterial,
   LocalRevision,
   PairingCapability,
+  PairingStatus,
   RemoteDevice,
   RemotePort,
   SyncReason,
@@ -124,12 +125,20 @@ export class SyncController {
     return this.remote.createPairing()
   }
 
-  async approvePairing(pairingId: string, candidatePackage: string): Promise<string> {
+  pairingStatus(pairingId: string): Promise<PairingStatus> {
+    return this.remote.getPairingStatus(pairingId)
+  }
+
+  async approvePairing(pairingId: string): Promise<string> {
     const device = this.requireDevice()
+    const pairing = await this.remote.getPairingStatus(pairingId)
+    if (!pairing.candidatePackage) {
+      throw new Error("The joining device has not provided a relayed pairing request")
+    }
     const devices = await this.remote.listDevices()
     const approval = await this.crypto.approvePairing(
       device,
-      candidatePackage,
+      pairing.candidatePackage,
       devices.map((entry) => entry.certificate),
     )
     await this.remote.approvePairing(pairingId, approval.payload)
