@@ -10,11 +10,11 @@ export interface PairingLinkParameters {
 
 export function createPairingDeepLink(endpoint: string, pairing: PairingCapability): string {
   const query = new URLSearchParams({
-    endpoint,
-    pairing: pairing.pairingId,
-    capability: pairing.capability,
-    vaultId: pairing.vaultId,
-    expires: String(pairing.expiresAt),
+    meridianEndpoint: endpoint,
+    meridianPairingId: pairing.pairingId,
+    meridianCapability: pairing.capability,
+    meridianVaultId: pairing.vaultId,
+    meridianExpiresAt: String(pairing.expiresAt),
   })
   return `obsidian://meridian-pair?${query.toString()}`
 }
@@ -22,11 +22,11 @@ export function createPairingDeepLink(endpoint: string, pairing: PairingCapabili
 export function parsePairingLinkParameters(
   parameters: Record<string, string>,
 ): PairingLinkParameters | null {
-  const endpoint = parameters.endpoint
-  const pairingId = parameters.pairing
-  const capability = parameters.capability
-  const vaultId = parameters.vaultId
-  const expiresAt = Number(parameters.expires)
+  const endpoint = parameters.meridianEndpoint
+  const pairingId = parameters.meridianPairingId
+  const capability = parameters.meridianCapability
+  const vaultId = parameters.meridianVaultId
+  const expiresAt = Number(parameters.meridianExpiresAt)
   if (
     !endpoint ||
     !pairingId ||

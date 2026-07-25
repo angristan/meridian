@@ -192,7 +192,7 @@ A server challenge contains challenge ID, vault/device IDs, 32 random bytes, and
 8. The approver signs context, encapsulated key, ciphertext, and approver ID together.
 9. The new device validates the complete certificate chain, transfer signature, epoch signature, checkpoint signature, expiry, identity, and confirmed phrase before HPKE open.
 
-A pairing capability is server-side, short-lived, and single-use. The QR code is only a transport for that capability. Server relay and polling are not substitutes for proof-of-possession, signed transcript validation, HPKE, or phrase verification.
+A pairing capability is server-side, short-lived, and single-use. The QR code is only a transport for that capability. Obsidian pairing URIs prefix every query parameter with `meridian` and never use Obsidian-reserved routing keys such as `vault`. Server relay and polling are not substitutes for proof-of-possession, signed transcript validation, HPKE, or phrase verification.
 
 ## Recovery
 
