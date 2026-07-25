@@ -1,3 +1,10 @@
+# [1.1.0](https://github.com/angristan/meridian/compare/1.0.0...1.1.0) (2026-07-25)
+
+
+### Features
+
+* add one-scan device pairing ([afafafc](https://github.com/angristan/meridian/commit/afafafcc79dbd85f1208e5c93af14f74a78ab221))
+
 # 1.0.0 (2026-07-25)
 
 
