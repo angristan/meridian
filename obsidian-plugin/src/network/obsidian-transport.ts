@@ -9,7 +9,6 @@ export class ObsidianHttpTransport implements HttpTransport {
       headers: response.headers,
       body: response.arrayBuffer,
       text: response.text,
-      json: response.json as unknown,
     }
   }
 }

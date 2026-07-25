@@ -17,6 +17,7 @@ import {
   isRecord,
   optionalNumber,
   parseDevice,
+  parseJsonBody,
   parseOperation,
   parsePairingResult,
   requiredNumber,
@@ -247,7 +248,7 @@ export class MeridianRemoteClient implements RemotePort {
     if (body !== undefined) request.body = body
     const response = await this.transport.request(request)
     assertSuccess(response, "Meridian request")
-    return response.json
+    return parseJsonBody(response, "Meridian request")
   }
 
   private headers(

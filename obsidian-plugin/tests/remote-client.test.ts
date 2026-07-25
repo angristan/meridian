@@ -27,7 +27,15 @@ function response(json: unknown, status = 200): HttpResponse {
     headers: {},
     body: new ArrayBuffer(0),
     text: JSON.stringify(json),
-    json,
+  }
+}
+
+function emptyResponse(status: number): HttpResponse {
+  return {
+    status,
+    headers: {},
+    body: new ArrayBuffer(0),
+    text: "",
   }
 }
 
@@ -88,6 +96,24 @@ describe("Meridian remote client", () => {
     ])
     expect(transport.requests[2]?.headers).toMatchObject({
       authorization: "Bearer session-token",
+    })
+  })
+
+  it("accepts an empty successful blob upload response", async () => {
+    const transport = new QueueTransport([
+      response({ challengeId: "challenge-id", challenge: "challenge" }),
+      response({ sessionToken: "session-token" }),
+      emptyResponse(201),
+    ])
+    const client = new MeridianRemoteClient("https://example.test", transport)
+
+    await client.authenticate(TEST_DEVICE, new FakeCrypto())
+    await expect(
+      client.putBlob({ blobId: "blob-id", bytes: new ArrayBuffer(4), chunkIndex: 0 }),
+    ).resolves.toBeUndefined()
+    expect(transport.requests.at(-1)).toMatchObject({
+      method: "PUT",
+      url: "https://example.test/v1/blobs/blob-id",
     })
   })
 

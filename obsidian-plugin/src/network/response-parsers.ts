@@ -8,6 +8,15 @@ export function assertSuccess(response: HttpResponse, label: string): void {
   throw new Error(`${label} failed: ${detail}`)
 }
 
+export function parseJsonBody(response: HttpResponse, label: string): unknown {
+  if (response.text.length === 0) throw new Error(`${label} returned an empty JSON response`)
+  try {
+    return JSON.parse(response.text)
+  } catch {
+    throw new Error(`${label} returned invalid JSON`)
+  }
+}
+
 export function parseDevice(value: unknown): RemoteDevice {
   if (!isRecord(value)) throw new Error("Server returned an invalid device")
   const role = value.role

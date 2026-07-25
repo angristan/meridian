@@ -5,7 +5,6 @@ export interface HttpResponse {
   readonly headers: Record<string, string>
   readonly body: ArrayBuffer
   readonly text: string
-  readonly json: unknown
 }
 
 export interface HttpTransport {
