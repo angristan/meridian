@@ -1,3 +1,10 @@
+# [1.3.0](https://github.com/angristan/meridian/compare/1.2.0...1.3.0) (2026-07-26)
+
+
+### Features
+
+* add device revocation controls ([4dd711a](https://github.com/angristan/meridian/commit/4dd711a90b7c00a8d348e213e796ccf3b9556509))
+
 # [1.2.0](https://github.com/angristan/meridian/compare/1.1.3...1.2.0) (2026-07-25)
 
 
