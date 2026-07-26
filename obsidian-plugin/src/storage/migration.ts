@@ -7,7 +7,7 @@ import type {
   MigratedJournalRecords,
 } from "./types"
 
-export const DATABASE_VERSION = 2
+export const DATABASE_VERSION = 3
 
 export function upgradeJournalSchema(database: IDBDatabase): void {
   if (!database.objectStoreNames.contains("entries")) {
@@ -29,6 +29,9 @@ export function upgradeJournalSchema(database: IDBDatabase): void {
   if (!database.objectStoreNames.contains("conflicts")) {
     const store = database.createObjectStore("conflicts", { keyPath: "id" })
     store.createIndex("resolvedAt", "resolvedAt", { unique: false })
+  }
+  if (!database.objectStoreNames.contains("revocations")) {
+    database.createObjectStore("revocations", { keyPath: "deviceId" })
   }
 }
 

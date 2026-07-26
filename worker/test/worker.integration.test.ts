@@ -628,6 +628,16 @@ describe("Meridian Worker integration", () => {
       },
     )
     expect(revokeResponse.status).toBe(201)
+    const revokeRetryResponse = await SELF.fetch(
+      `https://example.test/v1/devices/${candidateId}/revoke`,
+      {
+        method: "POST",
+        headers: { ...authorization, "content-type": "application/json" },
+        body: JSON.stringify({ operation: revocation }),
+      },
+    )
+    expect(revokeRetryResponse.status).toBe(200)
+    await expect(revokeRetryResponse.json()).resolves.toMatchObject({ duplicate: true })
     const revokedSessionResponse = await SELF.fetch("https://example.test/v1/devices", {
       headers: { authorization: `Bearer ${candidateSession}` },
     })

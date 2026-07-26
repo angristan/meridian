@@ -182,6 +182,25 @@ export class MeridianRemoteClient implements RemotePort {
     })
   }
 
+  async revokeDevice(
+    targetDeviceId: string,
+    envelope: unknown,
+  ): Promise<{ cursor: number; logHash: string }> {
+    if (!isRecord(envelope)) throw new Error("Crypto adapter returned an invalid revocation")
+    const result = await this.jsonRequest(
+      `/v1/devices/${encodeURIComponent(targetDeviceId)}/revoke`,
+      {
+        method: "POST",
+        body: { operation: envelope },
+        authenticated: true,
+      },
+    )
+    return {
+      cursor: requiredNumber(result, "cursor"),
+      logHash: requiredString(result, "chainHash"),
+    }
+  }
+
   async createPairing(): Promise<PairingCapability> {
     const result = await this.jsonRequest("/v1/pairings", {
       method: "POST",

@@ -301,4 +301,53 @@ describe("SyncController", () => {
     )
     controller.stop()
   })
+
+  it("persists revocations and rejects later operations from revoked devices", async () => {
+    const vault = new FakeVault()
+    const journal = new MemoryJournal()
+    const remote = new FakeRemote()
+    const controller = new SyncController(
+      vault,
+      journal,
+      remote,
+      new FakeCrypto(),
+      () => ALL_CATEGORIES,
+      () => {},
+    )
+    await controller.start(TEST_DEVICE)
+
+    await controller.revokeDevice({
+      deviceId: "old-device",
+      signingPublicKey: "signing-key",
+      hpkePublicKey: "hpke-key",
+      certificate: "certificate",
+      role: "member",
+      authorizedAt: 1,
+      revokedAt: null,
+      deviceName: "Old phone",
+      platform: "iOS",
+    })
+    await expect(journal.getDeviceRevocation("old-device")).resolves.toEqual({
+      deviceId: "old-device",
+      operationId: "revocation-operation",
+      cursor: 1,
+    })
+
+    await remote.commit({
+      operationId: "late-operation",
+      revisionId: "late-revision",
+      action: "delete",
+      path: "late.md",
+      previousPath: null,
+      parents: [],
+      authorDeviceId: "old-device",
+      blobId: null,
+      isText: true,
+    })
+    await controller.sync("manual")
+
+    expect(controller.getStatus().error).toMatch(/authored after its device was revoked/)
+    await expect(journal.getCursor()).resolves.toBe(1)
+    controller.stop()
+  })
 })

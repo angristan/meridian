@@ -47,6 +47,7 @@ export type SyncReason =
   | "interval"
   | "notification"
   | "manual"
+  | "device-revocation"
 
 export type SyncPhase =
   | "disconnected"
@@ -193,6 +194,18 @@ export interface RemoteOperation {
   certificateChain?: string[]
 }
 
+export interface DeviceRevocationRecord {
+  deviceId: string
+  operationId: string
+  cursor: number
+}
+
+export interface DeviceRevocationMaterial {
+  targetDeviceId: string
+  operationId: string
+  envelope: unknown
+}
+
 export interface DecryptedRevision {
   revisionId: string
   operationId: string
@@ -266,6 +279,14 @@ export interface CryptoPort {
     operation: RemoteOperation,
     loadBlob: (blobId: string) => Promise<ArrayBuffer>,
   ): Promise<DecryptedRevision>
+  createDeviceRevocation(
+    device: DeviceKeyMaterial,
+    target: RemoteDevice,
+  ): Promise<DeviceRevocationMaterial>
+  verifyDeviceRevocation(
+    device: DeviceKeyMaterial,
+    operation: RemoteOperation,
+  ): Promise<DeviceRevocationRecord>
   createPairingJoin(
     pairing: PairingCapability,
     descriptor: PairingDeviceDescriptor,
@@ -369,6 +390,10 @@ export interface RemotePort {
   commit(envelope: unknown, idempotencyKey: string): Promise<{ cursor: number; logHash: string }>
   listDevices(): Promise<RemoteDevice[]>
   updateDeviceDescriptor(descriptor: PairingDeviceDescriptor): Promise<void>
+  revokeDevice(
+    targetDeviceId: string,
+    envelope: unknown,
+  ): Promise<{ cursor: number; logHash: string }>
   createPairing(): Promise<PairingCapability>
   getPairingStatus(pairingId: string): Promise<PairingStatus>
   getPairingProgress(pairingId: string, capability: string): Promise<PairingStatus>

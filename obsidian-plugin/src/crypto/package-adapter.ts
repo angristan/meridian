@@ -3,6 +3,8 @@ import type {
   CryptoPort,
   DecryptedRevision,
   DeviceKeyMaterial,
+  DeviceRevocationMaterial,
+  DeviceRevocationRecord,
   EncryptedRevision,
   PairedDeviceMaterial,
   PairingApprovalMaterial,
@@ -12,10 +14,12 @@ import type {
   PairingJoinMaterial,
   PairingVerificationMaterial,
   RecoveryDeviceMaterial,
+  RemoteDevice,
   RemoteOperation,
   RevisionDraft,
   SetupClaim,
 } from "../model"
+import { createDeviceRevocation, verifyDeviceRevocation } from "./device-revocation"
 import { createFirstDevice, loadDevice, recoverDevice, signChallenge } from "./device-workflows"
 import {
   approvePairing,
@@ -66,6 +70,20 @@ class PackageCryptoPort implements CryptoPort {
     loadBlob: (blobId: string) => Promise<ArrayBuffer>,
   ): Promise<DecryptedRevision> {
     return decryptRevision(device, operation, loadBlob)
+  }
+
+  createDeviceRevocation(
+    device: DeviceKeyMaterial,
+    target: RemoteDevice,
+  ): Promise<DeviceRevocationMaterial> {
+    return createDeviceRevocation(device, target)
+  }
+
+  verifyDeviceRevocation(
+    device: DeviceKeyMaterial,
+    operation: RemoteOperation,
+  ): Promise<DeviceRevocationRecord> {
+    return verifyDeviceRevocation(device, operation)
   }
 
   createPairingJoin(

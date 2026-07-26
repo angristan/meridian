@@ -127,6 +127,14 @@ export class SyncController {
     return this.remote.listDevices()
   }
 
+  async revokeDevice(target: RemoteDevice): Promise<void> {
+    const device = this.requireDevice()
+    await this.authenticate(device)
+    const revocation = await this.crypto.createDeviceRevocation(device, target)
+    await this.remote.revokeDevice(target.deviceId, revocation.envelope)
+    await this.sync("device-revocation")
+  }
+
   createPairing(): Promise<PairingCapability> {
     return this.remote.createPairing()
   }

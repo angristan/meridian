@@ -8,6 +8,7 @@ import {
   type MeridianSettings,
   type PairingInvitation,
   type PairingStatus,
+  type RemoteDevice,
   type SyncStatus,
 } from "./model"
 import { ObsidianHttpTransport } from "./network/obsidian-transport"
@@ -221,6 +222,11 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
 
   async getDevices() {
     return this.controller?.devices() ?? []
+  }
+
+  async revokeDevice(device: RemoteDevice): Promise<void> {
+    if (!this.controller) throw new Error("Meridian is not connected")
+    await this.controller.revokeDevice(device)
   }
 
   async createPairingLink(): Promise<PairingInvitation> {

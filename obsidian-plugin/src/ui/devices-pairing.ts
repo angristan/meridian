@@ -1,5 +1,5 @@
 import { type ButtonComponent, Modal, Notice, Setting } from "obsidian"
-import type { PairingInvitation } from "../model"
+import type { PairingInvitation, RemoteDevice } from "../model"
 import { formatTime } from "./format-time"
 import type { MeridianUiHost } from "./host"
 import { renderPairingQr } from "./pairing-qr"
@@ -18,10 +18,12 @@ export class DevicesModal extends Modal {
   private async render(): Promise<void> {
     this.contentEl.empty()
     const devices = await this.host.getDevices()
+    const current = devices.find((device) => device.deviceId === this.host.settings.deviceId)
+    const canManageDevices = current?.role === "owner" && current.revokedAt === null
     for (const device of devices) {
       const isCurrent = device.deviceId === this.host.settings.deviceId
       const name = isCurrent ? this.host.settings.deviceName : device.deviceName
-      new Setting(this.contentEl)
+      const setting = new Setting(this.contentEl)
         .setName(name || (isCurrent ? "This device" : "Unnamed device"))
         .setDesc(
           [
@@ -34,6 +36,16 @@ export class DevicesModal extends Modal {
             .filter(Boolean)
             .join(" · "),
         )
+      if (canManageDevices && !isCurrent && device.revokedAt === null) {
+        setting.addButton((button) =>
+          button
+            .setButtonText("Revoke")
+            .setWarning()
+            .onClick(() => {
+              new RevokeDeviceModal(this.host, device, () => void this.render()).open()
+            }),
+        )
+      }
     }
     this.contentEl.createDiv({
       cls: "meridian-callout",
@@ -58,6 +70,52 @@ export class DevicesModal extends Modal {
             }
           }),
       )
+  }
+}
+
+class RevokeDeviceModal extends Modal {
+  constructor(
+    private readonly host: MeridianUiHost,
+    private readonly device: RemoteDevice,
+    private readonly onRevoked: () => void,
+  ) {
+    super(host.app)
+  }
+
+  override onOpen(): void {
+    const name = this.device.deviceName || "Unnamed device"
+    this.setTitle(`Revoke ${name}?`)
+    this.contentEl.createDiv({
+      cls: "meridian-callout is-warning",
+      text: "This immediately ends the device’s Meridian sessions. Its local files are not deleted, but it must be paired again to resume syncing.",
+    })
+    this.contentEl.createDiv({
+      cls: "setting-item-description",
+      text: `${this.device.platform || "Unknown platform"} · ID ${shortDeviceId(this.device.deviceId)}`,
+    })
+    const actions = new Setting(this.contentEl)
+    actions.addButton((button) => button.setButtonText("Cancel").onClick(() => this.close()))
+    actions.addButton((button) =>
+      button
+        .setButtonText("Revoke device")
+        .setWarning()
+        .onClick(async () => {
+          button.setDisabled(true)
+          try {
+            await this.host.revokeDevice(this.device)
+            new Notice(`${name} revoked`)
+            this.close()
+            this.onRevoked()
+          } catch (error) {
+            showError(error)
+            button.setDisabled(false)
+          }
+        }),
+    )
+  }
+
+  override onClose(): void {
+    this.contentEl.empty()
   }
 }
 

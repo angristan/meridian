@@ -14,11 +14,22 @@
 
 Use Workers Logs and Traces to diagnose request classes, latency, binding failures, cursor lag, reconnects, retries, and encrypted byte counts. Never log setup/session tokens, keys, recovery material, file paths, envelope bodies, or stable identifiers that are unnecessary for diagnosis.
 
+## Device replacement
+
+To move sync to a new phone without risking lockout:
+
+1. Pair the new phone with **Devices → Add device**.
+2. Confirm that it completes a pull and push successfully.
+3. On the owner device, open **Devices**, identify the old phone by its name, platform, short cryptographic ID, and authorization time, then select **Revoke**.
+4. Confirm that the old entry is marked **Revoked**.
+
+Revocation immediately invalidates that device’s sessions and future writes. It does not delete files from the device. The revoked identity remains visible as audit history and must be paired again before it can sync.
+
 ## Incident response
 
 ### Lost device
 
-The Worker owner API can revoke a device and immediately blocks its sessions and writes. Generation 1 does not yet distribute a rotated epoch to only the remaining devices. For a suspected key compromise, use the recovery flow from a trusted replacement device; it revokes every old device and rotates the epoch.
+The owner-only **Revoke** action appends a signed revocation and immediately blocks the selected device’s sessions and writes. The current owner cannot revoke itself. Generation 1 does not yet distribute a rotated epoch to only the remaining devices. For a suspected key compromise, use the recovery flow from a trusted replacement device; it revokes every old device and rotates the epoch.
 
 Neither flow can erase plaintext or old epoch keys already obtained by a device.
 

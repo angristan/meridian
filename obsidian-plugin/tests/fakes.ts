@@ -4,6 +4,8 @@ import type {
   CryptoPort,
   DecryptedRevision,
   DeviceKeyMaterial,
+  DeviceRevocationMaterial,
+  DeviceRevocationRecord,
   EncryptedBlob,
   EncryptedRevision,
   PairedDeviceMaterial,
@@ -182,6 +184,34 @@ export class FakeCrypto implements CryptoPort {
     }
   }
 
+  async createDeviceRevocation(
+    _device: DeviceKeyMaterial,
+    target: RemoteDevice,
+  ): Promise<DeviceRevocationMaterial> {
+    return {
+      targetDeviceId: target.deviceId,
+      operationId: "revocation-operation",
+      envelope: {
+        operationId: "revocation-operation",
+        authorDeviceId: TEST_DEVICE.deviceId,
+        type: "device-revocation",
+        subjectDeviceId: target.deviceId,
+      },
+    }
+  }
+
+  async verifyDeviceRevocation(
+    _device: DeviceKeyMaterial,
+    operation: RemoteOperation,
+  ): Promise<DeviceRevocationRecord> {
+    const envelope = operation.envelope as { operationId: string; subjectDeviceId: string }
+    return {
+      deviceId: envelope.subjectDeviceId,
+      operationId: envelope.operationId,
+      cursor: operation.cursor,
+    }
+  }
+
   async createPairingJoin(_pairing: PairingCapability): Promise<PairingJoinMaterial> {
     throw new Error("Not implemented by fake")
   }
@@ -248,6 +278,13 @@ export class FakeRemote implements RemotePort {
   }
 
   async updateDeviceDescriptor(): Promise<void> {}
+
+  async revokeDevice(
+    _targetDeviceId: string,
+    envelope: unknown,
+  ): Promise<{ cursor: number; logHash: string }> {
+    return this.commit(envelope)
+  }
 
   async createPairing(): Promise<PairingCapability> {
     throw new Error("Not implemented by fake")

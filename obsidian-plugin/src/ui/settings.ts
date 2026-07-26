@@ -14,9 +14,20 @@ export function renderSettings(container: HTMLElement, host: MeridianUiHost): vo
       button
         .setButtonText(connected ? "Pause" : configured ? "Resume" : "Connect")
         .onClick(async () => {
-          if (connected) await host.disconnect()
-          else if (configured) await host.resumeConnection()
-          else new ConnectionModal(host).open()
+          if (!configured) {
+            new ConnectionModal(host).open()
+            return
+          }
+          button.setDisabled(true)
+          try {
+            if (connected) await host.disconnect()
+            else await host.resumeConnection()
+            renderSettings(container, host)
+            new Notice(connected ? "Meridian sync paused" : "Meridian sync resumed")
+          } catch (error) {
+            new Notice(error instanceof Error ? error.message : "Unable to change sync state")
+            button.setDisabled(false)
+          }
         }),
     )
 

@@ -61,6 +61,8 @@ Until the repository and a release are public, the build produces `obsidian-plug
 
 - Pair a second device and verify the automatically displayed phrase on both screens.
 - Verify that the encrypted transfer stays unavailable until both confirmations, cancellation authorizes no device, completion updates both screens, and invalid or expired capabilities are rejected.
+- From the owner, revoke the older member by its short ID. Verify its sessions fail immediately, the row becomes **Revoked**, the signed revocation advances other clients without revision decryption, and later operations from that identity are rejected.
+- Pair a replacement phone before revoking the old phone; verify there is always at least one working device and only the intended old identity is revoked.
 - Recover from the saved recovery material in a fresh disposable vault; verify all previous sessions are revoked and new writes use the rotated epoch.
 - Present stale cursors, duplicate operations, changed chunk order, and tampered ciphertext; all must fail safely.
 

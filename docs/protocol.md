@@ -120,7 +120,7 @@ A device has an independent Ed25519 signing keypair and HPKE/X25519 keypair. A v
 
 The recovery signing key signs initial certificates. A later certificate may be signed by an unexpired, unrevoked certificate with `manage-devices`. Validation walks at most 32 issuers, rejects cycles, requires one vault throughout, checks every signature and validity bound, and terminates at the recovery public key.
 
-Certificate bytes never change. Revocation is a separately signed append-only operation naming the certificate. It becomes effective at the cursor assigned to that operation. An operation is valid only if its certificate chain was active at the operation cursor. Revocation blocks future sessions and operations; it cannot revoke bytes already downloaded.
+Certificate bytes never change. Revocation is a separately signed append-only operation naming the certificate. The owner signs both the canonical lifecycle operation and its Worker log framing, which binds the operation, author, epoch, target device, target certificate, and reason. It becomes effective at the cursor assigned to that operation. Clients verify both signatures and persist the target’s revocation cursor before advancing their checkpoint; later operations authored by that identity are rejected even after restart. The Worker immediately deletes the target’s sessions and rejects future authentication. Revocation cannot revoke bytes already downloaded.
 
 ## Epochs and downgrade resistance
 

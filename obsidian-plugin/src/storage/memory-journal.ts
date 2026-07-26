@@ -1,5 +1,6 @@
 import type {
   ConflictRecord,
+  DeviceRevocationRecord,
   FileSnapshot,
   JournalEntry,
   JournalState,
@@ -14,6 +15,7 @@ export class MemoryJournal implements JournalPort {
   private snapshots = new Map<string, FileSnapshot>()
   private cursor = 0
   private checkpoint: TrustedCheckpoint | null = null
+  private readonly revocations = new Map<string, DeviceRevocationRecord>()
   private readonly revisions = new Map<string, LocalRevision>()
   private readonly conflicts = new Map<string, ConflictRecord>()
 
@@ -76,6 +78,19 @@ export class MemoryJournal implements JournalPort {
   async setCheckpoint(checkpoint: TrustedCheckpoint): Promise<void> {
     this.cursor = checkpoint.cursor
     this.checkpoint = structuredClone(checkpoint)
+  }
+
+  async getDeviceRevocation(deviceId: string): Promise<DeviceRevocationRecord | null> {
+    const revocation = this.revocations.get(deviceId)
+    return revocation ? structuredClone(revocation) : null
+  }
+
+  async putDeviceRevocation(revocation: DeviceRevocationRecord): Promise<void> {
+    const existing = this.revocations.get(revocation.deviceId)
+    if (existing && existing.cursor !== revocation.cursor) {
+      throw new Error("Device has conflicting revocation records")
+    }
+    this.revocations.set(revocation.deviceId, structuredClone(revocation))
   }
 
   async putRevision(revision: LocalRevision): Promise<void> {

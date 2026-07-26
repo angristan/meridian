@@ -117,6 +117,27 @@ describe("Meridian remote client", () => {
     })
   })
 
+  it("submits signed revocations to the selected device route", async () => {
+    const transport = new QueueTransport([
+      response({ challengeId: "challenge-id", challenge: "challenge" }),
+      response({ sessionToken: "session-token" }),
+      response({ cursor: 7, chainHash: "chain-hash" }, 201),
+    ])
+    const client = new MeridianRemoteClient("https://example.test", transport)
+    await client.authenticate(TEST_DEVICE, new FakeCrypto())
+
+    await expect(client.revokeDevice("old-device", { signature: "signed" })).resolves.toEqual({
+      cursor: 7,
+      logHash: "chain-hash",
+    })
+    expect(transport.requests.at(-1)).toMatchObject({
+      method: "POST",
+      url: "https://example.test/v1/devices/old-device/revoke",
+      body: JSON.stringify({ operation: { signature: "signed" } }),
+      headers: { authorization: "Bearer session-token", "content-type": "application/json" },
+    })
+  })
+
   it("polls relayed pairing state without consuming the result", async () => {
     const transport = new QueueTransport([
       response({ challengeId: "challenge-id", challenge: "challenge" }),

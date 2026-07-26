@@ -64,6 +64,60 @@ describe("shared crypto adapter", () => {
     })
   })
 
+  it("creates signed device revocations bound to their target certificate", async () => {
+    const crypto = createPackageCryptoPort()
+    const claim = await crypto.createFirstDevice("setup-session", "claim-challenge")
+    const owner = await crypto.loadDevice(claim.keyBundle)
+    const ownerCertificate = stringField(record(claim.publicClaim).initialDevice, "certificate")
+    const joining = await crypto.createPairingJoin(
+      {
+        pairingId: randomId(),
+        capability: randomId(32),
+        vaultId: owner.vaultId,
+        expiresAt: Date.now() + 300_000,
+      },
+      { deviceName: "Old iPhone", platform: "iOS" },
+    )
+    const approval = await crypto.approvePairing(owner, joining.candidatePackage, [
+      ownerCertificate,
+    ])
+    const targetDeviceId = stringField(JSON.parse(joining.candidatePackage), "deviceId")
+    const targetCertificate = stringField(approval.payload, "certificate")
+    const target = {
+      deviceId: targetDeviceId,
+      signingPublicKey: stringField(JSON.parse(joining.candidatePackage), "signingPublicKey"),
+      hpkePublicKey: stringField(JSON.parse(joining.candidatePackage), "hpkePublicKey"),
+      certificate: targetCertificate,
+      role: "member" as const,
+      authorizedAt: 1,
+      revokedAt: null,
+      deviceName: "Old iPhone",
+      platform: "iOS",
+    }
+    const revocation = await crypto.createDeviceRevocation(owner, target)
+    const operation = {
+      cursor: 1,
+      logHash: randomId(32),
+      envelope: revocation.envelope,
+      certificateChain: [ownerCertificate, targetCertificate],
+    }
+
+    await expect(crypto.verifyDeviceRevocation(owner, operation)).resolves.toEqual({
+      deviceId: targetDeviceId,
+      operationId: revocation.operationId,
+      cursor: 1,
+    })
+    await expect(
+      crypto.verifyDeviceRevocation(owner, {
+        ...operation,
+        envelope: { ...record(revocation.envelope), subjectDeviceId: randomId() },
+      }),
+    ).rejects.toThrow(/signature is invalid/)
+    await expect(
+      crypto.createDeviceRevocation(owner, { ...target, deviceId: owner.deviceId }),
+    ).rejects.toThrow(/cannot revoke itself/)
+  })
+
   it("pairs a second device and trusts its certificate for decryption", async () => {
     const crypto = createPackageCryptoPort()
     const ownerClaim = await crypto.createFirstDevice("setup-session", "claim-challenge")

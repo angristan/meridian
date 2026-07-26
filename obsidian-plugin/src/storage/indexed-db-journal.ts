@@ -1,5 +1,6 @@
 import type {
   ConflictRecord,
+  DeviceRevocationRecord,
   FileSnapshot,
   JournalEntry,
   JournalState,
@@ -111,6 +112,25 @@ export class IndexedDbJournal implements JournalPort {
     store.put({ key: "cursor", value: checkpoint.cursor } satisfies MetadataRecord)
     store.put({ key: "checkpoint", value: checkpoint } satisfies MetadataRecord)
     await transactionDone(transaction)
+  }
+
+  async getDeviceRevocation(deviceId: string): Promise<DeviceRevocationRecord | null> {
+    const database = this.requireDatabase()
+    const transaction = database.transaction("revocations", "readonly")
+    const done = transactionDone(transaction)
+    const revocation = await requestResult<DeviceRevocationRecord | undefined>(
+      transaction.objectStore("revocations").get(deviceId),
+    )
+    await done
+    return revocation ?? null
+  }
+
+  async putDeviceRevocation(revocation: DeviceRevocationRecord): Promise<void> {
+    const existing = await this.getDeviceRevocation(revocation.deviceId)
+    if (existing && existing.cursor !== revocation.cursor) {
+      throw new Error("Device has conflicting revocation records")
+    }
+    await this.put("revocations", revocation)
   }
 
   async putRevision(revision: LocalRevision): Promise<void> {

@@ -10,7 +10,7 @@ import type {
 import { fromBase64Url, toBase64Url } from "../platform/bytes"
 import { deviceBundle, trustedAuthorCertificate } from "./device-secret"
 import {
-  parseWorkerOperation,
+  parseFileWorkerOperation,
   type WorkerOperation,
   workerOperationSigningBytes,
 } from "./worker-operation"
@@ -57,7 +57,7 @@ export async function decryptRevision(
   loadBlob: (blobId: string) => Promise<ArrayBuffer>,
 ): Promise<DecryptedRevision> {
   const bundle = deviceBundle(device)
-  const wire = parseWorkerOperation(operation.envelope)
+  const wire = parseFileWorkerOperation(operation.envelope)
   const authorCertificate =
     wire.authorDeviceId === device.deviceId
       ? bundle.certificate

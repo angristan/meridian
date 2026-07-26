@@ -1,5 +1,6 @@
 import type {
   ConflictRecord,
+  DeviceRevocationRecord,
   FileSnapshot,
   JournalEntry,
   JournalState,
@@ -21,6 +22,8 @@ export interface JournalPort {
   getCursor(): Promise<number>
   getCheckpoint(): Promise<TrustedCheckpoint | null>
   setCheckpoint(checkpoint: TrustedCheckpoint): Promise<void>
+  getDeviceRevocation(deviceId: string): Promise<DeviceRevocationRecord | null>
+  putDeviceRevocation(revocation: DeviceRevocationRecord): Promise<void>
   putRevision(revision: LocalRevision): Promise<void>
   getRevision(revisionId: string): Promise<LocalRevision | null>
   listRevisions(path?: string): Promise<LocalRevision[]>

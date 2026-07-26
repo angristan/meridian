@@ -31,6 +31,23 @@ export class OperationApplier {
   ) {}
 
   async apply(device: DeviceKeyMaterial, operation: RemoteOperation): Promise<void> {
+    const wire = record(operation.envelope)
+    const authorDeviceId = typeof wire?.authorDeviceId === "string" ? wire.authorDeviceId : null
+    if (authorDeviceId) {
+      const authorRevocation = await this.journal.getDeviceRevocation(authorDeviceId)
+      if (authorRevocation && operation.cursor > authorRevocation.cursor) {
+        throw new Error("Remote operation was authored after its device was revoked")
+      }
+    }
+    if (wire?.type === "device-revocation") {
+      const revocation = await this.crypto.verifyDeviceRevocation(device, operation)
+      await this.journal.putDeviceRevocation(revocation)
+      return
+    }
+    if (wire?.type === "key-epoch") {
+      throw new Error("Remote epoch transition is not supported by this client")
+    }
+
     const revision = await this.crypto.decryptRevision(device, operation, (blobId) =>
       this.remote.getBlob(blobId),
     )
@@ -209,6 +226,12 @@ export class OperationApplier {
       return false
     }
   }
+}
+
+function record(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null
 }
 
 function copyBuffer(bytes: Uint8Array): ArrayBuffer {
