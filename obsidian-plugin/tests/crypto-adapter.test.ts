@@ -113,9 +113,48 @@ describe("shared crypto adapter", () => {
         envelope: { ...record(revocation.envelope), subjectDeviceId: randomId() },
       }),
     ).rejects.toThrow(/signature is invalid/)
+
+    const verification = await crypto.inspectPairingVerification(
+      joining.pendingSecret,
+      stringField(approval.payload, "verificationPreview"),
+    )
+    const paired = await crypto.consumePairingResult(
+      joining.pendingSecret,
+      stringField(approval.releasePayload, "hpkeTransfer"),
+      verification.verificationPhrase,
+      verification.transferHash,
+    )
+    const member = await crypto.loadDevice(paired.keyBundle)
+    const selfRevocation = await crypto.createDeviceRevocation(member, target)
+    await expect(
+      crypto.verifyDeviceRevocation(owner, {
+        cursor: 2,
+        logHash: randomId(32),
+        envelope: selfRevocation.envelope,
+        authorCertificate: targetCertificate,
+        certificateChain: [ownerCertificate, targetCertificate],
+      }),
+    ).resolves.toEqual({
+      deviceId: targetDeviceId,
+      operationId: selfRevocation.operationId,
+      cursor: 2,
+    })
+    await expect(
+      crypto.createDeviceRevocation(member, {
+        deviceId: owner.deviceId,
+        signingPublicKey: stringField(record(claim.publicClaim).initialDevice, "signingPublicKey"),
+        hpkePublicKey: stringField(record(claim.publicClaim).initialDevice, "hpkePublicKey"),
+        certificate: ownerCertificate,
+        role: "owner",
+        authorizedAt: 0,
+        revokedAt: null,
+        deviceName: "Owner Mac",
+        platform: "macOS",
+      }),
+    ).rejects.toThrow(/member device can remove only itself/)
     await expect(
       crypto.createDeviceRevocation(owner, { ...target, deviceId: owner.deviceId }),
-    ).rejects.toThrow(/cannot revoke itself/)
+    ).rejects.toThrow(/owner device cannot remove itself/)
   })
 
   it("pairs a second device and trusts its certificate for decryption", async () => {

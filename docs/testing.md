@@ -62,6 +62,9 @@ Until the repository and a release are public, the build produces `obsidian-plug
 - Pair a second device and verify the automatically displayed phrase on both screens.
 - Verify that the encrypted transfer stays unavailable until both confirmations, cancellation authorizes no device, completion updates both screens, and invalid or expired capabilities are rejected.
 - From the owner, revoke the older member by its short ID. Verify its sessions fail immediately, the row becomes **Revoked**, the signed revocation advances other clients without revision decryption, and later operations from that identity are rejected.
+- On a member, choose **Remove this device**. Verify queued changes are warned about, files remain, the member self-revocation succeeds, local keys/configuration are forgotten, and the same local vault can pair again.
+- Verify owner self-removal and member cross-device revocation are rejected. Simulate a lost revocation response and restart at every cleanup boundary; only exact `device_not_found` confirmation may complete cleanup.
+- Scan setup and pairing links in connected, paused, partially configured, and removal-pending vaults; each must stop before generating keys or changing identity.
 - Pair a replacement phone before revoking the old phone; verify there is always at least one working device and only the intended old identity is revoked.
 - Recover from the saved recovery material in a fresh disposable vault; verify all previous sessions are revoked and new writes use the rotated epoch.
 - Present stale cursors, duplicate operations, changed chunk order, and tampered ciphertext; all must fail safely.

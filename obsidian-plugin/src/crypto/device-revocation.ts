@@ -14,6 +14,7 @@ import {
   deviceId,
   ed25519PublicKey,
   ed25519Signature,
+  encodeDeviceCertificate,
   encodeOperation,
   operationId,
   Permission,
@@ -39,13 +40,15 @@ export async function createDeviceRevocation(
 ): Promise<DeviceRevocationMaterial> {
   const bundle = deviceBundle(device)
   const targetDeviceId = deviceId(fromBase64Url(target.deviceId))
-  if (bytesEqual(targetDeviceId, bundle.deviceId)) {
-    throw new Error("The current device cannot revoke itself")
+  const selfRevocation = bytesEqual(targetDeviceId, bundle.deviceId)
+  const managesDevices = bundle.certificate.body.permissions.includes(Permission.ManageDevices)
+  if (selfRevocation && managesDevices) {
+    throw new Error("The owner device cannot remove itself; use recovery after owner loss")
+  }
+  if (!selfRevocation && !managesDevices) {
+    throw new Error("A member device can remove only itself")
   }
   if (target.revokedAt !== null) throw new Error("The selected device is already revoked")
-  if (!bundle.certificate.body.permissions.includes(Permission.ManageDevices)) {
-    throw new Error("Only an owner device can revoke devices")
-  }
 
   const targetCertificate = decodeDeviceCertificate(fromBase64Url(target.certificate))
   if (
@@ -54,19 +57,31 @@ export async function createDeviceRevocation(
   ) {
     throw new Error("The selected device certificate does not match the registry")
   }
-  const stored = parseStoredSecret(device.serialized)
-  if (!stored.recoveryPublicKey)
-    throw new Error("The local key bundle has no recovery trust anchor")
-  const certificates = new Map([
-    [bytesToHex(bundle.certificate.body.certificateId), bundle.certificate],
-    [bytesToHex(targetCertificate.body.certificateId), targetCertificate],
-  ])
-  validateDeviceCertificate(targetCertificate, {
-    recoveryPublicKey: ed25519PublicKey(fromBase64Url(stored.recoveryPublicKey)),
-    lookup: (certificateId) => certificates.get(bytesToHex(certificateId)),
-    atCursor: bundle.checkpoint.body.cursor,
-    atTime: Date.now(),
-  })
+  if (selfRevocation) {
+    if (
+      !bytesEqual(
+        encodeDeviceCertificate(targetCertificate),
+        encodeDeviceCertificate(bundle.certificate),
+      )
+    ) {
+      throw new Error("The current device certificate does not match the registry")
+    }
+  } else {
+    const stored = parseStoredSecret(device.serialized)
+    if (!stored.recoveryPublicKey) {
+      throw new Error("The local key bundle has no recovery trust anchor")
+    }
+    const certificates = new Map([
+      [bytesToHex(bundle.certificate.body.certificateId), bundle.certificate],
+      [bytesToHex(targetCertificate.body.certificateId), targetCertificate],
+    ])
+    validateDeviceCertificate(targetCertificate, {
+      recoveryPublicKey: ed25519PublicKey(fromBase64Url(stored.recoveryPublicKey)),
+      lookup: (certificateId) => certificates.get(bytesToHex(certificateId)),
+      atCursor: bundle.checkpoint.body.cursor,
+      atTime: Date.now(),
+    })
+  }
 
   const operationIdentifier = operationId(fromBase64Url(randomId()))
   const signedLifecycleOperation = signOperation(
@@ -114,8 +129,14 @@ export async function verifyDeviceRevocation(
     wire.authorDeviceId === device.deviceId
       ? bundle.certificate
       : trustedAuthorCertificate(device, operation)
-  if (!authorCertificate.body.permissions.includes(Permission.ManageDevices)) {
-    throw new Error("Revocation author is not an authorized device manager")
+  const selfRevocation = wire.authorDeviceId === wire.subjectDeviceId
+  const managesDevices = authorCertificate.body.permissions.includes(Permission.ManageDevices)
+  if ((!selfRevocation && !managesDevices) || (selfRevocation && managesDevices)) {
+    throw new Error(
+      selfRevocation
+        ? "The owner device cannot revoke itself"
+        : "Revocation author is not an authorized device manager",
+    )
   }
   const unsigned: Omit<WorkerOperation, "signature"> = {
     operationId: wire.operationId,

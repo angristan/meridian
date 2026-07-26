@@ -27,6 +27,7 @@ export interface MeridianUiHost {
   openPath(path: string): Promise<void>
   getDevices(): Promise<RemoteDevice[]>
   revokeDevice(device: RemoteDevice): Promise<void>
+  removeCurrentDevice(): Promise<void>
   createPairingLink(): Promise<PairingInvitation>
   getPairingStatus(pairingId: string): Promise<PairingStatus>
   getPairingProgress(

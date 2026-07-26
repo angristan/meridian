@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest"
-import { createPairingDeepLink, parsePairingLinkParameters } from "../src/plugin/pairing-link"
+import {
+  createPairingDeepLink,
+  hasConfiguredMeridianIdentity,
+  parsePairingLinkParameters,
+} from "../src/plugin/pairing-link"
 
 const pairing = {
   pairingId: "pairing-id",
@@ -30,6 +34,25 @@ describe("pairing deep links", () => {
       vaultId: pairing.vaultId,
       expiresAt: pairing.expiresAt,
     })
+  })
+
+  it("blocks pairing for connected, partial, paused, or removal-pending identities", () => {
+    const empty = { endpoint: "", vaultId: "", deviceId: "", pendingDeviceRemoval: null }
+    expect(hasConfiguredMeridianIdentity(empty)).toBe(false)
+    expect(hasConfiguredMeridianIdentity({ ...empty, endpoint: "https://example.test" })).toBe(true)
+    expect(hasConfiguredMeridianIdentity({ ...empty, vaultId: "vault-id" })).toBe(true)
+    expect(hasConfiguredMeridianIdentity({ ...empty, deviceId: "device-id" })).toBe(true)
+    expect(
+      hasConfiguredMeridianIdentity({
+        ...empty,
+        pendingDeviceRemoval: {
+          endpoint: "https://example.test",
+          vaultId: "vault-id",
+          deviceId: "device-id",
+          envelope: {},
+        },
+      }),
+    ).toBe(true)
   })
 
   it("rejects the old unnamespaced parameter contract", () => {

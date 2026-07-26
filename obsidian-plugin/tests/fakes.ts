@@ -286,6 +286,10 @@ export class FakeRemote implements RemotePort {
     return this.commit(envelope)
   }
 
+  async isDeviceAuthorized(): Promise<boolean> {
+    return true
+  }
+
   async createPairing(): Promise<PairingCapability> {
     throw new Error("Not implemented by fake")
   }

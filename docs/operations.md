@@ -25,6 +25,17 @@ To move sync to a new phone without risking lockout:
 
 Revocation immediately invalidates that device’s sessions and future writes. It does not delete files from the device. The revoked identity remains visible as audit history and must be paired again before it can sync.
 
+## Reset pairing on a member device
+
+A configured local vault rejects setup and pairing links to prevent accidental identity replacement. To deliberately pair the same iPhone vault again:
+
+1. Sync important queued changes.
+2. On the iPhone, choose **Remove this device** and confirm the warning.
+3. Meridian signs a self-revocation, confirms it remotely, forgets the local key and connection, and keeps every vault file and local journal record.
+4. On the Mac owner, choose **Devices → Add device** and scan the new QR from the same iPhone vault.
+
+**Pause** is temporary and never revokes or forgets an identity. **Remove this device** is permanent and available only to member devices. An owner cannot remove itself; ownership recovery is the safe path after owner loss.
+
 ## Incident response
 
 ### Lost device

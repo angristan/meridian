@@ -1,19 +1,30 @@
-import { Notice, Setting } from "obsidian"
+import { Modal, Notice, Setting } from "obsidian"
 import { ConnectionModal, RecoveryConnectModal } from "./connection-modals"
 import type { MeridianUiHost } from "./host"
 
 export function renderSettings(container: HTMLElement, host: MeridianUiHost): void {
   container.empty()
   const configured = host.settings.endpoint.length > 0
-  const connected = configured && host.settings.enabled
+  const removalPending = host.settings.pendingDeviceRemoval !== null
+  const connected = configured && host.settings.enabled && !removalPending
 
   new Setting(container)
     .setName("Connection")
     .setDesc(configured ? host.settings.endpoint : "Not connected")
     .addButton((button) =>
       button
-        .setButtonText(connected ? "Pause" : configured ? "Resume" : "Connect")
+        .setButtonText(
+          removalPending
+            ? "Removal pending"
+            : connected
+              ? "Pause"
+              : configured
+                ? "Resume"
+                : "Connect",
+        )
+        .setDisabled(removalPending)
         .onClick(async () => {
+          if (removalPending) return
           if (!configured) {
             new ConnectionModal(host).open()
             return
@@ -40,6 +51,67 @@ export function renderSettings(container: HTMLElement, host: MeridianUiHost): vo
         await host.saveSettings()
       }),
     )
+
+  if (configured) {
+    const removal = new Setting(container)
+      .setName("Remove this device")
+      .setDesc("Checking whether this device can remove its Meridian identity…")
+    let hasButton = false
+    const addRemovalButton = () => {
+      if (hasButton) return
+      hasButton = true
+      removal.addButton((button) =>
+        button
+          .setButtonText("Remove")
+          .setWarning()
+          .onClick(() =>
+            new RemoveCurrentDeviceModal(host, () => renderSettings(container, host)).open(),
+          ),
+      )
+    }
+    if (removalPending) {
+      removal.setDesc(
+        "A previous removal attempt is pending. Retry to confirm server revocation and finish local cleanup.",
+      )
+      removal.addButton((button) =>
+        button
+          .setButtonText("Retry removal")
+          .setWarning()
+          .onClick(() =>
+            new RemoveCurrentDeviceModal(host, () => renderSettings(container, host)).open(),
+          ),
+      )
+    } else {
+      void host
+        .getDevices()
+        .then((devices) => {
+          const current = devices.find((device) => device.deviceId === host.settings.deviceId)
+          if (!current || current.revokedAt !== null) {
+            removal.setDesc(
+              "This identity may already be revoked. Remove its local Meridian connection to pair again.",
+            )
+            addRemovalButton()
+            return
+          }
+          if (current.role === "owner") {
+            removal.setDesc(
+              "The owner device cannot remove itself. Use recovery from another device after owner loss.",
+            )
+            return
+          }
+          removal.setDesc(
+            "Permanently revoke this device and forget its local Meridian connection. Vault files are kept.",
+          )
+          addRemovalButton()
+        })
+        .catch(() => {
+          removal.setDesc(
+            "Unable to verify this identity. Removal will proceed only if the server confirms it safely.",
+          )
+          addRemovalButton()
+        })
+    }
+  }
 
   new Setting(container).setName("Configuration sync").setHeading()
   container.createDiv({
@@ -128,4 +200,50 @@ export function renderSettings(container: HTMLElement, host: MeridianUiHost): vo
           new Notice("Meridian local index rebuilt")
         }),
     )
+}
+
+class RemoveCurrentDeviceModal extends Modal {
+  constructor(
+    private readonly host: MeridianUiHost,
+    private readonly onRemoved: () => void,
+  ) {
+    super(host.app)
+  }
+
+  override onOpen(): void {
+    this.setTitle("Remove this device?")
+    this.contentEl.createDiv({
+      cls: "meridian-callout is-warning",
+      text: "This permanently revokes this device’s Meridian identity and ends synchronization. Local vault files are not deleted. Pairing is required to connect again.",
+    })
+    const queued = this.host.getStatus().queued
+    if (queued > 0) {
+      this.contentEl.createDiv({
+        cls: "meridian-callout is-warning",
+        text: `${queued} local change${queued === 1 ? " is" : "s are"} still queued. Sync first unless you intentionally want to keep those changes only on this device.`,
+      })
+    }
+    const actions = new Setting(this.contentEl)
+    actions.addButton((button) => button.setButtonText("Cancel").onClick(() => this.close()))
+    actions.addButton((button) =>
+      button
+        .setButtonText("Remove this device")
+        .setWarning()
+        .onClick(async () => {
+          button.setDisabled(true)
+          try {
+            await this.host.removeCurrentDevice()
+            this.close()
+            this.onRemoved()
+          } catch (error) {
+            new Notice(error instanceof Error ? error.message : "Unable to remove this device")
+            button.setDisabled(false)
+          }
+        }),
+    )
+  }
+
+  override onClose(): void {
+    this.contentEl.empty()
+  }
 }

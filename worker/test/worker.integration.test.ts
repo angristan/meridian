@@ -606,38 +606,132 @@ describe("Meridian Worker integration", () => {
     })
     expect(canceledAuth.status).toBe(404)
 
-    const unsignedRevocation: Operation = {
+    const ownerRevocationTarget = randomToken(16)
+    const primaryStub = env.VAULT.get(env.VAULT.idFromName("primary"))
+    await runInDurableObject(primaryStub, async (_instance, state) => {
+      state.storage.sql.exec(
+        `INSERT INTO devices(
+          device_id, signing_public_key, hpke_public_key, certificate, role, authorized_at,
+          authorized_by, device_name, platform
+        ) VALUES (?, ?, ?, ?, 'member', ?, ?, ?, ?)`,
+        ownerRevocationTarget,
+        base64UrlEncode(randomBytes(32)),
+        base64UrlEncode(randomBytes(32)),
+        base64UrlEncode(randomBytes(96)),
+        Date.now(),
+        deviceId,
+        "Retired phone",
+        "iOS",
+      )
+    })
+    const ownerRevocationUnsigned: Operation = {
       operationId: randomToken(18),
       authorDeviceId: deviceId,
+      epochId: randomToken(18),
+      type: "device-revocation",
+      subjectDeviceId: ownerRevocationTarget,
+      envelope: base64UrlEncode(randomBytes(128)),
+      signature: base64UrlEncode(randomBytes(64)),
+    }
+    const ownerRevocation: Operation = {
+      ...ownerRevocationUnsigned,
+      signature: await sign(signingKey, operationSigningMessage(ownerRevocationUnsigned)),
+    }
+    for (const expectedStatus of [201, 200]) {
+      const response = await SELF.fetch(
+        `https://example.test/v1/devices/${ownerRevocationTarget}/revoke`,
+        {
+          method: "POST",
+          headers: { ...authorization, "content-type": "application/json" },
+          body: JSON.stringify({ operation: ownerRevocation }),
+        },
+      )
+      expect(response.status).toBe(expectedStatus)
+      if (expectedStatus === 200) {
+        await expect(response.json()).resolves.toMatchObject({ duplicate: true })
+      }
+    }
+
+    const memberCrossRevocationUnsigned: Operation = {
+      operationId: randomToken(18),
+      authorDeviceId: candidateId,
+      epochId: randomToken(18),
+      type: "device-revocation",
+      subjectDeviceId: deviceId,
+      envelope: base64UrlEncode(randomBytes(128)),
+      signature: base64UrlEncode(randomBytes(64)),
+    }
+    const memberCrossRevocation: Operation = {
+      ...memberCrossRevocationUnsigned,
+      signature: await sign(candidateKey, operationSigningMessage(memberCrossRevocationUnsigned)),
+    }
+    const memberCrossResponse = await SELF.fetch(
+      `https://example.test/v1/devices/${deviceId}/revoke`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${candidateSession}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ operation: memberCrossRevocation }),
+      },
+    )
+    expect(memberCrossResponse.status).toBe(403)
+    await expect(memberCrossResponse.json()).resolves.toMatchObject({
+      error: { code: "owner_required" },
+    })
+
+    const ownerSelfRevocationUnsigned: Operation = {
+      operationId: randomToken(18),
+      authorDeviceId: deviceId,
+      epochId: randomToken(18),
+      type: "device-revocation",
+      subjectDeviceId: deviceId,
+      envelope: base64UrlEncode(randomBytes(128)),
+      signature: base64UrlEncode(randomBytes(64)),
+    }
+    const ownerSelfRevocation: Operation = {
+      ...ownerSelfRevocationUnsigned,
+      signature: await sign(signingKey, operationSigningMessage(ownerSelfRevocationUnsigned)),
+    }
+    const ownerSelfResponse = await SELF.fetch(
+      `https://example.test/v1/devices/${deviceId}/revoke`,
+      {
+        method: "POST",
+        headers: { ...authorization, "content-type": "application/json" },
+        body: JSON.stringify({ operation: ownerSelfRevocation }),
+      },
+    )
+    expect(ownerSelfResponse.status).toBe(409)
+    await expect(ownerSelfResponse.json()).resolves.toMatchObject({
+      error: { code: "cannot_revoke_owner" },
+    })
+
+    const selfRevocationUnsigned: Operation = {
+      operationId: randomToken(18),
+      authorDeviceId: candidateId,
       epochId: randomToken(18),
       type: "device-revocation",
       subjectDeviceId: candidateId,
       envelope: base64UrlEncode(randomBytes(128)),
       signature: base64UrlEncode(randomBytes(64)),
     }
-    const revocation: Operation = {
-      ...unsignedRevocation,
-      signature: await sign(signingKey, operationSigningMessage(unsignedRevocation)),
+    const selfRevocation: Operation = {
+      ...selfRevocationUnsigned,
+      signature: await sign(candidateKey, operationSigningMessage(selfRevocationUnsigned)),
     }
-    const revokeResponse = await SELF.fetch(
+    const selfRevokeResponse = await SELF.fetch(
       `https://example.test/v1/devices/${candidateId}/revoke`,
       {
         method: "POST",
-        headers: { ...authorization, "content-type": "application/json" },
-        body: JSON.stringify({ operation: revocation }),
+        headers: {
+          authorization: `Bearer ${candidateSession}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ operation: selfRevocation }),
       },
     )
-    expect(revokeResponse.status).toBe(201)
-    const revokeRetryResponse = await SELF.fetch(
-      `https://example.test/v1/devices/${candidateId}/revoke`,
-      {
-        method: "POST",
-        headers: { ...authorization, "content-type": "application/json" },
-        body: JSON.stringify({ operation: revocation }),
-      },
-    )
-    expect(revokeRetryResponse.status).toBe(200)
-    await expect(revokeRetryResponse.json()).resolves.toMatchObject({ duplicate: true })
+    expect(selfRevokeResponse.status).toBe(201)
     const revokedSessionResponse = await SELF.fetch("https://example.test/v1/devices", {
       headers: { authorization: `Bearer ${candidateSession}` },
     })

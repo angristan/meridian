@@ -13,7 +13,7 @@ import {
 } from "./model"
 import { ObsidianHttpTransport } from "./network/obsidian-transport"
 import { MeridianRemoteClient, normalizeEndpoint } from "./network/remote-client"
-import { createPairingDeepLink } from "./plugin/pairing-link"
+import { createPairingDeepLink, hasConfiguredMeridianIdentity } from "./plugin/pairing-link"
 import { registerProtocolHandlers } from "./plugin/protocol-handlers"
 import { PluginScheduling } from "./plugin/scheduling"
 import { MeridianSecretStorage } from "./plugin/secret-storage"
@@ -22,6 +22,7 @@ import {
   defaultDevicePlatform,
   MeridianSettingsTab,
   normalizeSettings,
+  withoutMeridianIdentity,
 } from "./plugin/settings"
 import { IndexedDbJournal } from "./storage/journal"
 import { SyncController } from "./sync/controller"
@@ -88,8 +89,19 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
     this.scheduling.register()
 
     this.app.workspace.onLayoutReady(() => {
-      if (this.settings.enabled) void this.initializeExistingConnection()
-      else this.updateStatus({ phase: "disconnected", message: "Sync is paused" })
+      if (this.settings.pendingDeviceRemoval) {
+        void this.completePendingDeviceRemoval().catch((error) =>
+          this.updateStatus({
+            phase: "error",
+            message: "Device removal needs attention",
+            error: error instanceof Error ? error.message : String(error),
+          }),
+        )
+      } else if (this.settings.enabled) {
+        void this.initializeExistingConnection()
+      } else {
+        this.updateStatus({ phase: "disconnected", message: "Sync is paused" })
+      }
     })
   }
 
@@ -104,6 +116,9 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
   }
 
   async syncNow(): Promise<void> {
+    if (this.settings.pendingDeviceRemoval) {
+      throw new Error("Finish the pending device removal before syncing")
+    }
     if (!this.controller) {
       if (this.settings.enabled && this.settings.endpoint) await this.initializeExistingConnection()
       if (!this.controller) {
@@ -124,6 +139,9 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
     setupSession: string,
     claimChallenge: string,
   ): Promise<void> {
+    if (hasConfiguredMeridianIdentity(this.settings)) {
+      throw new Error("Meridian is already set up and connected in this vault.")
+    }
     if (!setupSession || !claimChallenge)
       throw new Error("Setup session and claim challenge are required")
     const normalizedEndpoint = normalizeEndpoint(endpoint)
@@ -194,6 +212,9 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
   }
 
   async resumeConnection(): Promise<void> {
+    if (this.settings.pendingDeviceRemoval) {
+      throw new Error("Finish the pending device removal before resuming sync")
+    }
     this.settings.enabled = true
     await this.saveSettings()
     await this.initializeExistingConnection()
@@ -220,13 +241,79 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
     await this.controller?.resolveConflict(id)
   }
 
-  async getDevices() {
-    return this.controller?.devices() ?? []
+  async getDevices(): Promise<RemoteDevice[]> {
+    if (this.controller) return this.controller.devices()
+    if (!this.settings.endpoint || !this.settings.deviceId) return []
+    const serialized = this.secrets.getDeviceKeyBundle(this.settings.deviceId)
+    if (!serialized) throw new Error("Device keys are missing from Obsidian SecretStorage")
+    const device = await this.cryptoPort.loadDevice(serialized)
+    const remote = new MeridianRemoteClient(this.settings.endpoint, new ObsidianHttpTransport())
+    await remote.authenticate(device, this.cryptoPort)
+    return remote.listDevices()
   }
 
   async revokeDevice(device: RemoteDevice): Promise<void> {
     if (!this.controller) throw new Error("Meridian is not connected")
     await this.controller.revokeDevice(device)
+  }
+
+  async removeCurrentDevice(): Promise<void> {
+    if (this.settings.pendingDeviceRemoval) {
+      await this.completePendingDeviceRemoval()
+      return
+    }
+    if (!this.settings.endpoint || !this.settings.vaultId || !this.settings.deviceId) {
+      throw new Error("Meridian is not connected on this device")
+    }
+
+    const previousController = this.controller
+    this.controller = null
+    await previousController?.quiesce()
+    try {
+      const serialized = this.secrets.getDeviceKeyBundle(this.settings.deviceId)
+      if (!serialized) throw new Error("Device keys are missing from Obsidian SecretStorage")
+      const device = await this.cryptoPort.loadDevice(serialized)
+      const remote = new MeridianRemoteClient(this.settings.endpoint, new ObsidianHttpTransport())
+      let current: RemoteDevice
+      try {
+        await remote.authenticate(device, this.cryptoPort)
+        const devices = await remote.listDevices()
+        const found = devices.find((candidate) => candidate.deviceId === device.deviceId)
+        if (!found || found.revokedAt !== null) {
+          throw new Error("Current device is no longer authorized")
+        }
+        current = found
+      } catch (error) {
+        if (!(await remote.isDeviceAuthorized(device.deviceId))) {
+          await this.clearRemovedDeviceIdentity(device.deviceId)
+          return
+        }
+        throw error
+      }
+      if (current.role === "owner") {
+        throw new Error("The owner device cannot remove itself; use recovery after owner loss")
+      }
+
+      const revocation = await this.cryptoPort.createDeviceRevocation(device, current)
+      this.settings.pendingDeviceRemoval = {
+        endpoint: this.settings.endpoint,
+        vaultId: this.settings.vaultId,
+        deviceId: this.settings.deviceId,
+        envelope: revocation.envelope,
+      }
+      await this.saveSettings()
+      await this.completePendingDeviceRemoval()
+    } catch (error) {
+      if (
+        !this.settings.pendingDeviceRemoval &&
+        this.settings.enabled &&
+        this.settings.deviceId &&
+        !this.controller
+      ) {
+        await this.initializeExistingConnection()
+      }
+      throw error
+    }
   }
 
   async createPairingLink(): Promise<PairingInvitation> {
@@ -316,6 +403,11 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
     vaultId: string,
     expiresAt: number,
   ): Promise<void> {
+    if (hasConfiguredMeridianIdentity(this.settings)) {
+      throw new Error(
+        "Meridian is already set up in this local vault. Remove this device before pairing again.",
+      )
+    }
     const normalizedEndpoint = normalizeEndpoint(endpoint)
     const remote = new MeridianRemoteClient(normalizedEndpoint, new ObsidianHttpTransport())
     const progress = await remote.getPairingProgress(pairingId, capability)
@@ -374,6 +466,9 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
   }
 
   async finishPairing(endpoint: string, pairingId: string, capability: string): Promise<void> {
+    if (hasConfiguredMeridianIdentity(this.settings)) {
+      throw new Error("Meridian is already set up and connected in this vault.")
+    }
     const normalizedEndpoint = normalizeEndpoint(endpoint)
     const pendingSecret = this.secrets.getPendingPairing(pairingId)
     if (!pendingSecret) throw new Error("Pending pairing keys are missing")
@@ -513,11 +608,57 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
     await this.app.workspace.getLeaf(false).openFile(file)
   }
 
+  private async completePendingDeviceRemoval(): Promise<void> {
+    const pending = this.settings.pendingDeviceRemoval
+    if (!pending) return
+    const remote = new MeridianRemoteClient(pending.endpoint, new ObsidianHttpTransport())
+    const authorized = await remote.isDeviceAuthorized(pending.deviceId)
+    if (authorized) {
+      const serialized = this.secrets.getDeviceKeyBundle(pending.deviceId)
+      if (!serialized) throw new Error("Pending device removal is missing its signing keys")
+      const device = await this.cryptoPort.loadDevice(serialized)
+      await remote.authenticate(device, this.cryptoPort)
+      try {
+        await remote.revokeDevice(pending.deviceId, pending.envelope)
+      } catch (error) {
+        let stillAuthorized: boolean
+        try {
+          stillAuthorized = await remote.isDeviceAuthorized(pending.deviceId)
+        } catch {
+          throw error
+        }
+        if (stillAuthorized) throw error
+      }
+    }
+    await this.clearRemovedDeviceIdentity(pending.deviceId)
+  }
+
+  private async clearRemovedDeviceIdentity(deviceId: string): Promise<void> {
+    this.secrets.clearDeviceKeyBundle(deviceId)
+    this.settings = withoutMeridianIdentity(this.settings)
+    await this.saveSettings()
+    this.updateStatus({
+      phase: "disconnected",
+      message: "Meridian was removed from this device",
+      socketConnected: false,
+      error: null,
+    })
+    new Notice("This device was removed. Local vault files were kept.", 8_000)
+  }
+
   private async loadSettings(): Promise<void> {
     this.settings = normalizeSettings(await this.loadData())
   }
 
   private async initializeExistingConnection(): Promise<void> {
+    if (this.settings.pendingDeviceRemoval) {
+      this.updateStatus({
+        phase: "error",
+        message: "Device removal needs attention",
+        error: "Retry removal before syncing",
+      })
+      return
+    }
     if (!this.settings.endpoint || !this.settings.deviceId || !this.settings.vaultId) {
       this.updateStatus({ phase: "disconnected", message: "Connect Meridian to begin syncing" })
       return

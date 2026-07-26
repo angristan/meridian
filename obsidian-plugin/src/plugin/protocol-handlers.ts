@@ -1,9 +1,13 @@
 import { Notice, type Plugin } from "obsidian"
 import { type MeridianUiHost, PairingJoinModal, SetupLinkModal } from "../ui/views"
-import { parsePairingLinkParameters } from "./pairing-link"
+import { hasConfiguredMeridianIdentity, parsePairingLinkParameters } from "./pairing-link"
 
 export function registerProtocolHandlers(plugin: Plugin, host: MeridianUiHost): void {
   const handleSetupLink = (parameters: Record<string, string>) => {
+    if (hasConfiguredMeridianIdentity(host.settings)) {
+      new Notice("Meridian is already set up and connected in this vault.", 8_000)
+      return
+    }
     const endpoint = parameters.endpoint
     const setupSession = parameters.session
     const claimChallenge = parameters.challenge
@@ -16,6 +20,10 @@ export function registerProtocolHandlers(plugin: Plugin, host: MeridianUiHost): 
 
   plugin.registerObsidianProtocolHandler("meridian", handleSetupLink)
   plugin.registerObsidianProtocolHandler("meridian-pair", (parameters) => {
+    if (hasConfiguredMeridianIdentity(host.settings)) {
+      new Notice("Meridian is already set up and connected in this vault.", 8_000)
+      return
+    }
     const pairing = parsePairingLinkParameters(parameters)
     if (!pairing) {
       new Notice("The Meridian pairing link is incomplete", 8_000)

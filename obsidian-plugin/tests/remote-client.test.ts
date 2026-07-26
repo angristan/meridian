@@ -138,6 +138,32 @@ describe("Meridian remote client", () => {
     })
   })
 
+  it("distinguishes active and revoked device identities", async () => {
+    const activeTransport = new QueueTransport([
+      response({ challengeId: "id", challenge: "nonce" }),
+    ])
+    const revokedTransport = new QueueTransport([
+      response({ error: { code: "device_not_found" } }, 404),
+    ])
+    const ambiguousTransport = new QueueTransport([response({ message: "Not found" }, 404)])
+
+    await expect(
+      new MeridianRemoteClient("https://example.test", activeTransport).isDeviceAuthorized(
+        "device-id",
+      ),
+    ).resolves.toBe(true)
+    await expect(
+      new MeridianRemoteClient("https://example.test", revokedTransport).isDeviceAuthorized(
+        "device-id",
+      ),
+    ).resolves.toBe(false)
+    await expect(
+      new MeridianRemoteClient("https://example.test", ambiguousTransport).isDeviceAuthorized(
+        "device-id",
+      ),
+    ).rejects.toThrow(/invalid not-found response/)
+  })
+
   it("polls relayed pairing state without consuming the result", async () => {
     const transport = new QueueTransport([
       response({ challengeId: "challenge-id", challenge: "challenge" }),

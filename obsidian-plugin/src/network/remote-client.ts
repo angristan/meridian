@@ -201,6 +201,25 @@ export class MeridianRemoteClient implements RemotePort {
     }
   }
 
+  async isDeviceAuthorized(deviceId: string): Promise<boolean> {
+    const response = await this.transport.request({
+      url: this.url("/v1/auth/challenge"),
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ deviceId }),
+      throw: false,
+    })
+    if (response.status === 404) {
+      const body = parseJsonBody(response, "Device authorization check")
+      if (isRecord(body) && isRecord(body.error) && body.error.code === "device_not_found") {
+        return false
+      }
+      throw new Error("Device authorization check returned an invalid not-found response")
+    }
+    assertSuccess(response, "Device authorization check")
+    return true
+  }
+
   async createPairing(): Promise<PairingCapability> {
     const result = await this.jsonRequest("/v1/pairings", {
       method: "POST",

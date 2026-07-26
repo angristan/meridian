@@ -95,10 +95,25 @@ export class VaultOperations {
         "A subject device is allowed only on revocation operations",
       ),
     )
-    if (operation.type === "device-revocation" || operation.type === "key-epoch") {
+    if (operation.type === "key-epoch") {
       assert(
         session.role === "owner",
         new HttpError(403, "owner_required", "This operation requires an owner device"),
+      )
+    }
+    if (operation.type === "device-revocation") {
+      const selfRevocation = operation.subjectDeviceId === session.deviceId
+      assert(
+        session.role === "owner" || selfRevocation,
+        new HttpError(403, "owner_required", "A member device can revoke only its own identity"),
+      )
+      assert(
+        !(session.role === "owner" && selfRevocation),
+        new HttpError(
+          409,
+          "cannot_revoke_owner",
+          "The owner device cannot remove itself; use recovery after owner loss",
+        ),
       )
     }
 
@@ -153,6 +168,10 @@ export class VaultOperations {
 
       try {
         return this.transactionSync(() => {
+          assert(
+            activeDevice(this.sql, session.deviceId),
+            new HttpError(401, "device_revoked", "Author device is no longer active"),
+          )
           const concurrentDuplicate = this.sql
             .exec<OperationRow>(
               "SELECT * FROM operations WHERE operation_id = ?",
@@ -210,8 +229,12 @@ export class VaultOperations {
               new HttpError(404, "device_not_found", "Revocation target is not active"),
             )
             assert(
-              target.device_id !== session.deviceId,
-              new HttpError(409, "cannot_revoke_self", "Use recovery to replace the final owner"),
+              target.device_id !== session.deviceId || session.role === "member",
+              new HttpError(
+                409,
+                "cannot_revoke_owner",
+                "The owner device cannot remove itself; use recovery after owner loss",
+              ),
             )
             this.sql.exec(
               "UPDATE devices SET revoked_at = ?, revoked_operation_id = ? WHERE device_id = ? AND revoked_at IS NULL",

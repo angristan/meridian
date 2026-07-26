@@ -9,12 +9,20 @@ export const CONFIG_CATEGORIES = [
 
 export type ConfigCategory = (typeof CONFIG_CATEGORIES)[number]
 
+export interface PendingDeviceRemoval {
+  endpoint: string
+  vaultId: string
+  deviceId: string
+  envelope: unknown
+}
+
 export interface MeridianSettings {
   enabled: boolean
   endpoint: string
   vaultId: string
   deviceId: string
   deviceName: string
+  pendingDeviceRemoval: PendingDeviceRemoval | null
   pollIntervalSeconds: number
   scanIntervalMinutes: number
   maxFileSizeMiB: number
@@ -27,6 +35,7 @@ export const DEFAULT_SETTINGS: MeridianSettings = {
   vaultId: "",
   deviceId: "",
   deviceName: "",
+  pendingDeviceRemoval: null,
   pollIntervalSeconds: 45,
   scanIntervalMinutes: 5,
   maxFileSizeMiB: 64,
@@ -394,6 +403,7 @@ export interface RemotePort {
     targetDeviceId: string,
     envelope: unknown,
   ): Promise<{ cursor: number; logHash: string }>
+  isDeviceAuthorized(deviceId: string): Promise<boolean>
   createPairing(): Promise<PairingCapability>
   getPairingStatus(pairingId: string): Promise<PairingStatus>
   getPairingProgress(pairingId: string, capability: string): Promise<PairingStatus>

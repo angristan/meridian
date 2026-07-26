@@ -75,6 +75,14 @@ export class SyncController {
     await this.sync("startup")
   }
 
+  async quiesce(): Promise<void> {
+    this.stopNotifications?.()
+    this.stopNotifications = null
+    this.rerun = false
+    await this.running
+    this.stop()
+  }
+
   stop(): void {
     this.stopNotifications?.()
     this.stopNotifications = null
@@ -123,12 +131,17 @@ export class SyncController {
     await this.journal.resolveConflict(id)
   }
 
-  devices(): Promise<RemoteDevice[]> {
+  async devices(): Promise<RemoteDevice[]> {
+    const device = this.requireDevice()
+    await this.authenticate(device)
     return this.remote.listDevices()
   }
 
   async revokeDevice(target: RemoteDevice): Promise<void> {
     const device = this.requireDevice()
+    if (target.deviceId === device.deviceId) {
+      throw new Error("Use Remove this device to revoke the current member identity")
+    }
     await this.authenticate(device)
     const revocation = await this.crypto.createDeviceRevocation(device, target)
     await this.remote.revokeDevice(target.deviceId, revocation.envelope)
