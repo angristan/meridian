@@ -1,3 +1,10 @@
+# [1.4.0](https://github.com/angristan/meridian/compare/1.3.0...1.4.0) (2026-07-26)
+
+
+### Features
+
+* add safe device self-removal ([3746508](https://github.com/angristan/meridian/commit/3746508b7e1dbf6f491737e2d98e8d6146b3f674))
+
 # [1.3.0](https://github.com/angristan/meridian/compare/1.2.0...1.3.0) (2026-07-26)
 
 
