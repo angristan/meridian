@@ -15,6 +15,7 @@ import {
 import {
   bytesToHex,
   decodeDeviceCertificate,
+  type DeviceCertificate,
   deviceId,
   ed25519PrivateKey,
   ed25519PublicKey,
@@ -134,12 +135,7 @@ export async function approvePairing(
     platform: candidate.platform,
     proofOfPossession: ed25519Signature(fromBase64Url(candidate.requestProof)),
   }
-  const chain = certificates.map((value) => decodeDeviceCertificate(fromBase64Url(value)))
-  const ownId = bytesToHex(bundle.certificate.body.certificateId)
-  const authorizationChain = [
-    bundle.certificate,
-    ...chain.filter((certificate) => bytesToHex(certificate.body.certificateId) !== ownId),
-  ]
+  const authorizationChain = exactAuthorizationChain(bundle.certificate, certificates)
   const secret = parseStoredSecret(device.serialized)
   if (!secret.recoveryPublicKey) {
     throw new Error("The local key bundle has no recovery trust anchor")
@@ -181,6 +177,40 @@ export async function approvePairing(
     releasePayload: { ...releasePayload, approvalSignature: toBase64Url(approvalSignature) },
     verificationPhrase: prepared.verificationPhrase,
     transferHash: transcriptHash,
+  }
+}
+
+function exactAuthorizationChain(
+  approver: DeviceCertificate,
+  encodedRegistry: string[],
+): DeviceCertificate[] {
+  if (approver.body.issuer.kind === "recovery") return [approver]
+
+  const registry = new Map<string, DeviceCertificate>()
+  for (const encoded of encodedRegistry) {
+    try {
+      const certificate = decodeDeviceCertificate(fromBase64Url(encoded))
+      registry.set(bytesToHex(certificate.body.certificateId), certificate)
+    } catch {
+      // Unrelated malformed registry history is not part of the approver's issuer path.
+    }
+  }
+  registry.set(bytesToHex(approver.body.certificateId), approver)
+
+  const chain: DeviceCertificate[] = []
+  const visited = new Set<string>()
+  let current = approver
+  while (true) {
+    const currentId = bytesToHex(current.body.certificateId)
+    if (visited.has(currentId)) throw new Error("Approver certificate chain contains a cycle")
+    visited.add(currentId)
+    chain.push(current)
+    if (current.body.issuer.kind === "recovery") return chain
+
+    const issuerId = bytesToHex(current.body.issuer.certificateId)
+    const issuer = registry.get(issuerId)
+    if (!issuer) throw new Error("Approver certificate chain is incomplete")
+    current = issuer
   }
 }
 

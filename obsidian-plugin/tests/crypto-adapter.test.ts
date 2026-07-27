@@ -83,6 +83,28 @@ describe("shared crypto adapter", () => {
     ])
     const targetDeviceId = stringField(JSON.parse(joining.candidatePackage), "deviceId")
     const targetCertificate = stringField(approval.payload, "certificate")
+
+    const replacementJoin = await crypto.createPairingJoin(
+      {
+        pairingId: randomId(),
+        capability: randomId(32),
+        vaultId: owner.vaultId,
+        expiresAt: Date.now() + 300_000,
+      },
+      { deviceName: "Replacement iPhone", platform: "iOS" },
+    )
+    const replacementApproval = await crypto.approvePairing(
+      owner,
+      replacementJoin.candidatePackage,
+      [ownerCertificate, targetCertificate, "malformed-unrelated-history"],
+    )
+    await expect(
+      crypto.inspectPairingVerification(
+        replacementJoin.pendingSecret,
+        stringField(replacementApproval.payload, "verificationPreview"),
+      ),
+    ).resolves.toMatchObject({ verificationPhrase: replacementApproval.verificationPhrase })
+
     const target = {
       deviceId: targetDeviceId,
       signingPublicKey: stringField(JSON.parse(joining.candidatePackage), "signingPublicKey"),
