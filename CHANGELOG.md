@@ -1,3 +1,10 @@
+## [1.4.2](https://github.com/angristan/meridian/compare/1.4.1...1.4.2) (2026-07-27)
+
+
+### Bug Fixes
+
+* build exact pairing certificate chain ([5cad3a3](https://github.com/angristan/meridian/commit/5cad3a3b08b14bd9c4a63298998743baa662627e))
+
 ## [1.4.1](https://github.com/angristan/meridian/compare/1.4.0...1.4.1) (2026-07-27)
 
 
