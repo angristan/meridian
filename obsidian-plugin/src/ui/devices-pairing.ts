@@ -203,11 +203,9 @@ class PairingLinkModal extends Modal {
         throw new Error("The new device did not provide a complete signed identity")
       }
       setting
-        .setName(`2 of 3 · Review ${status.candidate.deviceName}`)
+        .setName("2 of 3 · Review new device")
         .setDesc(
-          `${status.candidate.platform} · ID ${shortDeviceId(status.candidate.deviceId)} · requested ${
-            status.requestedAt ? formatTime(status.requestedAt) : "just now"
-          }. The name and platform are signed self-declarations; the phrase verifies the keys.`,
+          `${status.candidate.deviceName} · ${status.candidate.platform} · ID ${shortDeviceId(status.candidate.deviceId)}. The name and platform come from the new device. Continue, then compare the phrase on both devices.`,
         )
       button.setDisabled(false)
     } catch (error) {
