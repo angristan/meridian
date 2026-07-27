@@ -1,3 +1,10 @@
+## [1.4.3](https://github.com/angristan/meridian/compare/1.4.2...1.4.3) (2026-07-27)
+
+
+### Bug Fixes
+
+* clarify pairing device review ([12c8d9a](https://github.com/angristan/meridian/commit/12c8d9aaf94756898daebcd91dc9f75ddb2f16f2))
+
 ## [1.4.2](https://github.com/angristan/meridian/compare/1.4.1...1.4.2) (2026-07-27)
 
 
