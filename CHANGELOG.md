@@ -1,3 +1,10 @@
+## [1.4.1](https://github.com/angristan/meridian/compare/1.4.0...1.4.1) (2026-07-27)
+
+
+### Bug Fixes
+
+* make device pairing safely retryable ([5e0c667](https://github.com/angristan/meridian/commit/5e0c667ebb028356d13734e380db43e691778a1d))
+
 # [1.4.0](https://github.com/angristan/meridian/compare/1.3.0...1.4.0) (2026-07-26)
 
 
