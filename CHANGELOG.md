@@ -1,3 +1,10 @@
+## [1.4.5](https://github.com/angristan/meridian/compare/1.4.4...1.4.5) (2026-07-27)
+
+
+### Bug Fixes
+
+* batch rapid file edits ([6459061](https://github.com/angristan/meridian/commit/64590616c8d8da7a26a24aff3f5a9e2e34407c2f))
+
 ## [1.4.4](https://github.com/angristan/meridian/compare/1.4.3...1.4.4) (2026-07-27)
 
 
