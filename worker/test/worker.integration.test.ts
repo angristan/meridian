@@ -266,6 +266,25 @@ describe("Meridian Worker integration", () => {
     expect(download.status).toBe(200)
     expect(new Uint8Array(await download.arrayBuffer())).toEqual(blob)
 
+    const concurrentBlobId = randomToken(18)
+    const concurrentBlob = randomBytes(1024)
+    const concurrentUploads = await Promise.all(
+      [0, 1].map(() =>
+        SELF.fetch(`https://example.test/v1/blobs/${concurrentBlobId}`, {
+          method: "PUT",
+          headers: { ...authorization, "content-type": "application/octet-stream" },
+          body: concurrentBlob,
+        }),
+      ),
+    )
+    expect(concurrentUploads.map((response) => response.status).sort()).toEqual([201, 204])
+    const concurrentDownload = await SELF.fetch(
+      `https://example.test/v1/blobs/${concurrentBlobId}`,
+      { headers: authorization },
+    )
+    expect(concurrentDownload.status).toBe(200)
+    expect(new Uint8Array(await concurrentDownload.arrayBuffer())).toEqual(concurrentBlob)
+
     const pairingResponse = await SELF.fetch("https://example.test/v1/pairings", {
       method: "POST",
       headers: { ...authorization, "content-type": "application/json" },

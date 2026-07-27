@@ -36,6 +36,88 @@ describe("SyncController", () => {
     controller.stop()
   })
 
+  it("skips network work for a file event caused by an applied remote revision", async () => {
+    const vault = new FakeVault()
+    const journal = new MemoryJournal()
+    const remote = new FakeRemote()
+    const controller = new SyncController(
+      vault,
+      journal,
+      remote,
+      new FakeCrypto(),
+      () => ALL_CATEGORIES,
+      () => {},
+    )
+    await controller.start(TEST_DEVICE)
+
+    remote.addRemoteRevision(
+      {
+        operationId: "remote-operation",
+        revisionId: "remote-revision",
+        fileId: randomId(),
+        action: "upsert",
+        path: "remote.md",
+        previousPath: null,
+        parents: [],
+        authorDeviceId: "device-remote",
+        blobId: "remote-blob",
+        isText: true,
+      },
+      new TextEncoder().encode("remote content").buffer,
+    )
+    await controller.sync("notification")
+    expect(vault.text("remote.md")).toBe("remote content")
+    expect(remote.getChangesCount).toBe(2)
+
+    await controller.sync("file-event")
+
+    expect(remote.getChangesCount).toBe(2)
+    expect(remote.operations).toHaveLength(1)
+    expect(controller.getStatus()).toMatchObject({ phase: "idle", message: "Up to date" })
+    controller.stop()
+  })
+
+  it("preserves a notification received after an active pull read its page", async () => {
+    const vault = new FakeVault()
+    const journal = new MemoryJournal()
+    const remote = new FakeRemote()
+    const controller = new SyncController(
+      vault,
+      journal,
+      remote,
+      new FakeCrypto(),
+      () => ALL_CATEGORIES,
+      () => {},
+    )
+    await controller.start(TEST_DEVICE)
+
+    const barrier = remote.blockNextChangesAfterRead()
+    const activeSync = controller.sync("manual")
+    await barrier.started
+    remote.addRemoteRevision(
+      {
+        operationId: "late-remote-operation",
+        revisionId: "late-remote-revision",
+        fileId: randomId(),
+        action: "upsert",
+        path: "late-remote.md",
+        previousPath: null,
+        parents: [],
+        authorDeviceId: "device-remote",
+        blobId: "late-remote-blob",
+        isText: true,
+      },
+      new TextEncoder().encode("arrived after pull").buffer,
+    )
+    void controller.sync("notification")
+    barrier.release()
+    await activeSync
+
+    expect(vault.text("late-remote.md")).toBe("arrived after pull")
+    expect(remote.getChangesCount).toBe(3)
+    controller.stop()
+  })
+
   it("rejects a server older than the signed pairing checkpoint", async () => {
     const vault = new FakeVault()
     const journal = new MemoryJournal()

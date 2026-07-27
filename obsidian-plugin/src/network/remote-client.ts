@@ -25,16 +25,32 @@ import {
   requiredNumber,
   requiredString,
 } from "./response-parsers"
-import type { HttpTransport } from "./transport"
+import type { HttpResponse, HttpTransport } from "./transport"
 
 export type { HttpResponse, HttpTransport } from "./transport"
 
+const SESSION_REFRESH_SKEW_MS = 60_000
+
+type AuthenticationContext = {
+  device: DeviceKeyMaterial
+  signer: CryptoPort
+}
+
+type AuthenticationAttempt = {
+  authentication: AuthenticationContext
+  promise: Promise<void>
+}
+
 export class MeridianRemoteClient implements RemotePort {
   private sessionToken: string | null = null
+  private sessionExpiresAt = 0
+  private authentication: AuthenticationContext | null = null
+  private authenticationAttempt: AuthenticationAttempt | null = null
 
   constructor(
     endpoint: string,
     private readonly transport: HttpTransport,
+    private readonly now: () => number = Date.now,
   ) {
     this.endpoint = normalizeEndpoint(endpoint)
   }
@@ -77,24 +93,18 @@ export class MeridianRemoteClient implements RemotePort {
       body: publicClaim,
       authenticated: false,
     })
-    this.sessionToken = null
+    this.clearAuthentication()
   }
 
   async authenticate(device: DeviceKeyMaterial, signer: CryptoPort): Promise<void> {
-    const challengeResult = await this.jsonRequest("/v1/auth/challenge", {
-      method: "POST",
-      body: { deviceId: device.deviceId },
-      authenticated: false,
-    })
-    const challenge = requiredString(challengeResult, "challenge")
-    const challengeId = requiredString(challengeResult, "challengeId")
-    const proof = await signer.signChallenge(device, { challengeId, challenge })
-    const sessionResult = await this.jsonRequest("/v1/auth/session", {
-      method: "POST",
-      body: proof,
-      authenticated: false,
-    })
-    this.sessionToken = requiredString(sessionResult, "sessionToken")
+    if (!this.authentication || this.authentication.device.deviceId !== device.deviceId) {
+      this.invalidateSession()
+      this.authentication = { device, signer }
+    } else {
+      this.authentication.device = device
+      this.authentication.signer = signer
+    }
+    await this.validSessionToken()
   }
 
   async getChanges(after: number, checkpoint: TrustedCheckpoint | null): Promise<RemoteChanges> {
@@ -107,7 +117,7 @@ export class MeridianRemoteClient implements RemotePort {
     if (!isRecord(result) || !Array.isArray(result.operations)) {
       throw new Error("Server returned an invalid change set")
     }
-    const devices = await this.listDevices()
+    const devices = result.operations.length > 0 ? await this.listDevices() : []
     const certificates = devices.map((device) => device.certificate)
     const byDevice = new Map(devices.map((device) => [device.deviceId, device.certificate]))
     const operations = result.operations.map((value) => {
@@ -125,23 +135,29 @@ export class MeridianRemoteClient implements RemotePort {
   }
 
   async putBlob(blob: EncryptedBlob): Promise<void> {
-    const response = await this.transport.request({
-      url: this.url(`/v1/blobs/${encodeURIComponent(blob.blobId)}`),
-      method: "PUT",
-      headers: this.headers({ "content-type": "application/octet-stream" }),
-      body: blob.bytes,
-      throw: false,
-    })
+    const response = await this.authenticatedRequest((sessionToken) =>
+      this.transport.request({
+        url: this.url(`/v1/blobs/${encodeURIComponent(blob.blobId)}`),
+        method: "PUT",
+        headers: this.authorizedHeaders(sessionToken, {
+          "content-type": "application/octet-stream",
+        }),
+        body: blob.bytes,
+        throw: false,
+      }),
+    )
     assertSuccess(response, "Blob upload")
   }
 
   async getBlob(blobId: string): Promise<ArrayBuffer> {
-    const response = await this.transport.request({
-      url: this.url(`/v1/blobs/${encodeURIComponent(blobId)}`),
-      method: "GET",
-      headers: this.headers(),
-      throw: false,
-    })
+    const response = await this.authenticatedRequest((sessionToken) =>
+      this.transport.request({
+        url: this.url(`/v1/blobs/${encodeURIComponent(blobId)}`),
+        method: "GET",
+        headers: this.authorizedHeaders(sessionToken),
+        throw: false,
+      }),
+    )
     assertSuccess(response, "Blob download")
     return response.body
   }
@@ -348,8 +364,14 @@ export class MeridianRemoteClient implements RemotePort {
     onCursor: (cursor: number) => void,
     onState: (connected: boolean) => void,
   ): () => void {
-    if (!this.sessionToken) return () => onState(false)
-    return connectCursorNotifications(this.endpoint, this.sessionToken, after, onCursor, onState)
+    if (!this.authentication) return () => onState(false)
+    return connectCursorNotifications(
+      this.endpoint,
+      () => this.validSessionToken(),
+      after,
+      onCursor,
+      onState,
+    )
   }
 
   private async jsonRequest(
@@ -362,32 +384,105 @@ export class MeridianRemoteClient implements RemotePort {
     },
   ): Promise<unknown> {
     const body = options.body === undefined ? undefined : JSON.stringify(options.body)
-    const headers = this.headers(
-      {
+    const request = (sessionToken?: string): Promise<HttpResponse> => {
+      const headers = {
+        ...(sessionToken ? { authorization: `Bearer ${sessionToken}` } : {}),
         ...(body === undefined ? {} : { "content-type": "application/json" }),
         ...options.headers,
-      },
-      options.authenticated,
-    )
-    const request: RequestUrlParam = {
-      url: this.url(path),
-      method: options.method,
-      headers,
-      throw: false,
+      }
+      const request: RequestUrlParam = {
+        url: this.url(path),
+        method: options.method,
+        headers,
+        throw: false,
+      }
+      if (body !== undefined) request.body = body
+      return this.transport.request(request)
     }
-    if (body !== undefined) request.body = body
-    const response = await this.transport.request(request)
+    const response = options.authenticated
+      ? await this.authenticatedRequest((sessionToken) => request(sessionToken))
+      : await request()
     assertSuccess(response, "Meridian request")
     return parseJsonBody(response, "Meridian request")
   }
 
-  private headers(
+  private async authenticatedRequest(
+    request: (sessionToken: string) => Promise<HttpResponse>,
+  ): Promise<HttpResponse> {
+    const initialToken = await this.validSessionToken()
+    const initialResponse = await request(initialToken)
+    if (initialResponse.status !== 401) return initialResponse
+
+    if (this.sessionToken === initialToken) this.invalidateSession()
+    return request(await this.validSessionToken())
+  }
+
+  private async validSessionToken(): Promise<string> {
+    if (this.sessionToken && this.sessionExpiresAt - this.now() > SESSION_REFRESH_SKEW_MS) {
+      return this.sessionToken
+    }
+    await this.refreshSession()
+    if (!this.sessionToken) throw new Error("Device authentication did not return a session")
+    return this.sessionToken
+  }
+
+  private async refreshSession(): Promise<void> {
+    const authentication = this.authentication
+    if (!authentication) throw new Error("Device is not authenticated")
+    if (this.authenticationAttempt?.authentication === authentication) {
+      return this.authenticationAttempt.promise
+    }
+
+    const refresh = async () => {
+      const challengeResult = await this.jsonRequest("/v1/auth/challenge", {
+        method: "POST",
+        body: { deviceId: authentication.device.deviceId },
+        authenticated: false,
+      })
+      const challenge = requiredString(challengeResult, "challenge")
+      const challengeId = requiredString(challengeResult, "challengeId")
+      const proof = await authentication.signer.signChallenge(authentication.device, {
+        challengeId,
+        challenge,
+      })
+      const sessionResult = await this.jsonRequest("/v1/auth/session", {
+        method: "POST",
+        body: proof,
+        authenticated: false,
+      })
+      const sessionToken = requiredString(sessionResult, "sessionToken")
+      const sessionExpiresAt = requiredNumber(sessionResult, "expiresAt")
+      if (this.authentication !== authentication) {
+        throw new Error("Device authentication changed during session creation")
+      }
+      this.sessionToken = sessionToken
+      this.sessionExpiresAt = sessionExpiresAt
+    }
+
+    const promise = refresh().finally(() => {
+      if (this.authenticationAttempt?.authentication === authentication) {
+        this.authenticationAttempt = null
+      }
+    })
+    this.authenticationAttempt = { authentication, promise }
+    return promise
+  }
+
+  private invalidateSession(): void {
+    this.sessionToken = null
+    this.sessionExpiresAt = 0
+  }
+
+  private clearAuthentication(): void {
+    this.invalidateSession()
+    this.authentication = null
+  }
+
+  private authorizedHeaders(
+    sessionToken: string,
     extra: Record<string, string> = {},
-    authenticated = true,
   ): Record<string, string> {
-    if (!authenticated) return extra
-    if (!this.sessionToken) throw new Error("Device is not authenticated")
-    return { authorization: `Bearer ${this.sessionToken}`, ...extra }
+    return { authorization: `Bearer ${sessionToken}`, ...extra }
   }
 
   private url(path: string): string {

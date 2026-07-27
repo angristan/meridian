@@ -241,7 +241,9 @@ export class FakeRemote implements RemotePort {
   readonly blobs = new Map<string, ArrayBuffer>()
   readonly operations: RemoteOperation[] = []
   authenticateCount = 0
+  getChangesCount = 0
   private cursor = 0
+  private nextChangesBarrier: { started: () => void; resume: Promise<void> } | null = null
 
   async claim(_setupSession: string, _claim: SetupClaim): Promise<void> {}
 
@@ -250,10 +252,29 @@ export class FakeRemote implements RemotePort {
   }
 
   async getChanges(after: number, _checkpoint: TrustedCheckpoint | null): Promise<RemoteChanges> {
-    return {
+    this.getChangesCount += 1
+    const result = {
       operations: this.operations.filter((operation) => operation.cursor > after),
       latestCursor: this.cursor,
     }
+    const barrier = this.nextChangesBarrier
+    this.nextChangesBarrier = null
+    barrier?.started()
+    await barrier?.resume
+    return result
+  }
+
+  blockNextChangesAfterRead(): { started: Promise<void>; release: () => void } {
+    let markStarted = () => {}
+    let release = () => {}
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve
+    })
+    const resume = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    this.nextChangesBarrier = { started: markStarted, resume }
+    return { started, release }
   }
 
   async putBlob(blob: EncryptedBlob): Promise<void> {

@@ -2,6 +2,7 @@ import { type Plugin, TFile } from "obsidian"
 import type { MeridianSettings } from "../model"
 import type { SyncController } from "../sync/controller"
 import { isSyncablePath } from "../vault/path-policy"
+import { isFallbackPollDue } from "./scheduling-policy"
 
 const FILE_EVENT_DEBOUNCE_MS = 1_200
 const SCHEDULER_TICK_MS = 15_000
@@ -94,7 +95,16 @@ export class PluginScheduling {
       await controller.sync("interval")
       return
     }
-    if (now - this.lastPollAt >= settings.pollIntervalSeconds * 1_000) {
+    const status = controller.getStatus()
+    if (
+      isFallbackPollDue({
+        now,
+        lastPollAt: this.lastPollAt,
+        lastSyncedAt: status.lastSyncedAt,
+        socketConnected: status.socketConnected,
+        disconnectedPollIntervalMs: settings.pollIntervalSeconds * 1_000,
+      })
+    ) {
       this.lastPollAt = now
       await controller.sync("notification")
     }

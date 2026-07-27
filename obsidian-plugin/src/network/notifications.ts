@@ -2,7 +2,7 @@ import { isRecord, optionalNumber } from "./response-parsers"
 
 export function connectCursorNotifications(
   endpoint: string,
-  sessionToken: string,
+  sessionToken: () => Promise<string>,
   after: number,
   onCursor: (cursor: number) => void,
   onState: (connected: boolean) => void,
@@ -12,12 +12,28 @@ export function connectCursorNotifications(
   let retryTimer: number | null = null
   let retry = 0
 
-  const connect = () => {
+  const scheduleReconnect = () => {
+    if (stopped) return
+    retry += 1
+    retryTimer = window.setTimeout(() => void connect(), Math.min(30_000, 1_000 * 2 ** retry))
+  }
+
+  const connect = async () => {
     if (stopped || navigator.onLine === false) return
+    let token: string
+    try {
+      token = await sessionToken()
+    } catch {
+      onState(false)
+      scheduleReconnect()
+      return
+    }
+    if (stopped) return
+
     const url = new URL(`${endpoint}/v1/notifications`)
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:"
     url.searchParams.set("after", String(after))
-    socket = new WebSocket(url, ["meridian.v1", `bearer.${sessionToken}`])
+    socket = new WebSocket(url, ["meridian.v1", `bearer.${token}`])
     socket.addEventListener("open", () => {
       retry = 0
       onState(true)
@@ -36,14 +52,12 @@ export function connectCursorNotifications(
     socket.addEventListener("close", () => {
       onState(false)
       socket = null
-      if (stopped) return
-      retry += 1
-      retryTimer = window.setTimeout(connect, Math.min(30_000, 1_000 * 2 ** retry))
+      scheduleReconnect()
     })
     socket.addEventListener("error", () => socket?.close())
   }
 
-  connect()
+  void connect()
   return () => {
     stopped = true
     if (retryTimer !== null) window.clearTimeout(retryTimer)

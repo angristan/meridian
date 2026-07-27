@@ -29,7 +29,7 @@ export class SyncController {
   private readonly pushEngine: PushEngine
   private device: DeviceKeyMaterial | null = null
   private running: Promise<void> | null = null
-  private rerun = false
+  private rerunReason: SyncReason | null = null
   private authenticated = false
   private stopNotifications: (() => void) | null = null
   private status: SyncStatus = { ...INITIAL_STATUS }
@@ -78,7 +78,7 @@ export class SyncController {
   async quiesce(): Promise<void> {
     this.stopNotifications?.()
     this.stopNotifications = null
-    this.rerun = false
+    this.rerunReason = null
     await this.running
     this.stop()
   }
@@ -100,7 +100,7 @@ export class SyncController {
   sync(reason: SyncReason): Promise<void> {
     if (!this.device) return Promise.resolve()
     if (this.running) {
-      this.rerun = true
+      this.rerunReason = mergeSyncReasons(this.rerunReason, reason)
       return this.running
     }
     this.running = this.runLoop(reason).finally(() => {
@@ -195,9 +195,9 @@ export class SyncController {
   }
 
   private async runLoop(initialReason: SyncReason): Promise<void> {
-    let reason = initialReason
-    do {
-      this.rerun = false
+    let reason: SyncReason | null = initialReason
+    while (reason) {
+      this.rerunReason = null
       try {
         await this.runOnce(reason)
       } catch (error) {
@@ -211,8 +211,8 @@ export class SyncController {
           queued: (await this.journal.listPending()).length,
         })
       }
-      reason = "file-event"
-    } while (this.rerun)
+      reason = this.rerunReason
+    }
   }
 
   private async runOnce(reason: SyncReason): Promise<void> {
@@ -220,10 +220,17 @@ export class SyncController {
     if (reason !== "notification") {
       this.updateStatus({ phase: "scanning", message: "Checking local changes", error: null })
       const result = await this.reconciler.reconcile(this.categories())
-      this.updateStatus({
-        queued: (await this.journal.listPending()).length,
-        message: `${result.files} files checked`,
-      })
+      const pending = await this.journal.listPending()
+      this.updateStatus({ queued: pending.length, message: `${result.files} files checked` })
+      if (reason === "file-event" && result.queued === 0 && pending.length === 0) {
+        this.updateStatus({
+          phase: "idle",
+          message: "Up to date",
+          cursor: await this.journal.getCursor(),
+          error: null,
+        })
+        return
+      }
     }
 
     if (!networkAvailable()) throw new Error("No network connection")
@@ -277,6 +284,14 @@ export class SyncController {
     this.status = { ...this.status, ...patch }
     this.onStatus({ ...this.status })
   }
+}
+
+function mergeSyncReasons(current: SyncReason | null, incoming: SyncReason): SyncReason {
+  if (!current) return incoming
+  const requiresScan = current !== "notification" || incoming !== "notification"
+  const requiresNetwork = current !== "file-event" || incoming !== "file-event"
+  if (requiresScan && requiresNetwork) return "manual"
+  return requiresScan ? "file-event" : "notification"
 }
 
 function networkAvailable(): boolean {

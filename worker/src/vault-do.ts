@@ -44,7 +44,7 @@ export class VaultDurableObject extends DurableObject<VaultDurableObjectEnv> {
     this.operations = new VaultOperations(
       this.sql,
       transactionSync,
-      (cursor) => this.notifications.notifyCursor(cursor),
+      (cursor, authorDeviceId) => this.notifications.notifyCursor(cursor, authorDeviceId),
       (deviceId) => this.notifications.closeRevokedDevice(deviceId),
     )
     this.records = new VaultRecords(this.sql)

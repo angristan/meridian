@@ -58,7 +58,7 @@ export class VaultOperations {
   constructor(
     private readonly sql: SqlStorage,
     private readonly transactionSync: TransactionSync,
-    private readonly notifyCursor: (cursor: number) => void,
+    private readonly notifyCursor: (cursor: number, authorDeviceId: string) => void,
     private readonly closeRevokedDevice: (deviceId: string) => void,
   ) {}
 
@@ -263,7 +263,7 @@ export class VaultOperations {
     const operation = decode(OperationSchema, await requestJson(request))
     const result = await this.appendOperation(operation, session)
     if (result.inserted) {
-      this.notifyCursor(result.operation.cursor)
+      this.notifyCursor(result.operation.cursor, session.deviceId)
       if (operation.type === "device-revocation" && operation.subjectDeviceId) {
         this.closeRevokedDevice(operation.subjectDeviceId)
       }
@@ -294,7 +294,7 @@ export class VaultOperations {
     )
     const result = await this.appendOperation(input.operation, session)
     if (result.inserted) {
-      this.notifyCursor(result.operation.cursor)
+      this.notifyCursor(result.operation.cursor, session.deviceId)
       this.closeRevokedDevice(targetDeviceId)
     }
     return json(

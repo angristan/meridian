@@ -58,14 +58,6 @@ export function registerBlobRoutes(app: WorkerApp): void {
           )
         }
         const key = `vaults/${auth.vaultId}/blobs/${blobId}`
-        const existing = yield* Effect.tryPromise({
-          try: () => c.env.BLOBS.head(key),
-          catch: () => new HttpError(503, "blob_store_unavailable", "Blob storage is unavailable"),
-        })
-        if (existing) {
-          return new Response(null, { status: 204, headers: { "cache-control": "no-store" } })
-        }
-
         const stored = yield* Effect.tryPromise({
           try: () =>
             c.env.BLOBS.put(key, c.req.raw.body, {

@@ -51,7 +51,7 @@ describe("Meridian remote client", () => {
   it("authenticates and decorates operations with registry certificates", async () => {
     const transport = new QueueTransport([
       response({ challengeId: "challenge-id", challenge: "challenge" }),
-      response({ sessionToken: "session-token" }),
+      response({ sessionToken: "session-token", expiresAt: Number.MAX_SAFE_INTEGER }),
       response({
         latestCursor: 1,
         operations: [
@@ -100,10 +100,154 @@ describe("Meridian remote client", () => {
     })
   })
 
+  it("skips the device registry for an empty change page", async () => {
+    const transport = new QueueTransport([
+      response({ challengeId: "challenge-id", challenge: "challenge" }),
+      response({ sessionToken: "session-token", expiresAt: 120_000 }),
+      response({ latestCursor: 0, operations: [] }),
+    ])
+    const client = new MeridianRemoteClient("https://example.test", transport, () => 0)
+
+    await client.authenticate(TEST_DEVICE, new FakeCrypto())
+    await expect(client.getChanges(0, null)).resolves.toEqual({
+      latestCursor: 0,
+      operations: [],
+    })
+    expect(transport.requests.map((request) => request.url)).toEqual([
+      "https://example.test/v1/auth/challenge",
+      "https://example.test/v1/auth/session",
+      "https://example.test/v1/changes?after=0",
+    ])
+  })
+
+  it("refreshes a session before it enters the expiry margin", async () => {
+    let now = 0
+    const transport = new QueueTransport([
+      response({ challengeId: "challenge-1", challenge: "nonce-1" }),
+      response({ sessionToken: "session-1", expiresAt: 120_000 }),
+      response({ challengeId: "challenge-2", challenge: "nonce-2" }),
+      response({ sessionToken: "session-2", expiresAt: 300_000 }),
+      response({ latestCursor: 0, operations: [] }),
+    ])
+    const client = new MeridianRemoteClient("https://example.test", transport, () => now)
+
+    await client.authenticate(TEST_DEVICE, new FakeCrypto())
+    now = 60_001
+    await client.getChanges(0, null)
+
+    expect(transport.requests.map((request) => request.url)).toEqual([
+      "https://example.test/v1/auth/challenge",
+      "https://example.test/v1/auth/session",
+      "https://example.test/v1/auth/challenge",
+      "https://example.test/v1/auth/session",
+      "https://example.test/v1/changes?after=0",
+    ])
+    expect(transport.requests.at(-1)?.headers?.authorization).toBe("Bearer session-2")
+  })
+
+  it("shares one proactive refresh across concurrent authenticated requests", async () => {
+    let now = 0
+    const transport = new QueueTransport([
+      response({ challengeId: "challenge-1", challenge: "nonce-1" }),
+      response({ sessionToken: "session-1", expiresAt: 120_000 }),
+      response({ challengeId: "challenge-2", challenge: "nonce-2" }),
+      response({ sessionToken: "session-2", expiresAt: 300_000 }),
+      response({ latestCursor: 0, operations: [] }),
+      response({ latestCursor: 0, operations: [] }),
+    ])
+    const client = new MeridianRemoteClient("https://example.test", transport, () => now)
+
+    await client.authenticate(TEST_DEVICE, new FakeCrypto())
+    now = 60_001
+    await Promise.all([client.getChanges(0, null), client.getChanges(0, null)])
+
+    expect(
+      transport.requests.filter((request) => request.url.endsWith("/v1/auth/challenge")),
+    ).toHaveLength(2)
+    expect(
+      transport.requests.filter((request) => request.url.endsWith("/v1/auth/session")),
+    ).toHaveLength(2)
+    expect(
+      transport.requests
+        .filter((request) => request.url.includes("/v1/changes"))
+        .every((request) => request.headers?.authorization === "Bearer session-2"),
+    ).toBe(true)
+  })
+
+  it("never installs a session created for a superseded device", async () => {
+    const transport = new QueueTransport([
+      response({ challengeId: "challenge-1", challenge: "nonce-1" }),
+      response({ challengeId: "challenge-2", challenge: "nonce-2" }),
+      response({ sessionToken: "session-1", expiresAt: Number.MAX_SAFE_INTEGER }),
+      response({ sessionToken: "session-2", expiresAt: Number.MAX_SAFE_INTEGER }),
+      response({ latestCursor: 0, operations: [] }),
+    ])
+    const client = new MeridianRemoteClient("https://example.test", transport)
+    const replacementDevice = { ...TEST_DEVICE, deviceId: "replacement-device" }
+
+    const [first, second] = await Promise.allSettled([
+      client.authenticate(TEST_DEVICE, new FakeCrypto()),
+      client.authenticate(replacementDevice, new FakeCrypto()),
+    ])
+
+    expect(first.status).toBe("rejected")
+    expect(second.status).toBe("fulfilled")
+    await client.getChanges(0, null)
+    expect(transport.requests.at(-1)?.headers?.authorization).toBe("Bearer session-2")
+  })
+
+  it("reauthenticates and replays an authenticated request once after a 401", async () => {
+    const transport = new QueueTransport([
+      response({ challengeId: "challenge-1", challenge: "nonce-1" }),
+      response({ sessionToken: "session-1", expiresAt: Number.MAX_SAFE_INTEGER }),
+      response({ error: { code: "invalid_session", message: "Session expired" } }, 401),
+      response({ challengeId: "challenge-2", challenge: "nonce-2" }),
+      response({ sessionToken: "session-2", expiresAt: Number.MAX_SAFE_INTEGER }),
+      response({ latestCursor: 0, operations: [] }),
+    ])
+    const client = new MeridianRemoteClient("https://example.test", transport)
+
+    await client.authenticate(TEST_DEVICE, new FakeCrypto())
+    await expect(client.getChanges(0, null)).resolves.toEqual({
+      latestCursor: 0,
+      operations: [],
+    })
+
+    expect(transport.requests.map((request) => request.url)).toEqual([
+      "https://example.test/v1/auth/challenge",
+      "https://example.test/v1/auth/session",
+      "https://example.test/v1/changes?after=0",
+      "https://example.test/v1/auth/challenge",
+      "https://example.test/v1/auth/session",
+      "https://example.test/v1/changes?after=0",
+    ])
+    expect(transport.requests[2]?.headers?.authorization).toBe("Bearer session-1")
+    expect(transport.requests[5]?.headers?.authorization).toBe("Bearer session-2")
+  })
+
+  it("stops after one authenticated replay when the replacement session is rejected", async () => {
+    const transport = new QueueTransport([
+      response({ challengeId: "challenge-1", challenge: "nonce-1" }),
+      response({ sessionToken: "session-1", expiresAt: Number.MAX_SAFE_INTEGER }),
+      response({ error: { code: "invalid_session", message: "Session expired" } }, 401),
+      response({ challengeId: "challenge-2", challenge: "nonce-2" }),
+      response({ sessionToken: "session-2", expiresAt: Number.MAX_SAFE_INTEGER }),
+      response({ error: { code: "invalid_session", message: "Still rejected" } }, 401),
+    ])
+    const client = new MeridianRemoteClient("https://example.test", transport)
+
+    await client.authenticate(TEST_DEVICE, new FakeCrypto())
+    await expect(client.getChanges(0, null)).rejects.toMatchObject({
+      status: 401,
+      code: "invalid_session",
+    })
+    expect(transport.requests).toHaveLength(6)
+  })
+
   it("accepts an empty successful blob upload response", async () => {
     const transport = new QueueTransport([
       response({ challengeId: "challenge-id", challenge: "challenge" }),
-      response({ sessionToken: "session-token" }),
+      response({ sessionToken: "session-token", expiresAt: Number.MAX_SAFE_INTEGER }),
       emptyResponse(201),
     ])
     const client = new MeridianRemoteClient("https://example.test", transport)
@@ -118,10 +262,45 @@ describe("Meridian remote client", () => {
     })
   })
 
+  it("reauthenticates and replays a blob upload once after a 401", async () => {
+    const transport = new QueueTransport([
+      response({ challengeId: "challenge-1", challenge: "nonce-1" }),
+      response({ sessionToken: "session-1", expiresAt: Number.MAX_SAFE_INTEGER }),
+      response({ error: { code: "invalid_session", message: "Session expired" } }, 401),
+      response({ challengeId: "challenge-2", challenge: "nonce-2" }),
+      response({ sessionToken: "session-2", expiresAt: Number.MAX_SAFE_INTEGER }),
+      emptyResponse(201),
+    ])
+    const client = new MeridianRemoteClient("https://example.test", transport)
+    const bytes = new ArrayBuffer(4)
+
+    await client.authenticate(TEST_DEVICE, new FakeCrypto())
+    await expect(
+      client.putBlob({ blobId: "blob-id", bytes, chunkIndex: 0 }),
+    ).resolves.toBeUndefined()
+
+    expect(transport.requests[2]).toMatchObject({
+      url: "https://example.test/v1/blobs/blob-id",
+      body: bytes,
+      headers: {
+        authorization: "Bearer session-1",
+        "content-type": "application/octet-stream",
+      },
+    })
+    expect(transport.requests[5]).toMatchObject({
+      url: "https://example.test/v1/blobs/blob-id",
+      body: bytes,
+      headers: {
+        authorization: "Bearer session-2",
+        "content-type": "application/octet-stream",
+      },
+    })
+  })
+
   it("submits signed revocations to the selected device route", async () => {
     const transport = new QueueTransport([
       response({ challengeId: "challenge-id", challenge: "challenge" }),
-      response({ sessionToken: "session-token" }),
+      response({ sessionToken: "session-token", expiresAt: Number.MAX_SAFE_INTEGER }),
       response({ cursor: 7, chainHash: "chain-hash" }, 201),
     ])
     const client = new MeridianRemoteClient("https://example.test", transport)
@@ -181,7 +360,7 @@ describe("Meridian remote client", () => {
   it("polls relayed pairing state without consuming the result", async () => {
     const transport = new QueueTransport([
       response({ challengeId: "challenge-id", challenge: "challenge" }),
-      response({ sessionToken: "session-token" }),
+      response({ sessionToken: "session-token", expiresAt: Number.MAX_SAFE_INTEGER }),
       response({
         pairingId: "pairing-id",
         status: "joined",

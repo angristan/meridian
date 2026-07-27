@@ -7,9 +7,11 @@ export class VaultNotifications {
     private readonly sql: SqlStorage,
   ) {}
 
-  notifyCursor(cursor: number): void {
+  notifyCursor(cursor: number, authorDeviceId: string): void {
     const message = JSON.stringify({ type: "cursor-advanced", cursor })
     for (const socket of this.state.getWebSockets()) {
+      const attachment = socket.deserializeAttachment() as { deviceId?: unknown } | null
+      if (attachment?.deviceId === authorDeviceId) continue
       try {
         socket.send(message)
       } catch {
