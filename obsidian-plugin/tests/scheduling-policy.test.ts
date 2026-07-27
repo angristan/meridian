@@ -1,11 +1,16 @@
 import { describe, expect, it } from "vitest"
 import {
+  FILE_EVENT_DEBOUNCE_MS,
   HEALTHY_SOCKET_POLL_INTERVAL_MS,
   fallbackPollIntervalMs,
   isFallbackPollDue,
 } from "../src/plugin/scheduling-policy"
 
 describe("sync scheduling policy", () => {
+  it("batches rapid file events for five seconds", () => {
+    expect(FILE_EVENT_DEBOUNCE_MS).toBe(5_000)
+  })
+
   it("uses a five-minute fallback while notifications are connected", () => {
     expect(fallbackPollIntervalMs(true, 45_000)).toBe(HEALTHY_SOCKET_POLL_INTERVAL_MS)
     expect(

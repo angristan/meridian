@@ -2,9 +2,8 @@ import { type Plugin, TFile } from "obsidian"
 import type { MeridianSettings } from "../model"
 import type { SyncController } from "../sync/controller"
 import { isSyncablePath } from "../vault/path-policy"
-import { isFallbackPollDue } from "./scheduling-policy"
+import { FILE_EVENT_DEBOUNCE_MS, isFallbackPollDue } from "./scheduling-policy"
 
-const FILE_EVENT_DEBOUNCE_MS = 1_200
 const SCHEDULER_TICK_MS = 15_000
 
 export class PluginScheduling {

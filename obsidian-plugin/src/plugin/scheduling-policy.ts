@@ -1,3 +1,4 @@
+export const FILE_EVENT_DEBOUNCE_MS = 5_000
 export const HEALTHY_SOCKET_POLL_INTERVAL_MS = 5 * 60_000
 
 export interface FallbackPollState {
