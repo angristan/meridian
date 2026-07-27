@@ -1,3 +1,10 @@
+## [1.4.6](https://github.com/angristan/meridian/compare/1.4.5...1.4.6) (2026-07-27)
+
+
+### Bug Fixes
+
+* handle abnormal websocket closures ([1be75ae](https://github.com/angristan/meridian/commit/1be75ae87f6eb5f33ab0b3d6c6e6a919b5d587df))
+
 ## [1.4.5](https://github.com/angristan/meridian/compare/1.4.4...1.4.5) (2026-07-27)
 
 
