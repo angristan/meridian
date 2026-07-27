@@ -1,3 +1,10 @@
+## [1.4.4](https://github.com/angristan/meridian/compare/1.4.3...1.4.4) (2026-07-27)
+
+
+### Bug Fixes
+
+* reduce sync request amplification ([d6c38f1](https://github.com/angristan/meridian/commit/d6c38f143986b848c010a0501e5643178e93e735))
+
 ## [1.4.3](https://github.com/angristan/meridian/compare/1.4.2...1.4.3) (2026-07-27)
 
 
