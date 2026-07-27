@@ -1,8 +1,10 @@
 import type { SecretStorage } from "obsidian"
 
 const PENDING_PAIRING_SECRET_PREFIX = "meridian-pending-pairing"
+const PENDING_PAIRING_JOIN_PREFIX = "meridian-pending-pairing-join"
 const PENDING_PAIRING_RESULT_PREFIX = "meridian-pending-pairing-result"
 const PENDING_PAIRING_RELEASE_PREFIX = "meridian-pending-pairing-release"
+const PENDING_PAIRING_COMPLETION_PREFIX = "meridian-pending-pairing-completion"
 
 export class MeridianSecretStorage {
   constructor(private readonly storage: SecretStorage) {}
@@ -27,6 +29,14 @@ export class MeridianSecretStorage {
     return this.storage.getSecret(pairingSecretId(PENDING_PAIRING_SECRET_PREFIX, pairingId))
   }
 
+  setPendingPairingJoin(pairingId: string, join: string): void {
+    this.storage.setSecret(pairingSecretId(PENDING_PAIRING_JOIN_PREFIX, pairingId), join)
+  }
+
+  getPendingPairingJoin(pairingId: string): string | null {
+    return this.storage.getSecret(pairingSecretId(PENDING_PAIRING_JOIN_PREFIX, pairingId))
+  }
+
   setPendingPairingResult(pairingId: string, result: string): void {
     this.storage.setSecret(pairingSecretId(PENDING_PAIRING_RESULT_PREFIX, pairingId), result)
   }
@@ -43,10 +53,23 @@ export class MeridianSecretStorage {
     return this.storage.getSecret(pairingSecretId(PENDING_PAIRING_RELEASE_PREFIX, pairingId))
   }
 
+  setPendingPairingCompletion(pairingId: string, completion: string): void {
+    this.storage.setSecret(
+      pairingSecretId(PENDING_PAIRING_COMPLETION_PREFIX, pairingId),
+      completion,
+    )
+  }
+
+  getPendingPairingCompletion(pairingId: string): string | null {
+    return this.storage.getSecret(pairingSecretId(PENDING_PAIRING_COMPLETION_PREFIX, pairingId))
+  }
+
   clearPendingPairing(pairingId: string): void {
     this.storage.setSecret(pairingSecretId(PENDING_PAIRING_SECRET_PREFIX, pairingId), "")
+    this.storage.setSecret(pairingSecretId(PENDING_PAIRING_JOIN_PREFIX, pairingId), "")
     this.storage.setSecret(pairingSecretId(PENDING_PAIRING_RESULT_PREFIX, pairingId), "")
     this.storage.setSecret(pairingSecretId(PENDING_PAIRING_RELEASE_PREFIX, pairingId), "")
+    this.storage.setSecret(pairingSecretId(PENDING_PAIRING_COMPLETION_PREFIX, pairingId), "")
   }
 }
 

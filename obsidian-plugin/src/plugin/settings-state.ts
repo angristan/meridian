@@ -1,4 +1,9 @@
-import { DEFAULT_SETTINGS, type MeridianSettings, type PendingDeviceRemoval } from "../model"
+import {
+  DEFAULT_SETTINGS,
+  type MeridianSettings,
+  type PendingDeviceRemoval,
+  type PendingPairingCompletion,
+} from "../model"
 
 export function normalizeSettings(loaded: unknown): MeridianSettings {
   const value = isRecord(loaded) ? loaded : {}
@@ -12,6 +17,7 @@ export function normalizeSettings(loaded: unknown): MeridianSettings {
     deviceId: typeof value.deviceId === "string" ? value.deviceId : "",
     deviceName: typeof value.deviceName === "string" ? value.deviceName : "",
     pendingDeviceRemoval: pendingDeviceRemoval(value.pendingDeviceRemoval),
+    pendingPairingCompletion: pendingPairingCompletion(value.pendingPairingCompletion),
     pollIntervalSeconds: boundedNumber(value.pollIntervalSeconds, 15, 300, 45),
     scanIntervalMinutes: boundedNumber(value.scanIntervalMinutes, 1, 30, 5),
     maxFileSizeMiB: boundedNumber(value.maxFileSizeMiB, 16, 128, 64),
@@ -35,6 +41,29 @@ export function withoutMeridianIdentity(settings: MeridianSettings): MeridianSet
     vaultId: "",
     deviceId: "",
     pendingDeviceRemoval: null,
+    pendingPairingCompletion: null,
+  }
+}
+
+function pendingPairingCompletion(value: unknown): PendingPairingCompletion | null {
+  if (
+    !isRecord(value) ||
+    typeof value.endpoint !== "string" ||
+    typeof value.pairingId !== "string" ||
+    typeof value.vaultId !== "string" ||
+    typeof value.deviceId !== "string" ||
+    typeof value.expiresAt !== "number" ||
+    !Number.isSafeInteger(value.expiresAt) ||
+    value.expiresAt < 0
+  ) {
+    return null
+  }
+  return {
+    endpoint: value.endpoint,
+    pairingId: value.pairingId,
+    vaultId: value.vaultId,
+    deviceId: value.deviceId,
+    expiresAt: value.expiresAt,
   }
 }
 

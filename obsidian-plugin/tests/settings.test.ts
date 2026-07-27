@@ -18,6 +18,24 @@ describe("Meridian settings lifecycle", () => {
     ).toBeNull()
   })
 
+  it("restores only non-secret well-formed pairing completion markers", () => {
+    const pendingPairingCompletion = {
+      endpoint: "https://example.test",
+      pairingId: "pairing-id",
+      vaultId: "vault-id",
+      deviceId: "device-id",
+      expiresAt: 1_000,
+    }
+    expect(normalizeSettings({ pendingPairingCompletion }).pendingPairingCompletion).toEqual(
+      pendingPairingCompletion,
+    )
+    expect(
+      normalizeSettings({
+        pendingPairingCompletion: { ...pendingPairingCompletion, expiresAt: "invalid" },
+      }).pendingPairingCompletion,
+    ).toBeNull()
+  })
+
   it("forgets identity while preserving local preferences", () => {
     const settings = {
       ...structuredClone(DEFAULT_SETTINGS),
@@ -33,6 +51,13 @@ describe("Meridian settings lifecycle", () => {
         deviceId: "device-id",
         envelope: { signature: "signature" },
       },
+      pendingPairingCompletion: {
+        endpoint: "https://example.test",
+        pairingId: "pairing-id",
+        vaultId: "vault-id",
+        deviceId: "device-id",
+        expiresAt: 1_000,
+      },
     }
 
     expect(withoutMeridianIdentity(settings)).toMatchObject({
@@ -41,6 +66,7 @@ describe("Meridian settings lifecycle", () => {
       vaultId: "",
       deviceId: "",
       pendingDeviceRemoval: null,
+      pendingPairingCompletion: null,
       deviceName: "My iPhone",
       pollIntervalSeconds: 90,
     })

@@ -182,7 +182,7 @@ export class VaultPairing {
       row.initiator_device_id === session.deviceId,
       new HttpError(403, "wrong_initiator", "Pairing belongs to another device"),
     )
-    this.assertCurrent(row)
+    if (row.status !== "released" && row.status !== "completed") this.assertCurrent(row)
 
     const candidate = this.candidatePackage(row, session.vaultId)
     return json({
@@ -213,7 +213,7 @@ export class VaultPairing {
       )
       .toArray()[0]
     assert(row, new HttpError(404, "pairing_not_found", "Pairing capability is invalid"))
-    this.assertCurrent(row)
+    if (row.status !== "released" && row.status !== "completed") this.assertCurrent(row)
     return json({
       pairingId,
       status: row.status,
@@ -243,8 +243,8 @@ export class VaultPairing {
     const capabilityHash = await hashToken(join.capability)
     const now = Date.now()
     const pairing = this.sql
-      .exec<{ status: string }>(
-        `SELECT status FROM pairings
+      .exec<PairingRow>(
+        `SELECT * FROM pairings
          WHERE pairing_id = ? AND capability_hash = ? AND expires_at > ?`,
         pairingId,
         capabilityHash,
@@ -254,10 +254,6 @@ export class VaultPairing {
     assert(
       pairing,
       new HttpError(404, "pairing_not_found", "Pairing request is invalid or expired"),
-    )
-    assert(
-      pairing.status === "pending",
-      new HttpError(409, "pairing_already_joined", "Pairing already has a candidate"),
     )
     assert(
       !activeDevice(this.sql, join.device.deviceId),
@@ -273,6 +269,23 @@ export class VaultPairing {
       validProof,
       new HttpError(401, "invalid_proof", "Candidate proof of possession is invalid"),
     )
+
+    if (pairing.status !== "pending") {
+      const exactReplay =
+        pairing.status !== "canceled" &&
+        pairing.candidate_device_id === join.device.deviceId &&
+        pairing.candidate_signing_public_key === join.device.signingPublicKey &&
+        pairing.candidate_hpke_public_key === join.device.hpkePublicKey &&
+        pairing.candidate_device_name === deviceName &&
+        pairing.candidate_platform === platform &&
+        pairing.candidate_proof === join.proof &&
+        pairing.candidate_request_proof === join.requestProof
+      assert(
+        exactReplay,
+        new HttpError(409, "pairing_already_joined", "Pairing already has a different candidate"),
+      )
+      return json({ pairingId, status: pairing.status })
+    }
 
     const updated = this.sql.exec(
       `UPDATE pairings SET
@@ -328,10 +341,6 @@ export class VaultPairing {
       new HttpError(403, "wrong_initiator", "Pairing belongs to another device"),
     )
     assert(
-      pairing.status === "joined",
-      new HttpError(409, "pairing_not_joined", "Pairing has no candidate to approve"),
-    )
-    assert(
       pairing.candidate_device_id !== null &&
         pairing.candidate_signing_public_key !== null &&
         pairing.candidate_hpke_public_key !== null &&
@@ -343,6 +352,19 @@ export class VaultPairing {
       activeDevice(this.sql, session.deviceId),
       new HttpError(401, "device_revoked", "Approving device is no longer active"),
     )
+    if (pairing.status !== "joined") {
+      const exactReplay =
+        pairing.status !== "pending" &&
+        pairing.status !== "canceled" &&
+        pairing.certificate === approval.certificate &&
+        pairing.transcript_hash === approval.transcriptHash &&
+        pairing.verification_preview === approval.verificationPreview
+      assert(
+        exactReplay,
+        new HttpError(409, "pairing_not_joined", "Pairing approval does not match"),
+      )
+      return json({ pairingId, deviceId: pairing.candidate_device_id, status: pairing.status })
+    }
     const updated = this.sql.exec(
       `UPDATE pairings SET status = 'verifying', certificate = ?, transcript_hash = ?,
         verification_preview = ?, verification_started_at = ?
@@ -434,7 +456,7 @@ export class VaultPairing {
       )
       .toArray()[0]
     assert(row, new HttpError(404, "pairing_not_found", "Pairing capability is invalid"))
-    this.assertCurrent(row)
+    if (row.status !== "released" && row.status !== "completed") this.assertCurrent(row)
     if (row.status === "verifying" || row.status === "confirmed") {
       return json({
         pairingId,
@@ -535,7 +557,7 @@ export class VaultPairing {
     assertIdentifier(pairingId, "pairingId")
     const input = decode(PairingCandidateConfirmationSchema, await requestJson(request))
     const row = await this.capabilityRow(pairingId, input.capability)
-    this.assertCurrent(row)
+    if (row.status !== "released" && row.status !== "completed") this.assertCurrent(row)
     if (row.status === "completed") return json({ pairingId, status: row.status })
     assert(
       row.status === "released",

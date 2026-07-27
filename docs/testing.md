@@ -61,6 +61,7 @@ Until the repository and a release are public, the build produces `obsidian-plug
 
 - Pair a second device and verify the automatically displayed phrase on both screens.
 - Verify that the encrypted transfer stays unavailable until both confirmations, cancellation authorizes no device, completion updates both screens, and invalid or expired capabilities are rejected.
+- Drop responses after join, owner approval, release, and signed completion. Verify exact SecretStorage material is retained and replayed, closing either modal after phrase confirmation does not cancel, canceled screens offer a fresh-code retry, and a completed device is inserted only once.
 - From the owner, revoke the older member by its short ID. Verify its sessions fail immediately, the row becomes **Revoked**, the signed revocation advances other clients without revision decryption, and later operations from that identity are rejected.
 - On a member, choose **Remove this device**. Verify queued changes are warned about, files remain, the member self-revocation succeeds, local keys/configuration are forgotten, and the same local vault can pair again.
 - Verify owner self-removal and member cross-device revocation are rejected. Simulate a lost revocation response and restart at every cleanup boundary; only exact `device_not_found` confirmation may complete cleanup.

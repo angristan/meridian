@@ -196,6 +196,8 @@ A server challenge contains challenge ID, vault/device IDs, 32 random bytes, and
 10. The new device persists the recovered key bundle and signs a completion acknowledgement.
 11. The server atomically inserts the device into the authorized registry only after that acknowledgement. Cancellation or expiry before release leaves no authorized device and removes the withheld transfer.
 
+Each side persists its exact signed join, approval, release, or completion material in SecretStorage before transmission. A lost response is reconciled against server state and replays the same material rather than generating another identity or transfer. Closing a modal after phrase confirmation pauses local presentation; it does not race a cancellation against release. Once both confirmations release the encrypted transfer, expiry of the original QR does not prevent signed completion. Ordinary plugin settings contain only a non-secret completion marker; capabilities and cryptographic payloads remain in SecretStorage.
+
 A pairing capability is server-side, short-lived, and single-use. The QR code is only a transport for that capability. Obsidian pairing URIs prefix every query parameter with `meridian` and never use Obsidian-reserved routing keys such as `vault`. Server relay and polling are not substitutes for proof-of-possession, signed transcript validation, HPKE, or phrase verification.
 
 ## Recovery

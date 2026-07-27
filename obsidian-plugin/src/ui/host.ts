@@ -52,5 +52,6 @@ export interface MeridianUiHost {
     capability: string,
   ): Promise<string>
   finishPairing(endpoint: string, pairingId: string, capability: string): Promise<void>
+  completePendingPairing(): Promise<void>
   cancelPairing(endpoint: string, pairingId: string, capability: string): Promise<void>
 }

@@ -1,10 +1,17 @@
 import type { MeridianSettings, PairingCapability } from "../model"
 
 export function hasConfiguredMeridianIdentity(
-  settings: Pick<MeridianSettings, "endpoint" | "vaultId" | "deviceId" | "pendingDeviceRemoval">,
+  settings: Pick<
+    MeridianSettings,
+    "endpoint" | "vaultId" | "deviceId" | "pendingDeviceRemoval" | "pendingPairingCompletion"
+  >,
 ): boolean {
   return Boolean(
-    settings.endpoint || settings.vaultId || settings.deviceId || settings.pendingDeviceRemoval,
+    settings.endpoint ||
+      settings.vaultId ||
+      settings.deviceId ||
+      settings.pendingDeviceRemoval ||
+      settings.pendingPairingCompletion,
   )
 }
 

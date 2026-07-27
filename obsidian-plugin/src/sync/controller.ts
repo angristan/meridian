@@ -156,7 +156,7 @@ export class SyncController {
     return this.remote.getPairingStatus(pairingId)
   }
 
-  async approvePairing(
+  async preparePairingApproval(
     pairingId: string,
   ): Promise<{ approval: PairingApprovalMaterial; candidatePackage: string }> {
     const device = this.requireDevice()
@@ -170,8 +170,11 @@ export class SyncController {
       pairing.candidatePackage,
       devices.map((entry) => entry.certificate),
     )
-    await this.remote.approvePairing(pairingId, approval.payload)
     return { approval, candidatePackage: pairing.candidatePackage }
+  }
+
+  async submitPairingApproval(pairingId: string, payload: unknown): Promise<void> {
+    await this.remote.approvePairing(pairingId, payload)
   }
 
   async confirmPairingOwner(pairingId: string): Promise<void> {

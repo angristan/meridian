@@ -13,6 +13,8 @@ import {
 } from "./model"
 import { ObsidianHttpTransport } from "./network/obsidian-transport"
 import { MeridianRemoteClient, normalizeEndpoint } from "./network/remote-client"
+import { MeridianHttpError } from "./network/response-parsers"
+import { confirmRemotePairingCompletion } from "./plugin/pairing-completion"
 import { createPairingDeepLink, hasConfiguredMeridianIdentity } from "./plugin/pairing-link"
 import { registerProtocolHandlers } from "./plugin/protocol-handlers"
 import { PluginScheduling } from "./plugin/scheduling"
@@ -89,7 +91,15 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
     this.scheduling.register()
 
     this.app.workspace.onLayoutReady(() => {
-      if (this.settings.pendingDeviceRemoval) {
+      if (this.settings.pendingPairingCompletion) {
+        void this.completePendingPairing().catch((error) =>
+          this.updateStatus({
+            phase: "error",
+            message: "Pairing completion needs attention",
+            error: error instanceof Error ? error.message : String(error),
+          }),
+        )
+      } else if (this.settings.pendingDeviceRemoval) {
         void this.completePendingDeviceRemoval().catch((error) =>
           this.updateStatus({
             phase: "error",
@@ -116,6 +126,9 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
   }
 
   async syncNow(): Promise<void> {
+    if (this.settings.pendingPairingCompletion) {
+      throw new Error("Finish the pending device pairing before syncing")
+    }
     if (this.settings.pendingDeviceRemoval) {
       throw new Error("Finish the pending device removal before syncing")
     }
@@ -149,7 +162,12 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
     this.secrets.setDeviceKeyBundle(claim.deviceId, claim.keyBundle)
 
     const remote = new MeridianRemoteClient(normalizedEndpoint, new ObsidianHttpTransport())
-    await remote.claim(setupSession, claim)
+    try {
+      await remote.claim(setupSession, claim)
+    } catch (error) {
+      this.secrets.clearDeviceKeyBundle(claim.deviceId)
+      throw error
+    }
     this.settings = {
       ...this.settings,
       enabled: true,
@@ -212,6 +230,9 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
   }
 
   async resumeConnection(): Promise<void> {
+    if (this.settings.pendingPairingCompletion) {
+      throw new Error("Finish the pending device pairing before resuming sync")
+    }
     if (this.settings.pendingDeviceRemoval) {
       throw new Error("Finish the pending device removal before resuming sync")
     }
@@ -339,15 +360,38 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
 
   async approvePairing(pairingId: string): Promise<string> {
     if (!this.controller) throw new Error("Meridian is not connected")
-    const prepared = await this.controller.approvePairing(pairingId)
+    const existing = this.secrets.getPendingPairingRelease(pairingId)
+    if (existing) {
+      const withheld = this.pendingPairingRelease(pairingId)
+      const status = await this.controller.pairingStatus(pairingId)
+      if (status.candidatePackage !== withheld.candidatePackage) {
+        throw new Error("Joining device identity changed during approval")
+      }
+      if (status.status === "joined") {
+        await this.controller.submitPairingApproval(pairingId, withheld.approvalPayload)
+      } else if (
+        status.status !== "verifying" &&
+        status.status !== "confirmed" &&
+        status.status !== "released" &&
+        status.status !== "completed"
+      ) {
+        throw new Error(status.status === "canceled" ? "Pairing was canceled" : "Pairing changed")
+      }
+      return withheld.verificationPhrase
+    }
+
+    const prepared = await this.controller.preparePairingApproval(pairingId)
     this.secrets.setPendingPairingRelease(
       pairingId,
       JSON.stringify({
         candidatePackage: prepared.candidatePackage,
+        approvalPayload: prepared.approval.payload,
         releasePayload: prepared.approval.releasePayload,
         transferHash: prepared.approval.transferHash,
+        verificationPhrase: prepared.approval.verificationPhrase,
       }),
     )
+    await this.controller.submitPairingApproval(pairingId, prepared.approval.payload)
     return prepared.approval.verificationPhrase
   }
 
@@ -412,8 +456,17 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
     const remote = new MeridianRemoteClient(normalizedEndpoint, new ObsidianHttpTransport())
     const progress = await remote.getPairingProgress(pairingId, capability)
     if (progress.status !== "pending") {
+      if (progress.status === "canceled") {
+        this.secrets.clearPendingPairing(pairingId)
+        throw new Error("Pairing was canceled. Scan a new code to retry")
+      }
       if (this.secrets.getPendingPairing(pairingId)) return
       throw new Error("This pairing request was joined by another local attempt")
+    }
+    const existingJoin = this.secrets.getPendingPairingJoin(pairingId)
+    if (this.secrets.getPendingPairing(pairingId) && existingJoin) {
+      await this.submitPairingJoin(remote, pairingId, capability, JSON.parse(existingJoin))
+      return
     }
     const joining = await this.cryptoPort.createPairingJoin(
       {
@@ -428,10 +481,26 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
       },
     )
     this.secrets.setPendingPairing(pairingId, joining.pendingSecret)
+    this.secrets.setPendingPairingJoin(pairingId, JSON.stringify(joining.payload))
+    await this.submitPairingJoin(remote, pairingId, capability, joining.payload)
+  }
+
+  private async submitPairingJoin(
+    remote: MeridianRemoteClient,
+    pairingId: string,
+    capability: string,
+    payload: unknown,
+  ): Promise<void> {
     try {
-      await remote.joinPairing(pairingId, joining.payload)
+      await remote.joinPairing(pairingId, payload)
     } catch (error) {
-      this.secrets.clearPendingPairing(pairingId)
+      try {
+        const reconciled = await remote.getPairingProgress(pairingId, capability)
+        if (reconciled.status !== "pending" && reconciled.status !== "canceled") return
+        this.secrets.clearPendingPairing(pairingId)
+      } catch {
+        // Keep the exact candidate request so reopening the same link can reconcile and replay it.
+      }
       throw error
     }
   }
@@ -466,10 +535,22 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
   }
 
   async finishPairing(endpoint: string, pairingId: string, capability: string): Promise<void> {
+    const normalizedEndpoint = normalizeEndpoint(endpoint)
+    const pendingCompletion = this.settings.pendingPairingCompletion
+    if (pendingCompletion) {
+      if (
+        pendingCompletion.endpoint !== normalizedEndpoint ||
+        pendingCompletion.pairingId !== pairingId ||
+        this.pendingPairingCompletionPayload(pendingCompletion.pairingId).capability !== capability
+      ) {
+        throw new Error("Another pairing completion is already pending in this vault")
+      }
+      await this.completePendingPairing()
+      return
+    }
     if (hasConfiguredMeridianIdentity(this.settings)) {
       throw new Error("Meridian is already set up and connected in this vault.")
     }
-    const normalizedEndpoint = normalizeEndpoint(endpoint)
     const pendingSecret = this.secrets.getPendingPairing(pairingId)
     if (!pendingSecret) throw new Error("Pending pairing keys are missing")
     const remote = new MeridianRemoteClient(normalizedEndpoint, new ObsidianHttpTransport())
@@ -519,28 +600,115 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
       verification.transferHash,
     )
     this.secrets.setDeviceKeyBundle(paired.deviceId, paired.keyBundle)
+    this.secrets.setPendingPairingCompletion(
+      pairingId,
+      JSON.stringify({ capability, ...paired.completion }),
+    )
     this.settings = {
       ...this.settings,
       enabled: false,
       endpoint: normalizedEndpoint,
       vaultId: paired.vaultId,
       deviceId: paired.deviceId,
+      pendingPairingCompletion: {
+        endpoint: normalizedEndpoint,
+        pairingId,
+        vaultId: paired.vaultId,
+        deviceId: paired.deviceId,
+        expiresAt: this.pairingExpiry(pendingSecret),
+      },
     }
     await this.saveSettings()
+    await this.completePendingPairing()
+  }
 
-    const completed = await remote.completePairing(pairingId, {
-      capability,
-      ...paired.completion,
-    })
-    if (completed.status !== "completed") throw new Error("Pairing completion was not accepted")
+  async completePendingPairing(): Promise<void> {
+    const pending = this.settings.pendingPairingCompletion
+    if (!pending) return
+    const completion = this.pendingPairingCompletionPayload(pending.pairingId)
+    const remote = new MeridianRemoteClient(pending.endpoint, new ObsidianHttpTransport())
+    try {
+      await confirmRemotePairingCompletion({
+        complete: async () => {
+          const completed = await remote.completePairing(pending.pairingId, completion)
+          if (completed.status !== "completed") {
+            throw new Error("Pairing completion was not accepted")
+          }
+        },
+        isDeviceAuthorized: () => remote.isDeviceAuthorized(pending.deviceId),
+      })
+    } catch (error) {
+      if (
+        Date.now() < pending.expiresAt ||
+        !(error instanceof MeridianHttpError) ||
+        (error.code !== "pairing_expired" && error.code !== "pairing_not_found")
+      ) {
+        throw error
+      }
+      let authorized: boolean
+      try {
+        authorized = await remote.isDeviceAuthorized(pending.deviceId)
+      } catch {
+        throw error
+      }
+      if (authorized) throw error
 
-    this.settings.enabled = true
-    await this.saveSettings()
-    this.secrets.clearPendingPairing(pairingId)
+      const pendingSettings = this.settings
+      this.settings = withoutMeridianIdentity(this.settings)
+      try {
+        await this.saveSettings()
+      } catch (saveError) {
+        this.settings = pendingSettings
+        throw saveError
+      }
+      this.secrets.clearDeviceKeyBundle(pending.deviceId)
+      this.secrets.clearPendingPairing(pending.pairingId)
+      throw new Error("Pairing expired before authorization. Create a new code and try again")
+    }
+    const pendingSettings = this.settings
+    this.settings = {
+      ...this.settings,
+      enabled: true,
+      endpoint: pending.endpoint,
+      vaultId: pending.vaultId,
+      deviceId: pending.deviceId,
+      pendingPairingCompletion: null,
+    }
+    try {
+      await this.saveSettings()
+    } catch (error) {
+      this.settings = pendingSettings
+      throw error
+    }
+    this.secrets.clearPendingPairing(pending.pairingId)
     await this.initializeExistingConnection()
   }
 
+  private pendingPairingCompletionPayload(pairingId: string): Record<string, unknown> & {
+    capability: string
+  } {
+    const serialized = this.secrets.getPendingPairingCompletion(pairingId)
+    if (!serialized) throw new Error("Pending pairing completion is missing from SecretStorage")
+    try {
+      const value: unknown = JSON.parse(serialized)
+      if (
+        typeof value === "object" &&
+        value !== null &&
+        "capability" in value &&
+        typeof value.capability === "string"
+      ) {
+        return { ...value, capability: value.capability }
+      }
+    } catch {
+      // Fall through to the stable local-state error below.
+    }
+    throw new Error("Pending pairing completion in SecretStorage is invalid")
+  }
+
   async cancelPairing(endpoint: string, pairingId: string, capability: string): Promise<void> {
+    if (this.settings.pendingPairingCompletion?.pairingId === pairingId) {
+      throw new Error("Pairing completion is already pending and cannot be canceled safely")
+    }
     const remote = new MeridianRemoteClient(
       normalizeEndpoint(endpoint),
       new ObsidianHttpTransport(),
@@ -554,8 +722,10 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
 
   private pendingPairingRelease(pairingId: string): {
     candidatePackage: string
+    approvalPayload: unknown
     releasePayload: unknown
     transferHash: string
+    verificationPhrase: string
   } {
     const serialized = this.secrets.getPendingPairingRelease(pairingId)
     if (!serialized) throw new Error("Locally withheld pairing transfer is missing")
@@ -566,14 +736,19 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
         value !== null &&
         "candidatePackage" in value &&
         typeof value.candidatePackage === "string" &&
+        "approvalPayload" in value &&
         "releasePayload" in value &&
         "transferHash" in value &&
-        typeof value.transferHash === "string"
+        typeof value.transferHash === "string" &&
+        "verificationPhrase" in value &&
+        typeof value.verificationPhrase === "string"
       ) {
         return {
           candidatePackage: value.candidatePackage,
+          approvalPayload: value.approvalPayload,
           releasePayload: value.releasePayload,
           transferHash: value.transferHash,
+          verificationPhrase: value.verificationPhrase,
         }
       }
     } catch {
@@ -651,6 +826,14 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
   }
 
   private async initializeExistingConnection(): Promise<void> {
+    if (this.settings.pendingPairingCompletion) {
+      this.updateStatus({
+        phase: "error",
+        message: "Pairing completion needs attention",
+        error: "Retry pairing completion before syncing",
+      })
+      return
+    }
     if (this.settings.pendingDeviceRemoval) {
       this.updateStatus({
         phase: "error",

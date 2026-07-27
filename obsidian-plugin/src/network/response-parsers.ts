@@ -7,11 +7,41 @@ import type {
 } from "../model"
 import type { HttpResponse } from "./transport"
 
+export class MeridianHttpError extends Error {
+  constructor(
+    readonly status: number,
+    readonly code: string | null,
+    message: string,
+  ) {
+    super(message)
+    this.name = "MeridianHttpError"
+  }
+}
+
 export function assertSuccess(response: HttpResponse, label: string): void {
   if (response.status >= 200 && response.status < 300) return
+  const parsed = parseErrorBody(response.text)
   const detail =
-    response.status === 401 ? "Session expired or device unauthorized" : `HTTP ${response.status}`
-  throw new Error(`${label} failed: ${detail}`)
+    parsed?.message ??
+    (response.status === 401 ? "Session expired or device unauthorized" : `HTTP ${response.status}`)
+  throw new MeridianHttpError(response.status, parsed?.code ?? null, `${label} failed: ${detail}`)
+}
+
+function parseErrorBody(text: string): { code: string; message: string } | null {
+  try {
+    const value: unknown = JSON.parse(text)
+    if (
+      isRecord(value) &&
+      isRecord(value.error) &&
+      typeof value.error.code === "string" &&
+      typeof value.error.message === "string"
+    ) {
+      return { code: value.error.code, message: value.error.message }
+    }
+  } catch {
+    // Fall back to the stable status-based message.
+  }
+  return null
 }
 
 export function parseJsonBody(response: HttpResponse, label: string): unknown {

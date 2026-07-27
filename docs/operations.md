@@ -34,6 +34,8 @@ A configured local vault rejects setup and pairing links to prevent accidental i
 3. Meridian signs a self-revocation, confirms it remotely, forgets the local key and connection, and keeps every vault file and local journal record.
 4. On the Mac owner, choose **Devices → Add device** and scan the new QR from the same iPhone vault.
 
+If pairing is canceled, select **Retry** on the Mac to generate a fresh code. If the final signed completion is interrupted, Meridian retains the exact completion in SecretStorage and shows **Retry pairing** instead of creating another identity. Do not remove plugin data while that recovery action is present.
+
 **Pause** is temporary and never revokes or forgets an identity. **Remove this device** is permanent and available only to member devices. An owner cannot remove itself; ownership recovery is the safe path after owner loss.
 
 ## Incident response

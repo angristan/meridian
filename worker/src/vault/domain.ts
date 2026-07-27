@@ -140,5 +140,8 @@ export function cleanupExpired(sql: SqlStorage, now: number): void {
   sql.exec("DELETE FROM auth_challenges WHERE expires_at <= ?", now)
   sql.exec("DELETE FROM recovery_challenges WHERE expires_at <= ?", now)
   sql.exec("DELETE FROM sessions WHERE expires_at <= ?", now)
-  sql.exec("DELETE FROM pairings WHERE expires_at <= ?", now)
+  sql.exec(
+    "DELETE FROM pairings WHERE expires_at <= ? AND status NOT IN ('released', 'completed')",
+    now,
+  )
 }

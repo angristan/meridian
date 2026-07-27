@@ -37,7 +37,13 @@ describe("pairing deep links", () => {
   })
 
   it("blocks pairing for connected, partial, paused, or removal-pending identities", () => {
-    const empty = { endpoint: "", vaultId: "", deviceId: "", pendingDeviceRemoval: null }
+    const empty = {
+      endpoint: "",
+      vaultId: "",
+      deviceId: "",
+      pendingDeviceRemoval: null,
+      pendingPairingCompletion: null,
+    }
     expect(hasConfiguredMeridianIdentity(empty)).toBe(false)
     expect(hasConfiguredMeridianIdentity({ ...empty, endpoint: "https://example.test" })).toBe(true)
     expect(hasConfiguredMeridianIdentity({ ...empty, vaultId: "vault-id" })).toBe(true)
@@ -50,6 +56,18 @@ describe("pairing deep links", () => {
           vaultId: "vault-id",
           deviceId: "device-id",
           envelope: {},
+        },
+      }),
+    ).toBe(true)
+    expect(
+      hasConfiguredMeridianIdentity({
+        ...empty,
+        pendingPairingCompletion: {
+          endpoint: "https://example.test",
+          pairingId: "pairing-id",
+          vaultId: "vault-id",
+          deviceId: "device-id",
+          expiresAt: 1_000,
         },
       }),
     ).toBe(true)

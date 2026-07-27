@@ -330,6 +330,16 @@ describe("Meridian Worker integration", () => {
       },
     )
     expect(joinResponse.status).toBe(200)
+    const repeatedJoinResponse = await SELF.fetch(
+      `https://example.test/v1/pairings/${pairing.pairingId}/join`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(join),
+      },
+    )
+    expect(repeatedJoinResponse.status).toBe(200)
+    await expect(repeatedJoinResponse.json()).resolves.toMatchObject({ status: "joined" })
 
     const joinedStatus = await SELF.fetch(`https://example.test/v1/pairings/${pairing.pairingId}`, {
       headers: authorization,
@@ -386,6 +396,16 @@ describe("Meridian Worker integration", () => {
       },
     )
     expect(approvalResponse.status).toBe(200)
+    const repeatedApprovalResponse = await SELF.fetch(
+      `https://example.test/v1/pairings/${pairing.pairingId}/approve`,
+      {
+        method: "POST",
+        headers: { ...authorization, "content-type": "application/json" },
+        body: JSON.stringify(approval),
+      },
+    )
+    expect(repeatedApprovalResponse.status).toBe(200)
+    await expect(repeatedApprovalResponse.json()).resolves.toMatchObject({ status: "verifying" })
 
     const verificationResult = await SELF.fetch(
       `https://example.test/v1/pairings/${pairing.pairingId}/result`,
@@ -534,6 +554,35 @@ describe("Meridian Worker integration", () => {
       status: "completed",
       hpkeTransfer: release.hpkeTransfer,
     })
+
+    const pairingStub = env.VAULT.get(env.VAULT.idFromName("primary"))
+    await runInDurableObject(pairingStub, async (_instance, state) => {
+      state.storage.sql.exec(
+        "UPDATE pairings SET expires_at = ? WHERE pairing_id = ?",
+        Date.now() - 1,
+        pairing.pairingId,
+      )
+    })
+    const completedRetry = await SELF.fetch(
+      `https://example.test/v1/pairings/${pairing.pairingId}/complete`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(completion),
+      },
+    )
+    expect(completedRetry.status).toBe(200)
+    await expect(completedRetry.json()).resolves.toMatchObject({ status: "completed" })
+    const expiredCompletedResult = await SELF.fetch(
+      `https://example.test/v1/pairings/${pairing.pairingId}/result`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ capability: pairing.capability }),
+      },
+    )
+    expect(expiredCompletedResult.status).toBe(200)
+    await expect(expiredCompletedResult.json()).resolves.toMatchObject({ status: "completed" })
 
     const devicesAfterPairing = await SELF.fetch("https://example.test/v1/devices", {
       headers: authorization,

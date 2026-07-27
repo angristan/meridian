@@ -6,6 +6,7 @@ import {
   MeridianRemoteClient,
   normalizeEndpoint,
 } from "../src/network/remote-client"
+import { MeridianHttpError } from "../src/network/response-parsers"
 import { FakeCrypto, TEST_DEVICE } from "./fakes"
 
 class QueueTransport implements HttpTransport {
@@ -162,6 +163,19 @@ describe("Meridian remote client", () => {
         "device-id",
       ),
     ).rejects.toThrow(/invalid not-found response/)
+  })
+
+  it("preserves exact Worker error codes for conservative recovery", async () => {
+    const client = new MeridianRemoteClient(
+      "https://example.test",
+      new QueueTransport([
+        response({ error: { code: "pairing_expired", message: "Pairing request expired" } }, 410),
+      ]),
+    )
+
+    const error = await client.completePairing("pairing-id", {}).catch((caught) => caught)
+    expect(error).toBeInstanceOf(MeridianHttpError)
+    expect(error).toMatchObject({ status: 410, code: "pairing_expired" })
   })
 
   it("polls relayed pairing state without consuming the result", async () => {

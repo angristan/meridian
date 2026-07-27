@@ -6,7 +6,8 @@ export function renderSettings(container: HTMLElement, host: MeridianUiHost): vo
   container.empty()
   const configured = host.settings.endpoint.length > 0
   const removalPending = host.settings.pendingDeviceRemoval !== null
-  const connected = configured && host.settings.enabled && !removalPending
+  const pairingPending = host.settings.pendingPairingCompletion !== null
+  const connected = configured && host.settings.enabled && !removalPending && !pairingPending
 
   new Setting(container)
     .setName("Connection")
@@ -14,17 +15,19 @@ export function renderSettings(container: HTMLElement, host: MeridianUiHost): vo
     .addButton((button) =>
       button
         .setButtonText(
-          removalPending
-            ? "Removal pending"
-            : connected
-              ? "Pause"
-              : configured
-                ? "Resume"
-                : "Connect",
+          pairingPending
+            ? "Pairing pending"
+            : removalPending
+              ? "Removal pending"
+              : connected
+                ? "Pause"
+                : configured
+                  ? "Resume"
+                  : "Connect",
         )
-        .setDisabled(removalPending)
+        .setDisabled(removalPending || pairingPending)
         .onClick(async () => {
-          if (removalPending) return
+          if (removalPending || pairingPending) return
           if (!configured) {
             new ConnectionModal(host).open()
             return
@@ -52,7 +55,29 @@ export function renderSettings(container: HTMLElement, host: MeridianUiHost): vo
       }),
     )
 
-  if (configured) {
+  if (pairingPending) {
+    new Setting(container)
+      .setName("Finish pairing")
+      .setDesc(
+        "The keys are stored locally, but server authorization still needs confirmation. Retry safely without creating another device identity.",
+      )
+      .addButton((button) =>
+        button
+          .setButtonText("Retry pairing")
+          .setCta()
+          .onClick(async () => {
+            button.setDisabled(true)
+            try {
+              await host.completePendingPairing()
+              renderSettings(container, host)
+              new Notice("Device pairing completed")
+            } catch (error) {
+              new Notice(error instanceof Error ? error.message : "Unable to finish pairing")
+              button.setDisabled(false)
+            }
+          }),
+      )
+  } else if (configured) {
     const removal = new Setting(container)
       .setName("Remove this device")
       .setDesc("Checking whether this device can remove its Meridian identity…")

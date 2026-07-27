@@ -16,6 +16,14 @@ export interface PendingDeviceRemoval {
   envelope: unknown
 }
 
+export interface PendingPairingCompletion {
+  endpoint: string
+  pairingId: string
+  vaultId: string
+  deviceId: string
+  expiresAt: number
+}
+
 export interface MeridianSettings {
   enabled: boolean
   endpoint: string
@@ -23,6 +31,7 @@ export interface MeridianSettings {
   deviceId: string
   deviceName: string
   pendingDeviceRemoval: PendingDeviceRemoval | null
+  pendingPairingCompletion: PendingPairingCompletion | null
   pollIntervalSeconds: number
   scanIntervalMinutes: number
   maxFileSizeMiB: number
@@ -36,6 +45,7 @@ export const DEFAULT_SETTINGS: MeridianSettings = {
   deviceId: "",
   deviceName: "",
   pendingDeviceRemoval: null,
+  pendingPairingCompletion: null,
   pollIntervalSeconds: 45,
   scanIntervalMinutes: 5,
   maxFileSizeMiB: 64,
