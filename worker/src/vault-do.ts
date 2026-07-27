@@ -160,8 +160,13 @@ export class VaultDurableObject extends DurableObject<VaultDurableObjectEnv> {
     this.notifications.webSocketMessage(socket, message)
   }
 
-  override async webSocketClose(socket: WebSocket, code: number, reason: string): Promise<void> {
-    socket.close(code, reason)
+  override async webSocketClose(
+    _socket: WebSocket,
+    _code: number,
+    _reason: string,
+    _wasClean: boolean,
+  ): Promise<void> {
+    // The socket is already closed; echoing reserved codes such as 1006 would throw.
   }
 
   override async webSocketError(socket: WebSocket): Promise<void> {

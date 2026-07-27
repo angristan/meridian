@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest"
+import { describe, expect, it, vi } from "vitest"
+import { VaultDurableObject } from "../src/vault-do"
 import { VaultNotifications } from "../src/vault/notifications"
 
 class FakeSocket {
@@ -14,6 +15,22 @@ class FakeSocket {
     this.sent.push(message)
   }
 }
+
+describe("VaultDurableObject WebSockets", () => {
+  it("does not echo reserved abnormal close codes", async () => {
+    const close = vi.fn()
+
+    await VaultDurableObject.prototype.webSocketClose.call(
+      {} as VaultDurableObject,
+      { close } as unknown as WebSocket,
+      1006,
+      "",
+      false,
+    )
+
+    expect(close).not.toHaveBeenCalled()
+  })
+})
 
 describe("VaultNotifications", () => {
   it("broadcasts cursor hints to peers but not the operation author", () => {
