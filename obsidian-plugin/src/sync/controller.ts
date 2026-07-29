@@ -237,25 +237,23 @@ export class SyncController {
   private async runOnce(reason: SyncReason): Promise<void> {
     const device = this.requireDevice()
     if (this.stopRequested) return
-    if (reason !== "notification") {
+    this.updateStatus({
+      phase: "scanning",
+      message: "Checking local changes",
+      error: null,
+      progress: null,
+    })
+    const result = await this.reconciler.reconcile(this.categories())
+    const pending = await this.journal.listPending()
+    this.updateStatus({ queued: pending.length, message: `${result.files} files checked` })
+    if (reason === "file-event" && result.queued === 0 && pending.length === 0) {
       this.updateStatus({
-        phase: "scanning",
-        message: "Checking local changes",
+        phase: "idle",
+        message: "Up to date",
+        cursor: await this.journal.getCursor(),
         error: null,
-        progress: null,
       })
-      const result = await this.reconciler.reconcile(this.categories())
-      const pending = await this.journal.listPending()
-      this.updateStatus({ queued: pending.length, message: `${result.files} files checked` })
-      if (reason === "file-event" && result.queued === 0 && pending.length === 0) {
-        this.updateStatus({
-          phase: "idle",
-          message: "Up to date",
-          cursor: await this.journal.getCursor(),
-          error: null,
-        })
-        return
-      }
+      return
     }
 
     if (!networkAvailable()) throw new Error("No network connection")

@@ -37,6 +37,49 @@ describe("SyncController", () => {
     controller.stop()
   })
 
+  it("captures local edits before applying notification-triggered pulls", async () => {
+    const vault = new FakeVault({ "note.bin": "base" })
+    const journal = new MemoryJournal()
+    const remote = new FakeRemote()
+    const controller = new SyncController(
+      vault,
+      journal,
+      remote,
+      new FakeCrypto(),
+      () => ALL_CATEGORIES,
+      () => {},
+    )
+
+    await controller.start(TEST_DEVICE)
+    const base = (await journal.listRevisions("note.bin"))[0]
+    if (!base) throw new Error("Expected the initial revision")
+
+    vault.files.set("note.bin", new TextEncoder().encode("unsynced local edit").buffer)
+    remote.addRemoteRevision(
+      {
+        operationId: "remote-operation",
+        revisionId: "remote-revision",
+        fileId: base.fileId,
+        action: "upsert",
+        path: "note.bin",
+        previousPath: null,
+        parents: [base.revisionId],
+        authorDeviceId: "device-remote",
+        blobId: "remote-blob",
+        isText: false,
+      },
+      new TextEncoder().encode("remote edit").buffer,
+    )
+
+    await controller.sync("notification")
+
+    expect(vault.text("note.bin")).toBe("unsynced local edit")
+    expect(await journal.listConflicts(true)).toEqual([
+      expect.objectContaining({ sourcePath: "note.bin", remoteRevisionId: "remote-revision" }),
+    ])
+    controller.stop()
+  })
+
   it("reports live pull cursor chunk and target progress", async () => {
     const vault = new FakeVault()
     const journal = new MemoryJournal()
