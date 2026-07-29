@@ -33,11 +33,17 @@ export function base64UrlDecode(value: string, maximumBytes = 256 * 1024): Uint8
 
   const output = new Uint8Array(binary.length)
   for (let index = 0; index < binary.length; index += 1) output[index] = binary.charCodeAt(index)
+  if (base64UrlEncode(output) !== value) {
+    throw new HttpError(400, "invalid_encoding", "Expected canonical unpadded base64url data")
+  }
   return output
 }
 
 export function assertIdentifier(value: string, field = "identifier"): void {
-  if (!IDENTIFIER_PATTERN.test(value)) {
+  try {
+    if (!IDENTIFIER_PATTERN.test(value)) throw new Error("invalid identifier characters")
+    base64UrlDecode(value, 96)
+  } catch {
     throw new HttpError(400, "invalid_identifier", `${field} is invalid`)
   }
 }

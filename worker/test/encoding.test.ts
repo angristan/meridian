@@ -1,6 +1,7 @@
 import { signedHttpMessage } from "@meridian/protocol"
 import { describe, expect, it } from "vitest"
 import {
+  assertIdentifier,
   base64UrlDecode,
   base64UrlEncode,
   constantTimeSecretEquals,
@@ -14,6 +15,16 @@ describe("encoding", () => {
     expect(encoded).toBe("AAEC_f7_")
     expect(base64UrlDecode(encoded)).toEqual(bytes)
     expect(base64UrlDecode(ZERO_HASH)).toHaveLength(32)
+  })
+
+  it("rejects non-canonical trailing base64url bits", () => {
+    const canonical = base64UrlEncode(new Uint8Array(16))
+    expect(canonical).toBe("AAAAAAAAAAAAAAAAAAAAAA")
+    expect(base64UrlDecode(canonical)).toEqual(new Uint8Array(16))
+    expect(() => base64UrlDecode("AAAAAAAAAAAAAAAAAAAAAB")).toThrow(/canonical/)
+    expect(() => assertIdentifier("AAAAAAAAAAAAAAAAAAAAAB", "deviceId")).toThrow(
+      /deviceId is invalid/,
+    )
   })
 
   it("uses unambiguous field length prefixes", () => {

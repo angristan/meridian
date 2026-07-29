@@ -38,6 +38,13 @@ function randomBytes(length: number): Uint8Array<ArrayBuffer> {
   return bytes
 }
 
+function nonCanonicalAlias(value: string): string {
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+  const last = alphabet.indexOf(value.at(-1) ?? "")
+  if (last < 0 || last % 16 !== 0) throw new Error("Expected a 16-byte canonical identifier")
+  return `${value.slice(0, -1)}${alphabet[last + 1]}`
+}
+
 async function createSigningKey(): Promise<CryptoKeyPair> {
   return await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"])
 }
@@ -937,6 +944,31 @@ describe("Meridian Worker integration", () => {
     expect(reusedIdentityJoinResponse.status).toBe(409)
     await expect(reusedIdentityJoinResponse.json()).resolves.toMatchObject({
       error: { code: "device_exists" },
+    })
+
+    const aliasedCandidate = { ...candidate, deviceId: nonCanonicalAlias(candidate.deviceId) }
+    const unsignedAliasedJoin: PairingJoin = {
+      ...unsignedReusedIdentityJoin,
+      device: aliasedCandidate,
+    }
+    const aliasedJoin = {
+      ...unsignedAliasedJoin,
+      proof: await sign(
+        candidateKey,
+        pairingJoinSigningMessage(vaultId, reusedIdentityPairing.pairingId, unsignedAliasedJoin),
+      ),
+    }
+    const aliasedJoinResponse = await SELF.fetch(
+      `https://example.test/v1/pairings/${reusedIdentityPairing.pairingId}/join`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(aliasedJoin),
+      },
+    )
+    expect(aliasedJoinResponse.status).toBe(400)
+    await expect(aliasedJoinResponse.json()).resolves.toMatchObject({
+      error: { code: "invalid_identifier" },
     })
 
     const secondSetup = await SELF.fetch("https://example.test/v1/setup/session", {
