@@ -65,10 +65,9 @@ export class RevisionGraph {
   }
 
   heads(fileId: FileId): readonly Revision[] {
-    const candidates = new Map(
-      this.revisions(fileId).map((revision) => [revision.id, revision] as const),
-    )
-    for (const revision of candidates.values()) {
+    const revisions = this.revisions(fileId)
+    const candidates = new Map(revisions.map((revision) => [revision.id, revision] as const))
+    for (const revision of revisions) {
       for (const parent of revision.parents) candidates.delete(parent)
     }
     return [...candidates.values()].sort((left, right) => compareIds(left.id, right.id))

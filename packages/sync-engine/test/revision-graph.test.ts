@@ -59,6 +59,15 @@ describe("RevisionGraph materialization", () => {
     ])
   })
 
+  it("removes every ancestor from multi-level head candidates", () => {
+    const graph = new RevisionGraph()
+    graph.addRevision(content("c", [], "note.md", "root"))
+    graph.addRevision(content("b", ["c"], "note.md", "middle"))
+    graph.addRevision(content("a", ["b"], "note.md", "head"))
+
+    expect(graph.heads("file-1").map((revision) => revision.id)).toEqual(["a"])
+  })
+
   it("materializes edit/delete as recovered content", () => {
     const graph = new RevisionGraph()
     graph.addRevision(content("a", [], "note.md", "base"))
