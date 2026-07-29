@@ -99,6 +99,7 @@ export class VaultSetup {
       new HttpError(401, "invalid_proof", "First-device proof of possession is invalid"),
     )
 
+    const claimedAt = Date.now()
     this.transactionSync(() => {
       assert(
         !vaultState(this.sql),
@@ -120,13 +121,19 @@ export class VaultSetup {
         freshSetup.challenge === setup.challenge,
         new HttpError(409, "setup_session_changed", "Setup session changed"),
       )
+      validateRecoveryRootedIdentity(
+        claim.initialDevice,
+        claim.vaultId,
+        claim.recoverySigningPublicKey,
+        0,
+      )
 
       this.sql.exec(
         `INSERT INTO vault_state(
           singleton, vault_id, claimed_at, recovery_signing_public_key, recovery_package, cursor, head_hash
          ) VALUES (1, ?, ?, ?, ?, 0, ?)`,
         claim.vaultId,
-        now,
+        claimedAt,
         claim.recoverySigningPublicKey,
         claim.encryptedRecoveryPackage,
         ZERO_HASH,
@@ -139,18 +146,18 @@ export class VaultSetup {
         claim.initialDevice.signingPublicKey,
         claim.initialDevice.hpkePublicKey,
         claim.initialDevice.certificate,
-        now,
+        claimedAt,
       )
       this.sql.exec(
         "UPDATE setup_sessions SET consumed_at = ? WHERE token_hash = ?",
-        now,
+        claimedAt,
         sessionHash,
       )
       this.sql.exec("DELETE FROM setup_sessions WHERE token_hash != ?", sessionHash)
     })
 
     return json(
-      { vaultId: claim.vaultId, deviceId: claim.initialDevice.deviceId, claimedAt: now },
+      { vaultId: claim.vaultId, deviceId: claim.initialDevice.deviceId, claimedAt },
       { status: 201 },
     )
   }
