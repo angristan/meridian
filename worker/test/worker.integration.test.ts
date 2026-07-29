@@ -672,6 +672,20 @@ describe("Meridian Worker integration", () => {
     )
     expect(completedRetry.status).toBe(200)
     await expect(completedRetry.json()).resolves.toMatchObject({ status: "completed" })
+
+    const conflictingCompletion = await SELF.fetch(
+      `https://example.test/v1/pairings/${pairing.pairingId}/complete`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ ...completion, proof: base64UrlEncode(randomBytes(64)) }),
+      },
+    )
+    expect(conflictingCompletion.status).toBe(409)
+    await expect(conflictingCompletion.json()).resolves.toMatchObject({
+      error: { code: "idempotency_conflict" },
+    })
+
     const expiredCompletedResult = await SELF.fetch(
       `https://example.test/v1/pairings/${pairing.pairingId}/result`,
       {

@@ -557,11 +557,15 @@ export class VaultPairing {
         row.status === "completed",
       new HttpError(409, "pairing_not_verifying", "Pairing is not ready for verification"),
     )
-    if (row.status === "released" || row.status === "completed") {
-      return json({ pairingId, status: row.status })
-    }
     this.assertCandidateConfirmation(row, input.transferHash)
     validateSignature(input.proof)
+    if (row.status === "released" || row.status === "completed") {
+      assert(
+        row.candidate_confirmation_signature === input.proof,
+        new HttpError(409, "idempotency_conflict", "Pairing confirmation has different content"),
+      )
+      return json({ pairingId, status: row.status })
+    }
     const vault = vaultState(this.sql)
     assert(vault, new HttpError(409, "not_claimed", "This deployment has not been claimed"))
     const valid = await verifyEd25519(
@@ -595,13 +599,19 @@ export class VaultPairing {
     const input = decode(PairingCandidateConfirmationSchema, await requestJson(request))
     const row = await this.capabilityRow(pairingId, input.capability)
     if (row.status !== "released" && row.status !== "completed") this.assertCurrent(row)
-    if (row.status === "completed") return json({ pairingId, status: row.status })
+    this.assertCandidateConfirmation(row, input.transferHash)
+    validateSignature(input.proof)
+    if (row.status === "completed") {
+      assert(
+        row.completion_signature === input.proof,
+        new HttpError(409, "idempotency_conflict", "Pairing completion has different content"),
+      )
+      return json({ pairingId, status: row.status })
+    }
     assert(
       row.status === "released",
       new HttpError(409, "pairing_not_released", "Encrypted pairing transfer is not released"),
     )
-    this.assertCandidateConfirmation(row, input.transferHash)
-    validateSignature(input.proof)
     const vault = vaultState(this.sql)
     assert(vault, new HttpError(409, "not_claimed", "This deployment has not been claimed"))
     const valid = await verifyEd25519(
