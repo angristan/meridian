@@ -154,16 +154,21 @@ export class VaultPairing {
       Number.isInteger(ttl) && ttl >= PAIRING_MIN_TTL_SECONDS && ttl <= PAIRING_MAX_TTL_SECONDS,
       new HttpError(400, "invalid_expiry", "Pairing expiry is outside the allowed range"),
     )
-    const now = Date.now()
-    cleanupExpired(this.sql, now)
     const pairingId = randomToken(IDENTIFIER_BYTES)
     const capability = randomToken()
+    const capabilityHash = await hashToken(capability)
+    const now = Date.now()
+    cleanupExpired(this.sql, now)
+    assert(
+      activeDevice(this.sql, session.deviceId),
+      new HttpError(401, "device_revoked", "Approving device is no longer active"),
+    )
     const expiresAt = now + ttl * 1_000
     this.sql.exec(
       `INSERT INTO pairings(pairing_id, capability_hash, initiator_device_id, status, created_at, expires_at)
        VALUES (?, ?, ?, 'pending', ?, ?)`,
       pairingId,
-      await hashToken(capability),
+      capabilityHash,
       session.deviceId,
       now,
       expiresAt,
@@ -270,21 +275,39 @@ export class VaultPairing {
       new HttpError(401, "invalid_proof", "Candidate proof of possession is invalid"),
     )
 
-    if (pairing.status !== "pending") {
+    const joinedAt = Date.now()
+    const currentPairing = this.sql
+      .exec<PairingRow>(
+        `SELECT * FROM pairings
+         WHERE pairing_id = ? AND capability_hash = ? AND expires_at > ?`,
+        pairingId,
+        capabilityHash,
+        joinedAt,
+      )
+      .toArray()[0]
+    assert(
+      currentPairing,
+      new HttpError(409, "pairing_changed", "Pairing request changed or expired"),
+    )
+    assert(
+      !activeDevice(this.sql, join.device.deviceId),
+      new HttpError(409, "device_exists", "Device is already registered"),
+    )
+    if (currentPairing.status !== "pending") {
       const exactReplay =
-        pairing.status !== "canceled" &&
-        pairing.candidate_device_id === join.device.deviceId &&
-        pairing.candidate_signing_public_key === join.device.signingPublicKey &&
-        pairing.candidate_hpke_public_key === join.device.hpkePublicKey &&
-        pairing.candidate_device_name === deviceName &&
-        pairing.candidate_platform === platform &&
-        pairing.candidate_proof === join.proof &&
-        pairing.candidate_request_proof === join.requestProof
+        currentPairing.status !== "canceled" &&
+        currentPairing.candidate_device_id === join.device.deviceId &&
+        currentPairing.candidate_signing_public_key === join.device.signingPublicKey &&
+        currentPairing.candidate_hpke_public_key === join.device.hpkePublicKey &&
+        currentPairing.candidate_device_name === deviceName &&
+        currentPairing.candidate_platform === platform &&
+        currentPairing.candidate_proof === join.proof &&
+        currentPairing.candidate_request_proof === join.requestProof
       assert(
         exactReplay,
         new HttpError(409, "pairing_already_joined", "Pairing already has a different candidate"),
       )
-      return json({ pairingId, status: pairing.status })
+      return json({ pairingId, status: currentPairing.status })
     }
 
     const updated = this.sql.exec(
@@ -300,10 +323,10 @@ export class VaultPairing {
       platform,
       join.proof,
       join.requestProof,
-      now,
+      joinedAt,
       pairingId,
       capabilityHash,
-      now,
+      joinedAt,
     )
     assert(
       updated.rowsWritten === 1,
@@ -438,12 +461,18 @@ export class VaultPairing {
       ),
     )
     assert(validApproval, new HttpError(401, "invalid_signature", "Transfer release is invalid"))
+    const releasedAt = Date.now()
+    assert(
+      activeDevice(this.sql, session.deviceId),
+      new HttpError(401, "device_revoked", "Approving device is no longer active"),
+    )
     const updated = this.sql.exec(
       `UPDATE pairings SET status = 'released', approval_signature = ?, hpke_transfer = ?
-       WHERE pairing_id = ? AND status = 'confirmed'`,
+       WHERE pairing_id = ? AND status = 'confirmed' AND expires_at > ?`,
       release.approvalSignature,
       release.hpkeTransfer,
       pairingId,
+      releasedAt,
     )
     assert(updated.rowsWritten === 1, new HttpError(409, "pairing_changed", "Pairing changed"))
     return json({ pairingId, status: "released" })
@@ -546,14 +575,17 @@ export class VaultPairing {
       }),
     )
     assert(valid, new HttpError(401, "invalid_proof", "Candidate confirmation is invalid"))
-    this.sql.exec(
+    const confirmedAt = Date.now()
+    const updated = this.sql.exec(
       `UPDATE pairings SET candidate_confirmed_at = COALESCE(candidate_confirmed_at, ?),
         candidate_confirmation_signature = COALESCE(candidate_confirmation_signature, ?)
-       WHERE pairing_id = ?`,
-      Date.now(),
+       WHERE pairing_id = ? AND status IN ('verifying', 'confirmed') AND expires_at > ?`,
+      confirmedAt,
       input.proof,
       pairingId,
+      confirmedAt,
     )
+    assert(updated.rowsWritten === 1, new HttpError(409, "pairing_changed", "Pairing changed"))
     const status = this.promoteConfirmed(pairingId)
     return json({ pairingId, status })
   }
