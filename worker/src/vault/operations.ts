@@ -262,11 +262,9 @@ export class VaultOperations {
     const session = await authenticate(this.sql, request)
     const operation = decode(OperationSchema, await requestJson(request))
     const result = await this.appendOperation(operation, session)
-    if (result.inserted) {
-      this.notifyCursor(result.operation.cursor, session.deviceId)
-      if (operation.type === "device-revocation" && operation.subjectDeviceId) {
-        this.closeRevokedDevice(operation.subjectDeviceId)
-      }
+    if (result.inserted) this.notifyCursor(result.operation.cursor, session.deviceId)
+    if (operation.type === "device-revocation" && operation.subjectDeviceId) {
+      this.closeRevokedDevice(operation.subjectDeviceId)
     }
     return json(
       {
@@ -293,10 +291,8 @@ export class VaultOperations {
       ),
     )
     const result = await this.appendOperation(input.operation, session)
-    if (result.inserted) {
-      this.notifyCursor(result.operation.cursor, session.deviceId)
-      this.closeRevokedDevice(targetDeviceId)
-    }
+    if (result.inserted) this.notifyCursor(result.operation.cursor, session.deviceId)
+    this.closeRevokedDevice(targetDeviceId)
     return json(
       {
         cursor: result.operation.cursor,
