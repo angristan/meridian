@@ -17,6 +17,30 @@ describe("Reconciler", () => {
     expect(JSON.stringify(pending)).not.toContain("private text")
   })
 
+  it("recovers a stable file identity from exact-path revision history", async () => {
+    const identity = randomId()
+    const vault = new FakeVault({ "note.md": "existing content" })
+    const journal = new MemoryJournal()
+    await journal.putRevision({
+      revisionId: "existing-revision",
+      fileId: identity,
+      path: "note.md",
+      parents: [],
+      deviceId: "device",
+      createdAt: 1,
+      cursor: 1,
+      tombstone: false,
+      isConflict: false,
+      operation: null,
+    })
+
+    await new Reconciler(vault, journal).reconcile(ALL_CATEGORIES)
+
+    expect(await journal.listPending()).toEqual([
+      expect.objectContaining({ path: "note.md", fileId: identity }),
+    ])
+  })
+
   it("recognizes a unique same-content move as a rename", async () => {
     const vault = new FakeVault({ "new/name.md": "same content" })
     const journal = new MemoryJournal()

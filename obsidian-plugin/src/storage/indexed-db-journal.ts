@@ -184,11 +184,10 @@ export class IndexedDbJournal implements JournalPort {
     await done
   }
 
-  async clearRebuildableState(): Promise<void> {
+  async clearSnapshots(): Promise<void> {
     const database = this.requireDatabase()
-    const transaction = database.transaction(["files", "entries"], "readwrite")
+    const transaction = database.transaction("files", "readwrite")
     transaction.objectStore("files").clear()
-    transaction.objectStore("entries").clear()
     await transactionDone(transaction)
   }
 

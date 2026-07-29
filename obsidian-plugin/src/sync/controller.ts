@@ -208,7 +208,7 @@ export class SyncController {
   }
 
   async repairLocalIndex(): Promise<void> {
-    await this.journal.clearRebuildableState()
+    await this.journal.clearSnapshots()
     await this.sync("manual")
   }
 

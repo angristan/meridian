@@ -25,7 +25,9 @@ export class Reconciler {
     assertNoCaseCollisions(current)
 
     const previous = await this.journal.getSnapshots()
-    const pendingBefore = new Set((await this.journal.listPending()).map((entry) => entry.path))
+    const pendingEntries = await this.journal.listPending()
+    const pendingBefore = new Set(pendingEntries.map((entry) => entry.path))
+    const pendingByPath = new Map(pendingEntries.map((entry) => [entry.path, entry]))
     const currentByPath = new Map(current.map((snapshot) => [snapshot.path, snapshot]))
     const removed = [...previous.values()].filter((snapshot) => !currentByPath.has(snapshot.path))
     const removedByFingerprint = groupByFingerprint(removed)
@@ -38,9 +40,16 @@ export class Reconciler {
       const renameSource = !prior
         ? uniqueUnconsumedMatch(removedByFingerprint.get(scanned.fingerprint), consumedRemovals)
         : null
+      const exactPathRevision =
+        !prior && !renameSource ? (await this.journal.listRevisions(scanned.path))[0] : undefined
       const snapshot: FileSnapshot = {
         ...scanned,
-        fileId: prior?.fileId ?? renameSource?.fileId ?? randomId(),
+        fileId:
+          prior?.fileId ??
+          renameSource?.fileId ??
+          pendingByPath.get(scanned.path)?.fileId ??
+          exactPathRevision?.fileId ??
+          randomId(),
       }
       identifiedCurrent.set(snapshot.path, snapshot)
       // Reserve a unique rename source even when an earlier run already queued the destination.

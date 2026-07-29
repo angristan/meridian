@@ -132,8 +132,7 @@ export class MemoryJournal implements JournalPort {
     if (conflict) this.conflicts.set(id, { ...conflict, resolvedAt: Date.now() })
   }
 
-  async clearRebuildableState(): Promise<void> {
-    this.entries.clear()
+  async clearSnapshots(): Promise<void> {
     this.snapshots.clear()
   }
 }

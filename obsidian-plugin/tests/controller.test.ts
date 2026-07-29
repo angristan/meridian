@@ -43,6 +43,51 @@ describe("SyncController", () => {
     controller.stop()
   })
 
+  it("preserves pending tombstones while repairing the local index", async () => {
+    const identity = randomId()
+    const vault = new FakeVault()
+    const journal = new MemoryJournal()
+    const remote = new FakeRemote()
+    const controller = new SyncController(
+      vault,
+      journal,
+      remote,
+      new FakeCrypto(),
+      () => ALL_CATEGORIES,
+      () => {},
+    )
+
+    await controller.start(TEST_DEVICE)
+    await journal.putEntry({
+      id: "pending-delete",
+      action: "delete",
+      fileId: identity,
+      path: "deleted.md",
+      previousPath: null,
+      fingerprint: null,
+      baseRevisionId: null,
+      parentRevisionIds: [],
+      restoreSourceRevisionId: null,
+      revisionId: "delete-revision",
+      createdAt: 1,
+      attempts: 0,
+      state: "queued",
+      error: null,
+      preparedRevision: null,
+    })
+
+    await controller.repairLocalIndex()
+
+    expect(remote.operations).toHaveLength(1)
+    expect(remote.operations[0]?.envelope).toMatchObject({
+      action: "delete",
+      fileId: identity,
+      path: "deleted.md",
+    })
+    expect(await journal.listPending()).toEqual([])
+    controller.stop()
+  })
+
   it("captures local edits before applying notification-triggered pulls", async () => {
     const vault = new FakeVault({ "note.bin": "base" })
     const journal = new MemoryJournal()

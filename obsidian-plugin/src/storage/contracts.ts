@@ -31,5 +31,5 @@ export interface JournalPort {
   putConflict(conflict: ConflictRecord): Promise<void>
   listConflicts(unresolvedOnly?: boolean): Promise<ConflictRecord[]>
   resolveConflict(id: string): Promise<void>
-  clearRebuildableState(): Promise<void>
+  clearSnapshots(): Promise<void>
 }
