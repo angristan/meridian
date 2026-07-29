@@ -1,3 +1,10 @@
+## [1.4.7](https://github.com/angristan/meridian/compare/1.4.6...1.4.7) (2026-07-29)
+
+
+### Bug Fixes
+
+* expose sync controls in status view ([726eeba](https://github.com/angristan/meridian/commit/726eebae10c11f4a5e71cf54963942a379ea5ebe))
+
 ## [1.4.6](https://github.com/angristan/meridian/compare/1.4.5...1.4.6) (2026-07-27)
 
 
