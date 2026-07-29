@@ -1,3 +1,10 @@
+# [1.5.0](https://github.com/angristan/meridian/compare/1.4.7...1.5.0) (2026-07-29)
+
+
+### Features
+
+* show live sync progress ([8782582](https://github.com/angristan/meridian/commit/8782582a877b69f00ee743e1b632b74a42314491))
+
 ## [1.4.7](https://github.com/angristan/meridian/compare/1.4.6...1.4.7) (2026-07-29)
 
 
