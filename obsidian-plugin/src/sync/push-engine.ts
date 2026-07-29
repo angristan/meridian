@@ -14,6 +14,7 @@ const CHUNK_SIZE = 4 * 1024 * 1024
 
 export interface PushResult {
   stopped: boolean
+  committed: boolean
 }
 
 export class PushEngine {
@@ -31,6 +32,7 @@ export class PushEngine {
   ): Promise<PushResult> {
     const entries = await this.journal.listPending()
     let firstError: Error | null = null
+    let committed = false
     let progress: PushSyncProgress = {
       kind: "push",
       processed: 0,
@@ -52,7 +54,7 @@ export class PushEngine {
     emit()
 
     for (const entry of entries) {
-      if (shouldStop()) return { stopped: true }
+      if (shouldStop()) return { stopped: true, committed }
       emit({
         currentPath: entry.path,
         stage: "encrypting",
@@ -63,7 +65,8 @@ export class PushEngine {
       })
       try {
         const result = await this.pushEntry(device, entry, emit, shouldStop)
-        if (result.stopped) return result
+        if (result.stopped) return { stopped: true, committed }
+        committed = true
         emit({
           processed: progress.processed + 1,
           succeeded: progress.succeeded + 1,
@@ -92,7 +95,7 @@ export class PushEngine {
       }
     }
     if (firstError) throw firstError
-    return { stopped: false }
+    return { stopped: false, committed }
   }
 
   private async pushEntry(
@@ -140,7 +143,6 @@ export class PushEngine {
     await this.journal.updateEntry(entry.id, "committing")
     onProgress({ stage: "committing" })
     const committed = await this.remote.commit(encrypted.envelope, entry.id)
-    await this.journal.setCheckpoint(committed)
     await this.journal.putRevision({
       revisionId: entry.revisionId,
       fileId: entry.fileId,

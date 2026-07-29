@@ -80,6 +80,53 @@ describe("SyncController", () => {
     controller.stop()
   })
 
+  it("pulls concurrent operations committed immediately before its own", async () => {
+    class ConcurrentCommitRemote extends FakeRemote {
+      private injected = false
+
+      override async commit(envelope: unknown): Promise<{ cursor: number; logHash: string }> {
+        if (!this.injected) {
+          this.injected = true
+          this.addRemoteRevision(
+            {
+              operationId: "concurrent-operation",
+              revisionId: "concurrent-revision",
+              fileId: randomId(),
+              action: "upsert",
+              path: "concurrent.md",
+              previousPath: null,
+              parents: [],
+              authorDeviceId: "device-remote",
+              blobId: "concurrent-blob",
+              isText: true,
+            },
+            new TextEncoder().encode("concurrent content").buffer,
+          )
+        }
+        return super.commit(envelope)
+      }
+    }
+
+    const vault = new FakeVault({ "local.md": "local content" })
+    const journal = new MemoryJournal()
+    const remote = new ConcurrentCommitRemote()
+    const controller = new SyncController(
+      vault,
+      journal,
+      remote,
+      new FakeCrypto(),
+      () => ALL_CATEGORIES,
+      () => {},
+    )
+
+    await controller.start(TEST_DEVICE)
+
+    expect(vault.text("concurrent.md")).toBe("concurrent content")
+    expect(await journal.getCursor()).toBe(2)
+    expect(remote.getChangesCount).toBeGreaterThanOrEqual(2)
+    controller.stop()
+  })
+
   it("reports live pull cursor chunk and target progress", async () => {
     const vault = new FakeVault()
     const journal = new MemoryJournal()

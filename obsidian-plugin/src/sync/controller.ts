@@ -292,6 +292,9 @@ export class SyncController {
       () => this.stopRequested,
     )
     if (push.stopped || this.stopRequested) return
+    if (push.committed) {
+      this.rerunReason = mergeSyncReasons(this.rerunReason, "notification")
+    }
 
     this.updateStatus({
       phase: "idle",
