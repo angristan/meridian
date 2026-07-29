@@ -18,6 +18,7 @@ import {
   conflictPath,
   isConfigPath,
   isSyncablePath,
+  pathsCollide,
 } from "../vault/path-policy"
 import type { RevisionLoader } from "./revision-loader"
 import { snapshotFor } from "./snapshots"
@@ -104,6 +105,12 @@ export class OperationApplier {
       await this.journal.removeSnapshot(effectiveRevision.path)
     } else {
       if (!effectiveRevision.bytes) throw new Error("Content revision is missing decrypted bytes")
+      const previousPath = effectiveRevision.previousPath
+      const collidingRename =
+        previousPath !== null &&
+        previousPath !== effectiveRevision.path &&
+        pathsCollide(previousPath, effectiveRevision.path)
+      if (collidingRename) await this.vault.rename(previousPath, effectiveRevision.path)
       await this.vault.write(effectiveRevision.path, effectiveRevision.bytes)
       await this.journal.putSnapshot(
         await snapshotFor(
@@ -113,12 +120,9 @@ export class OperationApplier {
           this.vault.configDir,
         ),
       )
-      if (
-        effectiveRevision.previousPath &&
-        effectiveRevision.previousPath !== effectiveRevision.path
-      ) {
-        await this.vault.remove(effectiveRevision.previousPath)
-        await this.journal.removeSnapshot(effectiveRevision.previousPath)
+      if (previousPath && previousPath !== effectiveRevision.path) {
+        if (!collidingRename) await this.vault.remove(previousPath)
+        await this.journal.removeSnapshot(previousPath)
       }
     }
     await this.recordRevision(effectiveRevision, operation, false)

@@ -82,6 +82,32 @@ export class ObsidianVaultPort implements VaultPort {
     await this.vault.createBinary(normalized, bytes)
   }
 
+  async rename(from: string, to: string): Promise<void> {
+    const source = normalizePath(normalizeVaultPath(from))
+    const target = normalizePath(normalizeVaultPath(to))
+    if (source === target) return
+
+    const configPath = isConfigPath(source, this.configDir)
+    await this.ensureParent(target, configPath)
+    if (configPath) {
+      if (!(await this.vault.adapter.exists(source))) {
+        if (await this.vault.adapter.exists(target)) return
+        throw new Error(`File no longer exists: ${source}`)
+      }
+      await this.vault.adapter.rename(source, target)
+      return
+    }
+
+    const file = this.vault.getFileByPath(source)
+    if (!file) {
+      if (this.vault.getFileByPath(target)) return
+      throw new Error(`File no longer exists: ${source}`)
+    }
+    const existing = this.vault.getAbstractFileByPath(target)
+    if (existing && existing !== file) throw new Error(`Rename target already exists: ${target}`)
+    await this.vault.rename(file, target)
+  }
+
   async remove(path: string): Promise<void> {
     const normalized = normalizePath(normalizeVaultPath(path))
     if (isConfigPath(normalized, this.configDir)) {

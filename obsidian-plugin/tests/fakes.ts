@@ -82,6 +82,18 @@ export class FakeVault implements VaultPort {
     this.files.set(path, bytes.slice(0))
   }
 
+  async rename(from: string, to: string): Promise<void> {
+    if (from === to) return
+    const bytes = this.files.get(from)
+    if (!bytes) {
+      if (this.files.has(to)) return
+      throw new Error(`Missing ${from}`)
+    }
+    if (this.files.has(to)) throw new Error(`Rename target already exists: ${to}`)
+    this.files.set(to, bytes)
+    this.files.delete(from)
+  }
+
   async remove(path: string): Promise<void> {
     this.files.delete(path)
   }

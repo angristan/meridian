@@ -543,6 +543,76 @@ describe("SyncController", () => {
     controller.stop()
   })
 
+  it("applies case-only remote renames on case-insensitive vaults", async () => {
+    class CaseInsensitiveVault extends FakeVault {
+      override async write(path: string, bytes: ArrayBuffer): Promise<void> {
+        const collision = [...this.files.keys()].find(
+          (existing) => existing !== path && existing.toLowerCase() === path.toLowerCase(),
+        )
+        if (collision) throw new Error(`Case-insensitive path collision: ${collision}`)
+        await super.write(path, bytes)
+      }
+    }
+
+    const identity = randomId()
+    const baseBytes = new TextEncoder().encode("base content").buffer
+    const vault = new CaseInsensitiveVault({ "Note.md": "base content" })
+    const journal = new MemoryJournal()
+    await journal.replaceSnapshots([
+      {
+        path: "Note.md",
+        fileId: identity,
+        fingerprint: await fingerprint(baseBytes),
+        size: baseBytes.byteLength,
+        mtime: 1,
+        kind: "vault",
+      },
+    ])
+    await journal.putRevision({
+      revisionId: "base-revision",
+      fileId: identity,
+      path: "Note.md",
+      parents: [],
+      deviceId: TEST_DEVICE.deviceId,
+      createdAt: 1,
+      cursor: 0,
+      tombstone: false,
+      isConflict: false,
+      operation: null,
+    })
+    const remote = new FakeRemote()
+    remote.addRemoteRevision(
+      {
+        operationId: "rename-operation",
+        revisionId: "rename-revision",
+        fileId: identity,
+        action: "upsert",
+        path: "note.md",
+        previousPath: null,
+        parents: ["base-revision"],
+        authorDeviceId: "device-remote",
+        blobId: "rename-blob",
+        isText: true,
+      },
+      new TextEncoder().encode("renamed content").buffer,
+    )
+    const controller = new SyncController(
+      vault,
+      journal,
+      remote,
+      new FakeCrypto(),
+      () => ALL_CATEGORIES,
+      () => {},
+    )
+
+    await controller.start(TEST_DEVICE)
+
+    expect(vault.text("Note.md")).toBeNull()
+    expect(vault.text("note.md")).toBe("renamed content")
+    expect(await journal.getCursor()).toBe(1)
+    controller.stop()
+  })
+
   it("rejects remote revisions with unknown parents before applying them", async () => {
     const vault = new FakeVault()
     const journal = new MemoryJournal()
