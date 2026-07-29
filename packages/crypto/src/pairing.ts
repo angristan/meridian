@@ -17,8 +17,8 @@ import {
   encodeCanonical,
   epochId,
   epochSigningBytes,
-  hashBytes,
   type Hash,
+  hashBytes,
   type PairingContext,
   type PairingDeviceMetadata,
   type PairingId,
@@ -480,12 +480,18 @@ function validatePairingContext(
   if (!bytesEqual(context.epoch.body.vaultId, context.vaultId)) {
     throw new AuthorizationError("Pairing epoch targets another vault")
   }
-  const epochSigner =
-    context.epoch.body.createdBy === "recovery"
-      ? context.recoveryPublicKey
-      : context.authorizationChain.find((certificate) =>
-          bytesEqual(certificate.body.deviceId, context.epoch.body.createdBy as DeviceId),
-        )?.body.signingPublicKey
+  let epochSigner: Ed25519PublicKey | undefined
+  if (context.epoch.body.createdBy === "recovery") {
+    epochSigner = context.recoveryPublicKey
+  } else {
+    const signerCertificate = context.authorizationChain.find((certificate) =>
+      bytesEqual(certificate.body.deviceId, context.epoch.body.createdBy as DeviceId),
+    )
+    if (!signerCertificate?.body.permissions.includes(Permission.RotateEpoch)) {
+      throw new AuthorizationError("Pairing epoch signer cannot rotate vault epochs")
+    }
+    epochSigner = signerCertificate.body.signingPublicKey
+  }
   if (
     epochSigner === undefined ||
     !verify(epochSigningBytes(context.epoch.body), context.epoch.signature, epochSigner)

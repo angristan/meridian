@@ -5,6 +5,7 @@ import {
   decodeCanonical,
   ed25519Signature,
   encodeDeviceCertificate,
+  Permission,
   pairingId,
 } from "@meridian/protocol"
 import { describe, expect, it } from "vitest"
@@ -34,6 +35,8 @@ import {
   serializePairingVerificationPreview,
   sha256,
   signAuthChallenge,
+  signDeviceCertificate,
+  signEpochDeclaration,
   signPairingVerificationPreview,
   signRecoveryClaim,
   verify,
@@ -287,6 +290,45 @@ describe("plugin-facing cryptography workflows", () => {
         Date.now(),
       ),
     ).rejects.toThrow(/epoch signature/)
+
+    const recoveryKeys = await deriveRecoveryKeys(await parseRecoveryCode(first.recoveryCode))
+    const limitedCertificate = signDeviceCertificate(
+      {
+        ...first.device.certificate.body,
+        permissions: first.device.certificate.body.permissions.filter(
+          (permission) => permission !== Permission.RotateEpoch,
+        ),
+      },
+      recoveryKeys.signingPrivateKey,
+    )
+    const unauthorizedEpoch = signEpochDeclaration(
+      {
+        ...transportedPreview.context.epoch.body,
+        createdBy: first.device.deviceId,
+      },
+      first.device.signingPrivateKey,
+    )
+    const unauthorizedEpochContext = {
+      ...transportedPreview.context,
+      authorizationChain: [limitedCertificate],
+      epoch: unauthorizedEpoch,
+    }
+    await expect(
+      inspectPairingVerificationPreview(
+        pending,
+        {
+          ...transportedPreview,
+          context: unauthorizedEpochContext,
+          signature: signPairingVerificationPreview(
+            unauthorizedEpochContext,
+            transportedPreview.approverDeviceId,
+            transportedPreview.transferHash,
+            first.device.signingPrivateKey,
+          ),
+        },
+        Date.now(),
+      ),
+    ).rejects.toThrow(/cannot rotate vault epochs/)
 
     const rootCertificate = transportedPreview.context.authorizationChain[0]
     if (rootCertificate === undefined) throw new Error("expected an authorization root")
