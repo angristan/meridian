@@ -111,11 +111,16 @@ export class ObsidianVaultPort implements VaultPort {
   async remove(path: string): Promise<void> {
     const normalized = normalizePath(normalizeVaultPath(path))
     if (isConfigPath(normalized, this.configDir)) {
-      if (await this.vault.adapter.exists(normalized)) await this.vault.adapter.remove(normalized)
+      const stat = await this.vault.adapter.stat(normalized)
+      if (!stat) return
+      if (stat.type !== "file") throw new Error(`Cannot remove folder as a file: ${normalized}`)
+      await this.vault.adapter.remove(normalized)
       return
     }
     const file = this.vault.getAbstractFileByPath(normalized)
-    if (file) await this.vault.trash(file, true)
+    if (!file) return
+    if (!(file instanceof TFile)) throw new Error(`Cannot remove folder as a file: ${normalized}`)
+    await this.vault.trash(file, true)
   }
 
   async exists(path: string): Promise<boolean> {
