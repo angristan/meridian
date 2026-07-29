@@ -8,6 +8,7 @@ import type {
 import { randomId } from "../platform/bytes"
 import type { JournalPort } from "../storage/journal"
 import { pathsCollide } from "../vault/path-policy"
+import { revisionHeads } from "./revision-heads"
 
 export interface ReconcileResult {
   queued: number
@@ -66,8 +67,7 @@ export class Reconciler {
     for (const snapshot of removed) {
       if (consumedRemovals.has(snapshot.path)) continue
       if (await this.journal.hasPendingPath(snapshot.path)) continue
-      const latest = (await this.journal.listFileRevisions(snapshot.fileId))[0]
-      const baseRevisionId = latest?.revisionId ?? null
+      const { baseRevisionId, parentRevisionIds } = await this.revisionAncestry(snapshot.fileId)
       const entry: JournalEntry = {
         id: randomId(),
         action: "delete",
@@ -76,7 +76,7 @@ export class Reconciler {
         previousPath: null,
         fingerprint: null,
         baseRevisionId,
-        parentRevisionIds: baseRevisionId ? [baseRevisionId] : [],
+        parentRevisionIds,
         restoreSourceRevisionId: null,
         revisionId: randomId(),
         createdAt: Date.now(),
@@ -104,8 +104,7 @@ export class Reconciler {
   }
 
   private async queueUpsert(snapshot: FileSnapshot, previousPath: string | null): Promise<void> {
-    const latest = (await this.journal.listFileRevisions(snapshot.fileId))[0]
-    const baseRevisionId = latest?.revisionId ?? null
+    const { baseRevisionId, parentRevisionIds } = await this.revisionAncestry(snapshot.fileId)
     const entry: JournalEntry = {
       id: randomId(),
       action: "upsert",
@@ -114,7 +113,7 @@ export class Reconciler {
       previousPath,
       fingerprint: snapshot.fingerprint,
       baseRevisionId,
-      parentRevisionIds: baseRevisionId ? [baseRevisionId] : [],
+      parentRevisionIds,
       restoreSourceRevisionId: null,
       revisionId: randomId(),
       createdAt: Date.now(),
@@ -124,6 +123,16 @@ export class Reconciler {
       preparedRevision: null,
     }
     await this.journal.putEntry(entry)
+  }
+
+  private async revisionAncestry(
+    fileId: string,
+  ): Promise<{ baseRevisionId: string | null; parentRevisionIds: string[] }> {
+    const heads = revisionHeads(await this.journal.listFileRevisions(fileId))
+    return {
+      baseRevisionId: heads.length === 1 ? (heads[0]?.revisionId ?? null) : null,
+      parentRevisionIds: heads.map((revision) => revision.revisionId),
+    }
   }
 }
 

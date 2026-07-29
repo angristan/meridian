@@ -41,6 +41,69 @@ describe("Reconciler", () => {
     ])
   })
 
+  it("parents local changes from every concurrent revision head", async () => {
+    const identity = randomId()
+    const baseBytes = new TextEncoder().encode("base").buffer
+    const vault = new FakeVault({ "note.md": "local edit" })
+    const journal = new MemoryJournal()
+    await journal.replaceSnapshots([
+      {
+        path: "note.md",
+        fileId: identity,
+        fingerprint: await fingerprint(baseBytes),
+        size: baseBytes.byteLength,
+        mtime: 1,
+        kind: "vault",
+      },
+    ])
+    await journal.putRevision({
+      revisionId: "base-revision",
+      fileId: identity,
+      path: "note.md",
+      parents: [],
+      deviceId: "device-a",
+      createdAt: 1,
+      cursor: 1,
+      tombstone: false,
+      isConflict: false,
+      operation: null,
+    })
+    await journal.putRevision({
+      revisionId: "head-b",
+      fileId: identity,
+      path: "note.md",
+      parents: ["base-revision"],
+      deviceId: "device-b",
+      createdAt: 100,
+      cursor: 2,
+      tombstone: false,
+      isConflict: false,
+      operation: null,
+    })
+    await journal.putRevision({
+      revisionId: "head-a",
+      fileId: identity,
+      path: "note.md",
+      parents: ["base-revision"],
+      deviceId: "device-a",
+      createdAt: 2,
+      cursor: 3,
+      tombstone: false,
+      isConflict: false,
+      operation: null,
+    })
+
+    await new Reconciler(vault, journal).reconcile(ALL_CATEGORIES)
+
+    expect(await journal.listPending()).toEqual([
+      expect.objectContaining({
+        path: "note.md",
+        baseRevisionId: null,
+        parentRevisionIds: ["head-a", "head-b"],
+      }),
+    ])
+  })
+
   it("recognizes a unique same-content move as a rename", async () => {
     const vault = new FakeVault({ "new/name.md": "same content" })
     const journal = new MemoryJournal()

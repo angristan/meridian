@@ -1,6 +1,7 @@
 import type { DeviceKeyMaterial, JournalEntry, LocalRevision, VaultPort } from "../model"
 import { fingerprint, randomId } from "../platform/bytes"
 import type { JournalPort } from "../storage/journal"
+import { revisionHeads } from "./revision-heads"
 import type { RevisionLoader } from "./revision-loader"
 import { snapshotFor } from "./snapshots"
 
@@ -30,11 +31,12 @@ export class HistoryService {
 
     const decrypted = await this.revisions.load(device, source)
     if (!decrypted.bytes) throw new Error("The selected revision has no content")
-    const latest = (await this.journal.listFileRevisions(source.fileId))[0]
-    const path = latest?.path ?? source.path
-    const parents = uniqueIds(
-      [latest?.revisionId, source.revisionId].filter((value): value is string => Boolean(value)),
+    const heads = revisionHeads(await this.journal.listFileRevisions(source.fileId))
+    const currentSnapshot = [...(await this.journal.getSnapshots()).values()].find(
+      (snapshot) => snapshot.fileId === source.fileId,
     )
+    const path = currentSnapshot?.path ?? heads[0]?.path ?? source.path
+    const parents = uniqueIds([...heads.map((revision) => revision.revisionId), source.revisionId])
     const entry: JournalEntry = {
       id: randomId(),
       action: "restore",
@@ -42,7 +44,7 @@ export class HistoryService {
       path,
       previousPath: null,
       fingerprint: await fingerprint(decrypted.bytes),
-      baseRevisionId: latest?.revisionId ?? null,
+      baseRevisionId: heads.length === 1 ? (heads[0]?.revisionId ?? null) : null,
       parentRevisionIds: parents,
       restoreSourceRevisionId: source.revisionId,
       revisionId: randomId(),
@@ -65,5 +67,5 @@ export class HistoryService {
 }
 
 function uniqueIds(values: string[]): string[] {
-  return [...new Set(values)]
+  return [...new Set(values)].sort()
 }
