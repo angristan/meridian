@@ -97,14 +97,19 @@ export class VaultSessions {
 
     const sessionToken = randomToken()
     const sessionHash = await hashToken(sessionToken)
+    const committedAt = Date.now()
     this.transactionSync(() => {
+      assert(
+        activeDevice(this.sql, input.deviceId),
+        new HttpError(404, "device_not_found", "Device is not authorized"),
+      )
       const consumed = this.sql.exec(
         `UPDATE auth_challenges SET consumed_at = ?
          WHERE challenge_id = ? AND device_id = ? AND consumed_at IS NULL AND expires_at > ?`,
-        now,
+        committedAt,
         input.challengeId,
         input.deviceId,
-        now,
+        committedAt,
       )
       assert(
         consumed.rowsWritten === 1,
@@ -114,10 +119,14 @@ export class VaultSessions {
         "INSERT INTO sessions(token_hash, device_id, created_at, expires_at) VALUES (?, ?, ?, ?)",
         sessionHash,
         input.deviceId,
-        now,
-        now + AUTH_SESSION_TTL_MS,
+        committedAt,
+        committedAt + AUTH_SESSION_TTL_MS,
       )
     })
-    return json({ sessionToken, deviceId: input.deviceId, expiresAt: now + AUTH_SESSION_TTL_MS })
+    return json({
+      sessionToken,
+      deviceId: input.deviceId,
+      expiresAt: committedAt + AUTH_SESSION_TTL_MS,
+    })
   }
 }

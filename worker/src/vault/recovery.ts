@@ -124,13 +124,25 @@ export class VaultRecovery {
       new HttpError(401, "invalid_recovery_proof", "Recovery ownership proof is invalid"),
     )
 
+    const recoveredAt = Date.now()
     this.transactionSync(() => {
+      const currentVault = vaultState(this.sql)
+      assert(
+        currentVault,
+        new HttpError(409, "not_claimed", "This deployment has not been claimed"),
+      )
+      validateRecoveryRootedIdentity(
+        input.newDevice,
+        currentVault.vault_id,
+        currentVault.recovery_signing_public_key,
+        currentVault.cursor,
+      )
       const consumed = this.sql.exec(
         `UPDATE recovery_challenges SET consumed_at = ?
          WHERE challenge_id = ? AND consumed_at IS NULL AND expires_at > ?`,
-        now,
+        recoveredAt,
         input.challengeId,
-        now,
+        recoveredAt,
       )
       assert(
         consumed.rowsWritten === 1,
@@ -146,7 +158,7 @@ export class VaultRecovery {
         !existing,
         new HttpError(409, "device_exists", "Replacement device identifier already exists"),
       )
-      this.sql.exec("UPDATE devices SET revoked_at = ? WHERE revoked_at IS NULL", now)
+      this.sql.exec("UPDATE devices SET revoked_at = ? WHERE revoked_at IS NULL", recoveredAt)
       this.sql.exec("DELETE FROM sessions")
       this.sql.exec("DELETE FROM auth_challenges")
       this.sql.exec("DELETE FROM pairings")
@@ -158,7 +170,7 @@ export class VaultRecovery {
         input.newDevice.signingPublicKey,
         input.newDevice.hpkePublicKey,
         input.newDevice.certificate,
-        now,
+        recoveredAt,
       )
       this.sql.exec(
         "UPDATE vault_state SET recovery_package = ? WHERE singleton = 1",
@@ -168,7 +180,7 @@ export class VaultRecovery {
 
     this.closeAllSockets()
     return json(
-      { vaultId: vault.vault_id, deviceId: input.newDevice.deviceId, recoveredAt: now },
+      { vaultId: vault.vault_id, deviceId: input.newDevice.deviceId, recoveredAt },
       { status: 201 },
     )
   }
