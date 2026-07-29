@@ -10,7 +10,6 @@ import type {
   EncryptedBlob,
   EncryptedRevision,
   PairedDeviceMaterial,
-  ScannedFileSnapshot,
   PairingApprovalMaterial,
   PairingCapability,
   PairingConfirmationMaterial,
@@ -23,6 +22,7 @@ import type {
   RemoteOperation,
   RemotePort,
   RevisionDraft,
+  ScannedFileSnapshot,
   SetupClaim,
   TrustedCheckpoint,
   VaultPort,
@@ -41,10 +41,17 @@ export class FakeVault implements VaultPort {
   readonly files = new Map<string, ArrayBuffer>()
   readonly configDir = ".config"
 
-  constructor(initial: Record<string, string> = {}) {
+  constructor(
+    initial: Record<string, string> = {},
+    private readonly fileSizeLimit = Number.MAX_SAFE_INTEGER,
+  ) {
     for (const [path, value] of Object.entries(initial)) {
       this.files.set(path, new TextEncoder().encode(value).buffer)
     }
+  }
+
+  maxFileBytes(): number {
+    return this.fileSizeLimit
   }
 
   async listFiles(categories: Record<ConfigCategory, boolean>): Promise<ScannedFileSnapshot[]> {
@@ -69,6 +76,9 @@ export class FakeVault implements VaultPort {
   }
 
   async write(path: string, bytes: ArrayBuffer): Promise<void> {
+    if (bytes.byteLength > this.maxFileBytes()) {
+      throw new Error(`${path} exceeds the configured mobile-safe file size limit`)
+    }
     this.files.set(path, bytes.slice(0))
   }
 
@@ -167,6 +177,7 @@ export class FakeCrypto implements CryptoPort {
   async decryptRevision(
     _device: DeviceKeyMaterial,
     operation: RemoteOperation,
+    _maximumPlaintextBytes: number,
     loadBlob: (blobId: string) => Promise<ArrayBuffer>,
     onBlobProgress?: (progress: BlobTransferProgress) => void,
   ): Promise<DecryptedRevision> {

@@ -341,6 +341,7 @@ export interface CryptoPort {
   decryptRevision(
     device: DeviceKeyMaterial,
     operation: RemoteOperation,
+    maximumPlaintextBytes: number,
     loadBlob: (blobId: string) => Promise<ArrayBuffer>,
     onBlobProgress?: (progress: BlobTransferProgress) => void,
   ): Promise<DecryptedRevision>
@@ -481,6 +482,7 @@ export interface RemotePort {
 
 export interface VaultPort {
   configDir: string
+  maxFileBytes(): number
   listFiles(categories: Record<ConfigCategory, boolean>): Promise<ScannedFileSnapshot[]>
   read(path: string): Promise<ArrayBuffer>
   write(path: string, bytes: ArrayBuffer): Promise<void>

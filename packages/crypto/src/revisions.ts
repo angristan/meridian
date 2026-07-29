@@ -159,6 +159,7 @@ export interface DecryptFileRevisionInput {
   readonly operation: SignedOperation | Uint8Array
   readonly epochKey: DeviceKeyBundle["vaultEpochKey"]
   readonly authorCertificate: DeviceCertificate
+  readonly maximumPlaintextBytes?: number
   readonly loadBlob: (blobId: BlobId) => Promise<Uint8Array>
 }
 
@@ -184,6 +185,18 @@ export async function decryptFileRevision(
   }
   if (!bytesEqual(signed.body.epochId, input.authorCertificate.body.epochId)) {
     throw new AuthorizationError("Revision author certificate does not authorize this epoch")
+  }
+
+  const maximumPlaintextBytes = input.maximumPlaintextBytes ?? Number.MAX_SAFE_INTEGER
+  if (!Number.isSafeInteger(maximumPlaintextBytes) || maximumPlaintextBytes < 0) {
+    throw new RangeError("Maximum revision plaintext size must be a non-negative safe integer")
+  }
+  let signedPlaintextBytes = 0
+  for (const chunk of signed.body.chunks) {
+    if (chunk.plaintextLength > maximumPlaintextBytes - signedPlaintextBytes) {
+      throw new RangeError("Revision plaintext exceeds the configured size limit")
+    }
+    signedPlaintextBytes += chunk.plaintextLength
   }
 
   const key = await unwrapRevisionKey(
@@ -231,7 +244,7 @@ export async function decryptFileRevision(
     }),
   )
   const total = plaintextChunks.reduce((sum, chunk) => sum + chunk.byteLength, 0)
-  if (total !== metadata.totalPlaintextLength) {
+  if (total !== signedPlaintextBytes || total !== metadata.totalPlaintextLength) {
     throw new AuthenticationError("Revision plaintext length does not match encrypted metadata")
   }
   if (metadata.tombstone) return { operation: signed.body, metadata, content: null }

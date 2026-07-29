@@ -55,6 +55,7 @@ export async function encryptRevision(
 export async function decryptRevision(
   device: DeviceKeyMaterial,
   operation: RemoteOperation,
+  maximumPlaintextBytes: number,
   loadBlob: (blobId: string) => Promise<ArrayBuffer>,
   onBlobProgress?: (progress: BlobTransferProgress) => void,
 ): Promise<DecryptedRevision> {
@@ -72,13 +73,20 @@ export async function decryptRevision(
   const chunkLengths = new Map(
     revisionBody.chunks.map((chunk) => [toBase64Url(chunk.blobId), chunk.plaintextLength]),
   )
-  const totalBytes = revisionBody.chunks.reduce((total, chunk) => total + chunk.plaintextLength, 0)
+  let totalBytes = 0
+  for (const chunk of revisionBody.chunks) {
+    if (chunk.plaintextLength > maximumPlaintextBytes - totalBytes) {
+      throw new Error("Revision plaintext exceeds the configured mobile-safe file size limit")
+    }
+    totalBytes += chunk.plaintextLength
+  }
   let completedChunks = 0
   let transferredBytes = 0
   const decrypted = await decryptFileRevision({
     operation: signedOperation,
     epochKey: deviceEpochKey(bundle, revisionBody.epochId),
     authorCertificate,
+    maximumPlaintextBytes,
     loadBlob: async (blobId) => {
       const encodedBlobId = toBase64Url(blobId)
       const bytes = await loadBlob(encodedBlobId)

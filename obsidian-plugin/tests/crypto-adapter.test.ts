@@ -42,6 +42,7 @@ describe("shared crypto adapter", () => {
     const decrypted = await crypto.decryptRevision(
       device,
       { cursor: 1, logHash: randomId(32), envelope: encrypted.envelope },
+      Number.MAX_SAFE_INTEGER,
       async (blobId) => {
         const bytes = blobs.get(blobId)
         if (!bytes) throw new Error("Missing encrypted test blob")
@@ -59,6 +60,20 @@ describe("shared crypto adapter", () => {
     if (!decrypted.bytes) throw new Error("Expected decrypted revision content")
     expect(new TextDecoder().decode(decrypted.bytes)).toBe("private note")
     expect(decrypted.path).toBe("note.md")
+
+    let oversizedLoadCalls = 0
+    await expect(
+      crypto.decryptRevision(
+        device,
+        { cursor: 1, logHash: randomId(32), envelope: encrypted.envelope },
+        11,
+        async () => {
+          oversizedLoadCalls += 1
+          return new ArrayBuffer(0)
+        },
+      ),
+    ).rejects.toThrow(/mobile-safe file size limit/)
+    expect(oversizedLoadCalls).toBe(0)
 
     const recovered = await crypto.recoverDevice(
       claim.recoveryCode,
@@ -262,6 +277,7 @@ describe("shared crypto adapter", () => {
         authorCertificate: stringField(approvalPayload, "certificate"),
         certificateChain: [ownerCertificate, stringField(approvalPayload, "certificate")],
       },
+      Number.MAX_SAFE_INTEGER,
       async (blobId) => {
         const bytes = blobs.get(blobId)
         if (!bytes) throw new Error("Missing encrypted test blob")

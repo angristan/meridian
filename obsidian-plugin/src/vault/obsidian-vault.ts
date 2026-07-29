@@ -13,9 +13,13 @@ export class ObsidianVaultPort implements VaultPort {
 
   constructor(
     private readonly vault: Vault,
-    private readonly maxFileBytes: () => number,
+    private readonly fileSizeLimit: () => number,
   ) {
     this.configDir = normalizeVaultPath(vault.configDir)
+  }
+
+  maxFileBytes(): number {
+    return this.fileSizeLimit()
   }
 
   async listFiles(categories: Record<ConfigCategory, boolean>): Promise<ScannedFileSnapshot[]> {
@@ -60,6 +64,9 @@ export class ObsidianVaultPort implements VaultPort {
 
   async write(path: string, bytes: ArrayBuffer): Promise<void> {
     const normalized = normalizePath(normalizeVaultPath(path))
+    if (bytes.byteLength > this.maxFileBytes()) {
+      throw new Error(`${normalized} exceeds the configured mobile-safe file size limit`)
+    }
     await this.ensureParent(normalized, isConfigPath(normalized, this.configDir))
     if (isConfigPath(normalized, this.configDir)) {
       await this.vault.adapter.writeBinary(normalized, bytes)

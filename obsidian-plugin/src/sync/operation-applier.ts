@@ -56,6 +56,7 @@ export class OperationApplier {
     const revision = await this.crypto.decryptRevision(
       device,
       operation,
+      this.vault.maxFileBytes(),
       (blobId) => this.remote.getBlob(blobId),
       onBlobProgress,
     )

@@ -23,8 +23,8 @@ import {
   deserializePairingVerificationPreview,
   deviceEpochKey,
   encryptFileRevision,
-  parseRecoveryCode,
   inspectPairingVerificationPreview,
+  parseRecoveryCode,
   preparePairingEpochPackage,
   recoverDeviceFromPackage,
   recoveryClaimSigningBytes,
@@ -119,6 +119,7 @@ describe("plugin-facing cryptography workflows", () => {
       operation: encrypted.operationBytes,
       epochKey: claim.device.vaultEpochKey,
       authorCertificate: claim.device.certificate,
+      maximumPlaintextBytes: plaintext.byteLength,
       loadBlob: async (id) => {
         const value = blobs.get(bytesToHex(id))
         if (value === undefined) throw new Error("missing test blob")
@@ -129,6 +130,22 @@ describe("plugin-facing cryptography workflows", () => {
     expect(textDecoder.decode(decrypted.content ?? new Uint8Array())).toBe(
       "offline revisions survive",
     )
+
+    let oversizedLoadCalls = 0
+    await expect(
+      decryptFileRevision({
+        operation: encrypted.operationBytes,
+        epochKey: claim.device.vaultEpochKey,
+        authorCertificate: claim.device.certificate,
+        maximumPlaintextBytes: plaintext.byteLength - 1,
+        loadBlob: async () => {
+          oversizedLoadCalls += 1
+          return new Uint8Array()
+        },
+      }),
+    ).rejects.toThrow(/configured size limit/)
+    expect(oversizedLoadCalls).toBe(0)
+
     const replacement = await recoverDeviceFromPackage(
       claim.recoveryCode,
       claim.encryptedRecoveryPackage,

@@ -68,10 +68,11 @@ class PackageCryptoPort implements CryptoPort {
   decryptRevision(
     device: DeviceKeyMaterial,
     operation: RemoteOperation,
+    maximumPlaintextBytes: number,
     loadBlob: (blobId: string) => Promise<ArrayBuffer>,
     onBlobProgress?: (progress: BlobTransferProgress) => void,
   ): Promise<DecryptedRevision> {
-    return decryptRevision(device, operation, loadBlob, onBlobProgress)
+    return decryptRevision(device, operation, maximumPlaintextBytes, loadBlob, onBlobProgress)
   }
 
   createDeviceRevocation(

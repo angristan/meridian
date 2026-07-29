@@ -58,7 +58,7 @@ export class SyncController {
   ) {
     this.progressThrottleMs = options.progressThrottleMs ?? 200
     this.now = options.now ?? Date.now
-    const revisionLoader = new RevisionLoader(remote, crypto)
+    const revisionLoader = new RevisionLoader(remote, crypto, () => vault.maxFileBytes())
     const applier = new OperationApplier(vault, journal, remote, crypto, revisionLoader, categories)
     this.reconciler = new Reconciler(vault, journal)
     this.historyService = new HistoryService(vault, journal, revisionLoader)

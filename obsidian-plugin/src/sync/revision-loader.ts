@@ -10,6 +10,7 @@ export class RevisionLoader {
   constructor(
     private readonly remote: RemotePort,
     private readonly crypto: CryptoPort,
+    private readonly maximumFileBytes: () => number,
   ) {}
 
   async load(device: DeviceKeyMaterial, recorded: LocalRevision): Promise<DecryptedRevision> {
@@ -22,8 +23,11 @@ export class RevisionLoader {
       if (!operation) throw new Error("The selected remote operation is no longer available")
     }
 
-    const decrypted = await this.crypto.decryptRevision(device, operation, (blobId) =>
-      this.remote.getBlob(blobId),
+    const decrypted = await this.crypto.decryptRevision(
+      device,
+      operation,
+      this.maximumFileBytes(),
+      (blobId) => this.remote.getBlob(blobId),
     )
     if (decrypted.revisionId !== recorded.revisionId || decrypted.fileId !== recorded.fileId) {
       throw new Error("Recorded history does not match the authenticated remote operation")
