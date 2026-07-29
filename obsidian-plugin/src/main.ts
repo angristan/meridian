@@ -14,6 +14,7 @@ import {
 import { ObsidianHttpTransport } from "./network/obsidian-transport"
 import { MeridianRemoteClient, normalizeEndpoint } from "./network/remote-client"
 import { MeridianHttpError } from "./network/response-parsers"
+import { connectionControlState } from "./plugin/connection-control"
 import { confirmRemotePairingCompletion } from "./plugin/pairing-completion"
 import { createPairingDeepLink, hasConfiguredMeridianIdentity } from "./plugin/pairing-link"
 import { registerProtocolHandlers } from "./plugin/protocol-handlers"
@@ -72,6 +73,24 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
       callback: () => void this.openStatus(),
     })
     this.addCommand({
+      id: "pause-sync",
+      name: "Pause sync",
+      checkCallback: (checking) => {
+        const available = connectionControlState(this.settings).action === "pause"
+        if (available && !checking) this.runConnectionCommand("pause")
+        return available
+      },
+    })
+    this.addCommand({
+      id: "resume-sync",
+      name: "Resume sync",
+      checkCallback: (checking) => {
+        const available = connectionControlState(this.settings).action === "resume"
+        if (available && !checking) this.runConnectionCommand("resume")
+        return available
+      },
+    })
+    this.addCommand({
       id: "recover-vault",
       name: "Recover vault ownership",
       callback: () => new RecoveryConnectModal(this).open(),
@@ -123,6 +142,20 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
 
   async saveSettings(): Promise<void> {
     await this.saveData(this.settings)
+  }
+
+  openSettings(): void {
+    const setting = (
+      this.app as typeof this.app & {
+        setting?: { open(): void; openTabById(id: string): void }
+      }
+    ).setting
+    if (!setting) {
+      new Notice("Open Meridian from Community plugins settings")
+      return
+    }
+    setting.open()
+    setting.openTabById(this.manifest.id)
   }
 
   async syncNow(): Promise<void> {
@@ -884,6 +917,16 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
         error: error instanceof Error ? error.message : String(error),
       })
     }
+  }
+
+  private runConnectionCommand(action: "pause" | "resume"): void {
+    const operation = action === "pause" ? this.disconnect() : this.resumeConnection()
+    void operation
+      .then(() => new Notice(action === "pause" ? "Meridian sync paused" : "Meridian sync resumed"))
+      .catch(
+        (error) =>
+          new Notice(error instanceof Error ? error.message : "Unable to change sync state"),
+      )
   }
 
   private async openStatus(): Promise<void> {

@@ -13,6 +13,7 @@ export interface MeridianUiHost {
   app: App
   settings: MeridianSettings
   saveSettings(): Promise<void>
+  openSettings(): void
   syncNow(): Promise<void>
   repairLocalIndex(): Promise<void>
   connectFromSetup(endpoint: string, setupSession: string, claimChallenge: string): Promise<void>

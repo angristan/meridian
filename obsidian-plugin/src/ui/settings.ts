@@ -1,43 +1,35 @@
 import { Modal, Notice, Setting } from "obsidian"
+import { connectionControlState } from "../plugin/connection-control"
 import { ConnectionModal, RecoveryConnectModal } from "./connection-modals"
 import type { MeridianUiHost } from "./host"
 
 export function renderSettings(container: HTMLElement, host: MeridianUiHost): void {
   container.empty()
-  const configured = host.settings.endpoint.length > 0
+  const connection = connectionControlState(host.settings)
+  const configured = connection.kind !== "unconfigured"
   const removalPending = host.settings.pendingDeviceRemoval !== null
   const pairingPending = host.settings.pendingPairingCompletion !== null
-  const connected = configured && host.settings.enabled && !removalPending && !pairingPending
 
   new Setting(container)
     .setName("Connection")
     .setDesc(configured ? host.settings.endpoint : "Not connected")
     .addButton((button) =>
       button
-        .setButtonText(
-          pairingPending
-            ? "Pairing pending"
-            : removalPending
-              ? "Removal pending"
-              : connected
-                ? "Pause"
-                : configured
-                  ? "Resume"
-                  : "Connect",
-        )
-        .setDisabled(removalPending || pairingPending)
+        .setButtonText(connection.label)
+        .setDisabled(connection.disabled)
         .onClick(async () => {
-          if (removalPending || pairingPending) return
-          if (!configured) {
+          const action = connection.action
+          if (action === "connect") {
             new ConnectionModal(host).open()
             return
           }
+          if (action === null) return
           button.setDisabled(true)
           try {
-            if (connected) await host.disconnect()
+            if (action === "pause") await host.disconnect()
             else await host.resumeConnection()
             renderSettings(container, host)
-            new Notice(connected ? "Meridian sync paused" : "Meridian sync resumed")
+            new Notice(action === "pause" ? "Meridian sync paused" : "Meridian sync resumed")
           } catch (error) {
             new Notice(error instanceof Error ? error.message : "Unable to change sync state")
             button.setDisabled(false)
