@@ -389,6 +389,11 @@ export class VaultPairing {
     const row = this.pairingRow(pairingId)
     this.assertCurrent(row)
     if (row.status === "released" || row.status === "completed") {
+      assert(
+        row.approval_signature === release.approvalSignature &&
+          row.hpke_transfer === release.hpkeTransfer,
+        new HttpError(409, "idempotency_conflict", "Pairing release has different content"),
+      )
       return json({ pairingId, status: row.status })
     }
     assert(

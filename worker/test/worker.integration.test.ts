@@ -578,6 +578,29 @@ describe("Meridian Worker integration", () => {
     expect(releaseResponse.status).toBe(200)
     await expect(releaseResponse.json()).resolves.toMatchObject({ status: "released" })
 
+    const releaseReplay = await SELF.fetch(
+      `https://example.test/v1/pairings/${pairing.pairingId}/release`,
+      {
+        method: "POST",
+        headers: { ...authorization, "content-type": "application/json" },
+        body: JSON.stringify(release),
+      },
+    )
+    expect(releaseReplay.status).toBe(200)
+
+    const conflictingRelease = await SELF.fetch(
+      `https://example.test/v1/pairings/${pairing.pairingId}/release`,
+      {
+        method: "POST",
+        headers: { ...authorization, "content-type": "application/json" },
+        body: JSON.stringify({ ...release, hpkeTransfer: base64UrlEncode(randomBytes(32)) }),
+      },
+    )
+    expect(conflictingRelease.status).toBe(409)
+    await expect(conflictingRelease.json()).resolves.toMatchObject({
+      error: { code: "idempotency_conflict" },
+    })
+
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const releasedResult = await SELF.fetch(
         `https://example.test/v1/pairings/${pairing.pairingId}/result`,
