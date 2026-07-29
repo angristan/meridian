@@ -40,6 +40,10 @@ export class VaultRecords {
       checkpointSigningMessage(checkpoint),
     )
     assert(valid, new HttpError(401, "invalid_signature", "Checkpoint signature is invalid"))
+    assert(
+      activeDevice(this.sql, session.deviceId),
+      new HttpError(401, "device_revoked", "Device is no longer active"),
+    )
 
     const existing = this.sql
       .exec<{
@@ -115,6 +119,10 @@ export class VaultRecords {
       snapshotSigningMessage(snapshot),
     )
     assert(valid, new HttpError(401, "invalid_signature", "Snapshot signature is invalid"))
+    assert(
+      activeDevice(this.sql, session.deviceId),
+      new HttpError(401, "device_revoked", "Device is no longer active"),
+    )
 
     const existing = this.sql
       .exec<{
