@@ -37,6 +37,7 @@ import {
   x25519PublicKey,
   ZERO_HASH,
 } from "@meridian/protocol"
+import { x25519 } from "@noble/curves/ed25519.js"
 import { signCheckpoint, signDeviceCertificate, signEpochDeclaration } from "./authorization.js"
 import { CryptoError } from "./errors.js"
 import { generateHpkeKeyPair } from "./hpke.js"
@@ -368,14 +369,20 @@ export function deserializeDeviceKeyBundle(encoded: Uint8Array): DeviceKeyBundle
       throw new CryptoError("INVALID_DEVICE_BUNDLE", "Device epoch keyring contains duplicates")
     }
   }
+  const hpkePrivate = x25519PrivateKey(fixed(value.hpkePrivateKey, 32, "HPKE private key"))
+  const hpkePublic = x25519PublicKey(fixed(value.hpkePublicKey, 32, "HPKE public key"))
+  const expectedHpkePublic = x25519.getPublicKey(hpkePrivate)
+  if (expectedHpkePublic.some((byte, index) => byte !== hpkePublic[index])) {
+    throw new CryptoError("INVALID_DEVICE_BUNDLE", "Device HPKE keypair does not match")
+  }
   const bundle: DeviceKeyBundle = {
     version: 1,
     vaultId: vaultId(fixed(value.vaultId, 16, "vault ID")),
     deviceId: deviceId(fixed(value.deviceId, 16, "device ID")),
     signingPrivateKey: signingPrivate,
     signingPublicKey: signingPublic,
-    hpkePrivateKey: x25519PrivateKey(fixed(value.hpkePrivateKey, 32, "HPKE private key")),
-    hpkePublicKey: x25519PublicKey(fixed(value.hpkePublicKey, 32, "HPKE public key")),
+    hpkePrivateKey: hpkePrivate,
+    hpkePublicKey: hpkePublic,
     certificate: decodeDeviceCertificate(value.certificate),
     epoch: decodeEpochDeclaration(value.epoch),
     vaultEpochKey: vaultEpochKey(fixed(value.vaultEpochKey, 32, "vault epoch key")),

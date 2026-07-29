@@ -2,8 +2,10 @@ import {
   type AuthChallenge,
   bytesEqual,
   bytesToHex,
+  type CborValue,
   decodeCanonical,
   ed25519Signature,
+  encodeCanonical,
   encodeDeviceCertificate,
   Permission,
   pairingId,
@@ -49,8 +51,18 @@ const textDecoder = new TextDecoder()
 describe("plugin-facing cryptography workflows", () => {
   it("creates, serializes, authenticates, and recovers a first device", async () => {
     const claim = await createFirstDeviceClaimBundle()
-    const restored = deserializeDeviceKeyBundle(serializeDeviceKeyBundle(claim.device))
+    const serializedDevice = serializeDeviceKeyBundle(claim.device)
+    const restored = deserializeDeviceKeyBundle(serializedDevice)
     expect(bytesEqual(restored.vaultEpochKey, claim.device.vaultEpochKey)).toBe(true)
+
+    const serializedValue = decodeCanonical(serializedDevice) as Record<string, CborValue>
+    const tamperedHpkePrivateKey = new Uint8Array(serializedValue.hpkePrivateKey as Uint8Array)
+    tamperedHpkePrivateKey[1] = (tamperedHpkePrivateKey[1] ?? 0) ^ 1
+    expect(() =>
+      deserializeDeviceKeyBundle(
+        encodeCanonical({ ...serializedValue, hpkePrivateKey: tamperedHpkePrivateKey }),
+      ),
+    ).toThrow(/HPKE keypair does not match/)
 
     const challenge: AuthChallenge = {
       challengeId: "challenge-1",
