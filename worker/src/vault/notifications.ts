@@ -9,9 +9,11 @@ export class VaultNotifications {
 
   notifyCursor(cursor: number, authorDeviceId: string): void {
     const message = JSON.stringify({ type: "cursor-advanced", cursor })
+    const now = Date.now()
     for (const socket of this.state.getWebSockets()) {
-      const attachment = socket.deserializeAttachment() as { deviceId?: unknown } | null
-      if (attachment?.deviceId === authorDeviceId) continue
+      const attachment = this.authorizedAttachment(socket, now)
+      if (!attachment) continue
+      if (attachment.deviceId === authorDeviceId) continue
       try {
         socket.send(message)
       } catch {
@@ -49,7 +51,11 @@ export class VaultNotifications {
     const client = pair[0]
     const server = pair[1]
     this.state.acceptWebSocket(server, [`device:${session.deviceId}`])
-    server.serializeAttachment({ deviceId: session.deviceId, vaultId: session.vaultId })
+    server.serializeAttachment({
+      deviceId: session.deviceId,
+      vaultId: session.vaultId,
+      expiresAt: session.expiresAt,
+    })
     const state = vaultState(this.sql)
     server.send(JSON.stringify({ type: "cursor-advanced", cursor: state?.cursor ?? 0 }))
     const headers = new Headers()
@@ -64,16 +70,34 @@ export class VaultNotifications {
       socket.close(1008, "Only the ping message is supported")
       return
     }
-    const attachment = socket.deserializeAttachment() as { deviceId?: unknown } | null
+    if (!this.authorizedAttachment(socket, Date.now())) return
+    socket.send("pong")
+  }
+
+  private authorizedAttachment(
+    socket: WebSocket,
+    now: number,
+  ): { deviceId: string; expiresAt: number } | null {
+    const attachment = socket.deserializeAttachment() as {
+      deviceId?: unknown
+      expiresAt?: unknown
+    } | null
     if (
       !attachment ||
       typeof attachment.deviceId !== "string" ||
+      typeof attachment.expiresAt !== "number" ||
+      !Number.isSafeInteger(attachment.expiresAt) ||
+      attachment.expiresAt <= now ||
       !activeDevice(this.sql, attachment.deviceId)
     ) {
-      socket.close(4003, "Device revoked")
-      return
+      try {
+        socket.close(4003, "Session expired or device revoked")
+      } catch {
+        // The socket may already be closed.
+      }
+      return null
     }
-    socket.send("pong")
+    return { deviceId: attachment.deviceId, expiresAt: attachment.expiresAt }
   }
 
   webSocketError(socket: WebSocket): void {

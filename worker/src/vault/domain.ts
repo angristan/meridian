@@ -36,6 +36,7 @@ export type SessionContext = {
   deviceId: string
   vaultId: string
   role: "owner" | "member"
+  expiresAt: number
 }
 
 export type OperationRow = {
@@ -121,8 +122,13 @@ export async function authenticate(sql: SqlStorage, request: Request): Promise<S
   )
   const tokenHash = await hashToken(token)
   const row = sql
-    .exec<{ device_id: string; role: "owner" | "member"; vault_id: string }>(
-      `SELECT s.device_id, d.role, v.vault_id
+    .exec<{
+      device_id: string
+      role: "owner" | "member"
+      vault_id: string
+      expires_at: number
+    }>(
+      `SELECT s.device_id, d.role, v.vault_id, s.expires_at
        FROM sessions s
        JOIN devices d ON d.device_id = s.device_id
        JOIN vault_state v ON v.singleton = 1
@@ -132,7 +138,12 @@ export async function authenticate(sql: SqlStorage, request: Request): Promise<S
     )
     .toArray()[0]
   assert(row, new HttpError(401, "invalid_session", "Device session is invalid or expired"))
-  return { deviceId: row.device_id, vaultId: row.vault_id, role: row.role }
+  return {
+    deviceId: row.device_id,
+    vaultId: row.vault_id,
+    role: row.role,
+    expiresAt: row.expires_at,
+  }
 }
 
 export function cleanupExpired(sql: SqlStorage, now: number): void {
