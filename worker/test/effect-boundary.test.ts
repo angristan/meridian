@@ -24,4 +24,27 @@ describe("JSON request boundary", () => {
       Effect.runPromise(decodeJsonEffect(jsonRequest(2 * 1024 * 1024), PayloadSchema)),
     ).rejects.toMatchObject({ status: 413, code: "body_too_large" })
   })
+
+  it("cancels chunked bodies as soon as they exceed the limit", async () => {
+    let pulls = 0
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulls += 1
+        if (pulls === 1) {
+          controller.enqueue(new Uint8Array(2 * 1024 * 1024 + 1))
+        } else {
+          controller.enqueue(new Uint8Array(1024 * 1024))
+        }
+      },
+    })
+    const request = {
+      headers: new Headers({ "content-type": "application/json" }),
+      body,
+    } as Request
+
+    await expect(Effect.runPromise(decodeJsonEffect(request, PayloadSchema))).rejects.toMatchObject(
+      { status: 413, code: "body_too_large" },
+    )
+    expect(pulls).toBe(1)
+  })
 })

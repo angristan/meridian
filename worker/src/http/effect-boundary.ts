@@ -21,12 +21,12 @@ export function decodeJsonEffect<S extends Schema.ConstraintDecoder<unknown, nev
     }
 
     const text = yield* Effect.tryPromise({
-      try: () => request.text(),
-      catch: () => new HttpError(400, "invalid_body", "Request body could not be read"),
+      try: () => readBoundedBody(request),
+      catch: (error) =>
+        error instanceof HttpError
+          ? error
+          : new HttpError(400, "invalid_body", "Request body could not be read"),
     })
-    if (new TextEncoder().encode(text).length > MAX_JSON_BODY_BYTES) {
-      return yield* Effect.fail(new HttpError(413, "body_too_large", "JSON body is too large"))
-    }
 
     let input: unknown
     try {
@@ -44,6 +44,30 @@ export function decodeJsonEffect<S extends Schema.ConstraintDecoder<unknown, nev
       ),
     )
   })
+}
+
+async function readBoundedBody(request: Request): Promise<string> {
+  if (!request.body) return ""
+
+  const reader = request.body.getReader()
+  const decoder = new TextDecoder()
+  let text = ""
+  let totalBytes = 0
+  try {
+    while (true) {
+      const chunk = await reader.read()
+      if (chunk.done) break
+      totalBytes += chunk.value.byteLength
+      if (totalBytes > MAX_JSON_BODY_BYTES) {
+        await reader.cancel()
+        throw new HttpError(413, "body_too_large", "JSON body is too large")
+      }
+      text += decoder.decode(chunk.value, { stream: true })
+    }
+    return text + decoder.decode()
+  } finally {
+    reader.releaseLock()
+  }
 }
 
 export async function runResponse(effect: Effect.Effect<Response, HttpError>): Promise<Response> {
