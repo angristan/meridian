@@ -2,11 +2,11 @@ import {
   bytesEqual,
   type CborValue,
   CIPHER_SUITE,
+  type DeviceId,
   Domain,
   decodeCanonical,
   decodeCheckpoint,
   decodeEpochDeclaration,
-  type DeviceId,
   type Ed25519PublicKey,
   type Ed25519Signature,
   type EncryptedRecoveryPackage,
@@ -302,13 +302,17 @@ export async function decryptRecoveryPackage(
     throw new AuthenticationError("Recovery package contains an invalid sequence")
   }
   const checkpoint = decodeCheckpoint(value.checkpoint)
-  if (
-    checkpoint.body.cursor !== encrypted.checkpoint.body.cursor ||
-    !bytesEqual(checkpoint.body.logHash, encrypted.checkpoint.body.logHash)
-  ) {
+  if (!bytesEqual(encodeCheckpoint(checkpoint), encodeCheckpoint(encrypted.checkpoint))) {
     throw new AuthenticationError(
       "Recovery package checkpoint does not match its public commitment",
     )
+  }
+  if (
+    !bytesEqual(declaredEpoch.body.vaultId, encrypted.vaultId) ||
+    !bytesEqual(checkpoint.body.vaultId, encrypted.vaultId) ||
+    !bytesEqual(checkpoint.body.epochId, declaredEpoch.body.epochId)
+  ) {
+    throw new AuthenticationError("Recovery package signed state is internally inconsistent")
   }
   return {
     vaultId: vaultId(value.vaultId),

@@ -9,6 +9,7 @@ import {
   encodeDeviceCertificate,
   Permission,
   pairingId,
+  vaultId,
 } from "@meridian/protocol"
 import { describe, expect, it } from "vitest"
 import {
@@ -26,6 +27,7 @@ import {
   deserializePairingVerificationPreview,
   deviceEpochKey,
   encryptFileRevision,
+  encryptRecoveryPackage,
   inspectPairingVerificationPreview,
   parseRecoveryCode,
   preparePairingEpochPackage,
@@ -83,6 +85,37 @@ describe("plugin-facing cryptography workflows", () => {
     )
     const recovered = await decryptRecoveryPackage(transportedPackage, keys.encryptionKey)
     expect(bytesEqual(recovered.vaultEpochKey, claim.device.vaultEpochKey)).toBe(true)
+
+    const tamperedCheckpointSignature = new Uint8Array(transportedPackage.checkpoint.signature)
+    tamperedCheckpointSignature[0] = (tamperedCheckpointSignature[0] ?? 0) ^ 1
+    await expect(
+      decryptRecoveryPackage(
+        {
+          ...transportedPackage,
+          checkpoint: {
+            ...transportedPackage.checkpoint,
+            signature: ed25519Signature(tamperedCheckpointSignature),
+          },
+        },
+        keys.encryptionKey,
+      ),
+    ).rejects.toThrow(/public commitment/)
+
+    const substitutedVaultId = new Uint8Array(recovered.vaultId)
+    substitutedVaultId[0] = (substitutedVaultId[0] ?? 0) ^ 1
+    const inconsistentPackage = await encryptRecoveryPackage(
+      {
+        ...recovered,
+        epoch: signEpochDeclaration(
+          { ...recovered.epoch.body, vaultId: vaultId(substitutedVaultId) },
+          keys.signingPrivateKey,
+        ),
+      },
+      keys.encryptionKey,
+    )
+    await expect(decryptRecoveryPackage(inconsistentPackage, keys.encryptionKey)).rejects.toThrow(
+      /internally inconsistent/,
+    )
 
     const replacement = await recoverDeviceFromPackage(claim.recoveryCode, transportedPackage)
     expect(bytesEqual(replacement.device.vaultEpochKey, claim.device.vaultEpochKey)).toBe(false)
