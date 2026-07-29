@@ -410,7 +410,7 @@ export class VaultPairing {
     validateSignature(release.approvalSignature)
     validateOpaqueData(release.hpkeTransfer, MAX_HPKE_TRANSFER_BYTES, "hpkeTransfer")
     const row = this.pairingRow(pairingId)
-    this.assertCurrent(row)
+    if (row.status !== "released" && row.status !== "completed") this.assertCurrent(row)
     if (row.status === "released" || row.status === "completed") {
       assert(
         row.approval_signature === release.approvalSignature &&

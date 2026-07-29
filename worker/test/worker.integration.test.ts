@@ -608,6 +608,33 @@ describe("Meridian Worker integration", () => {
       error: { code: "idempotency_conflict" },
     })
 
+    const pairingStub = env.VAULT.get(env.VAULT.idFromName("primary"))
+    await runInDurableObject(pairingStub, async (_instance, state) => {
+      state.storage.sql.exec(
+        "UPDATE pairings SET expires_at = ? WHERE pairing_id = ?",
+        Date.now() - 1,
+        pairing.pairingId,
+      )
+    })
+    const expiredReleaseReplay = await SELF.fetch(
+      `https://example.test/v1/pairings/${pairing.pairingId}/release`,
+      {
+        method: "POST",
+        headers: { ...authorization, "content-type": "application/json" },
+        body: JSON.stringify(release),
+      },
+    )
+    expect(expiredReleaseReplay.status).toBe(200)
+    const expiredConflictingRelease = await SELF.fetch(
+      `https://example.test/v1/pairings/${pairing.pairingId}/release`,
+      {
+        method: "POST",
+        headers: { ...authorization, "content-type": "application/json" },
+        body: JSON.stringify({ ...release, hpkeTransfer: base64UrlEncode(randomBytes(32)) }),
+      },
+    )
+    expect(expiredConflictingRelease.status).toBe(409)
+
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const releasedResult = await SELF.fetch(
         `https://example.test/v1/pairings/${pairing.pairingId}/result`,
@@ -661,7 +688,6 @@ describe("Meridian Worker integration", () => {
       hpkeTransfer: release.hpkeTransfer,
     })
 
-    const pairingStub = env.VAULT.get(env.VAULT.idFromName("primary"))
     await runInDurableObject(pairingStub, async (_instance, state) => {
       state.storage.sql.exec(
         "UPDATE pairings SET expires_at = ? WHERE pairing_id = ?",
