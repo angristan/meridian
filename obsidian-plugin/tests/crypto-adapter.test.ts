@@ -61,6 +61,21 @@ describe("shared crypto adapter", () => {
     expect(new TextDecoder().decode(decrypted.bytes)).toBe("private note")
     expect(decrypted.path).toBe("note.md")
 
+    await expect(
+      crypto.decryptRevision(
+        device,
+        {
+          cursor: 1,
+          logHash: randomId(32),
+          envelope: { ...record(encrypted.envelope), operationId: randomId() },
+        },
+        Number.MAX_SAFE_INTEGER,
+        async () => {
+          throw new Error("Tampered operations must be rejected before loading blobs")
+        },
+      ),
+    ).rejects.toThrow(/file operation signature is invalid/)
+
     let oversizedLoadCalls = 0
     await expect(
       crypto.decryptRevision(

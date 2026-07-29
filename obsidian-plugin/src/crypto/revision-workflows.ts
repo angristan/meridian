@@ -1,5 +1,11 @@
-import { decryptFileRevision, deviceEpochKey, encryptFileRevision, sign } from "@meridian/crypto"
-import { decodeOperation, fileId, revisionId } from "@meridian/protocol"
+import {
+  decryptFileRevision,
+  deviceEpochKey,
+  encryptFileRevision,
+  sign,
+  verify,
+} from "@meridian/crypto"
+import { decodeOperation, ed25519Signature, fileId, revisionId } from "@meridian/protocol"
 import type {
   BlobTransferProgress,
   DecryptedRevision,
@@ -65,11 +71,34 @@ export async function decryptRevision(
     wire.authorDeviceId === device.deviceId
       ? bundle.certificate
       : trustedAuthorCertificate(device, operation)
+  const unsigned: Omit<WorkerOperation, "signature"> = {
+    operationId: wire.operationId,
+    authorDeviceId: wire.authorDeviceId,
+    epochId: wire.epochId,
+    type: wire.type,
+    envelope: wire.envelope,
+  }
+  if (
+    !verify(
+      workerOperationSigningBytes(unsigned),
+      ed25519Signature(fromBase64Url(wire.signature)),
+      authorCertificate.body.signingPublicKey,
+    )
+  ) {
+    throw new Error("Worker file operation signature is invalid")
+  }
+
   const signedOperation = decodeOperation(fromBase64Url(wire.envelope))
   if (signedOperation.body.type !== "revision") {
     throw new Error("Worker file operation does not contain an encrypted revision")
   }
   const revisionBody = signedOperation.body
+  if (
+    toBase64Url(revisionBody.authorDeviceId) !== wire.authorDeviceId ||
+    toBase64Url(revisionBody.epochId) !== wire.epochId
+  ) {
+    throw new Error("Worker file operation does not match its signed revision")
+  }
   const chunkLengths = new Map(
     revisionBody.chunks.map((chunk) => [toBase64Url(chunk.blobId), chunk.plaintextLength]),
   )
@@ -101,6 +130,9 @@ export async function decryptRevision(
       return new Uint8Array(bytes)
     },
   })
+  if (decrypted.metadata.tombstone !== (wire.type === "tombstone")) {
+    throw new Error("Worker file operation type does not match its signed revision")
+  }
   return {
     revisionId: toBase64Url(decrypted.operation.revisionId),
     operationId: wire.operationId,
