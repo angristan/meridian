@@ -119,6 +119,7 @@ export function migrateJournalRecords(
         parentRevisionIds:
           entry.parentRevisionIds ?? (entry.baseRevisionId ? [entry.baseRevisionId] : []),
         restoreSourceRevisionId: entry.restoreSourceRevisionId ?? null,
+        preparedRevision: entry.preparedRevision ?? null,
       }),
     ),
     revisions: revisions.map(

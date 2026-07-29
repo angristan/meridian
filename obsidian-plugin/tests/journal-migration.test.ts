@@ -62,6 +62,7 @@ describe("journal record migration", () => {
     expect(migrated.entries[0]).toMatchObject({
       parentRevisionIds: ["revision-original"],
       restoreSourceRevisionId: null,
+      preparedRevision: null,
     })
     expect(migrated.revisions.every((record) => record.operation === null)).toBe(true)
   })

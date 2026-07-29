@@ -6,11 +6,12 @@ export type LegacyFileSnapshot = Omit<FileSnapshot, "fileId"> & { fileId?: strin
 
 export type LegacyJournalEntry = Omit<
   JournalEntry,
-  "fileId" | "parentRevisionIds" | "restoreSourceRevisionId"
+  "fileId" | "parentRevisionIds" | "restoreSourceRevisionId" | "preparedRevision"
 > & {
   fileId?: string
   parentRevisionIds?: string[]
   restoreSourceRevisionId?: string | null
+  preparedRevision?: JournalEntry["preparedRevision"]
 }
 
 export type LegacyLocalRevision = Omit<LocalRevision, "fileId" | "operation"> & {

@@ -74,6 +74,7 @@ export class Reconciler {
         attempts: 0,
         state: "queued",
         error: null,
+        preparedRevision: null,
       }
       await this.journal.putEntry(entry)
       queued += 1
@@ -111,6 +112,7 @@ export class Reconciler {
       attempts: 0,
       state: "queued",
       error: null,
+      preparedRevision: null,
     }
     await this.journal.putEntry(entry)
   }

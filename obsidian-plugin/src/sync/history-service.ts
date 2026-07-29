@@ -50,6 +50,7 @@ export class HistoryService {
       attempts: 0,
       state: "queued",
       error: null,
+      preparedRevision: null,
     }
     await this.vault.write(path, decrypted.bytes)
     await this.journal.putEntry(entry)

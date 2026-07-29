@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest"
-import type { SyncStatus } from "../src/model"
+import type {
+  DeviceKeyMaterial,
+  EncryptedBlob,
+  EncryptedRevision,
+  RevisionDraft,
+  SyncStatus,
+} from "../src/model"
 import { fingerprint, randomId } from "../src/platform/bytes"
 import { MemoryJournal } from "../src/storage/journal"
 import { SyncController } from "../src/sync/controller"
@@ -124,6 +130,67 @@ describe("SyncController", () => {
     expect(vault.text("concurrent.md")).toBe("concurrent content")
     expect(await journal.getCursor()).toBe(2)
     expect(remote.getChangesCount).toBeGreaterThanOrEqual(2)
+    controller.stop()
+  })
+
+  it("replays the exact prepared revision after an ambiguous commit", async () => {
+    class AmbiguousCommitRemote extends FakeRemote {
+      readonly attempts: unknown[] = []
+      readonly blobAttempts: EncryptedBlob[] = []
+      private committedResult: { cursor: number; logHash: string } | null = null
+
+      override async putBlob(blob: EncryptedBlob): Promise<void> {
+        this.blobAttempts.push(structuredClone(blob))
+        await super.putBlob(blob)
+      }
+
+      override async commit(envelope: unknown): Promise<{ cursor: number; logHash: string }> {
+        this.attempts.push(structuredClone(envelope))
+        if (!this.committedResult) {
+          this.committedResult = await super.commit(envelope)
+          throw new Error("Connection closed after commit")
+        }
+        return this.committedResult
+      }
+    }
+
+    class CountingCrypto extends FakeCrypto {
+      encryptions = 0
+
+      override async encryptRevision(
+        device: DeviceKeyMaterial,
+        draft: RevisionDraft,
+      ): Promise<EncryptedRevision> {
+        this.encryptions += 1
+        return super.encryptRevision(device, draft)
+      }
+    }
+
+    const vault = new FakeVault({ "note.md": "durable content" })
+    const journal = new MemoryJournal()
+    const remote = new AmbiguousCommitRemote()
+    const crypto = new CountingCrypto()
+    const controller = new SyncController(
+      vault,
+      journal,
+      remote,
+      crypto,
+      () => ALL_CATEGORIES,
+      () => {},
+    )
+
+    await controller.start(TEST_DEVICE)
+    expect(await journal.listPending()).toHaveLength(1)
+
+    await controller.sync("manual")
+
+    expect(crypto.encryptions).toBe(1)
+    expect(remote.attempts).toHaveLength(2)
+    expect(remote.attempts[1]).toEqual(remote.attempts[0])
+    expect(remote.blobAttempts).toHaveLength(2)
+    expect(remote.blobAttempts[1]).toEqual(remote.blobAttempts[0])
+    expect(await journal.listPending()).toEqual([])
+    expect(await journal.getCursor()).toBe(1)
     controller.stop()
   })
 

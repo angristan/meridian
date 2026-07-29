@@ -226,6 +226,7 @@ export class OperationApplier {
         parentRevisionIds: [remoteRevision.revisionId],
         state: "queued",
         error: null,
+        preparedRevision: null,
       })
       await this.recordRevision(remoteRevision, operation, false)
       return true

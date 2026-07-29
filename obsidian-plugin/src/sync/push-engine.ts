@@ -104,24 +104,36 @@ export class PushEngine {
     onProgress: (patch: Partial<PushSyncProgress>) => void,
     shouldStop: () => boolean,
   ): Promise<{ stopped: true } | { stopped: false; checkpoint: TrustedCheckpoint }> {
-    const exists = await this.vault.exists(entry.path)
-    const action = exists ? (entry.action === "restore" ? "restore" : "upsert") : "delete"
-    const bytes = action === "delete" ? null : await this.vault.read(entry.path)
-    await this.journal.updateEntry(entry.id, "uploading")
-    const encrypted = await this.crypto.encryptRevision(device, {
-      operationId: entry.id,
-      revisionId: entry.revisionId,
-      fileId: entry.fileId,
-      action,
-      path: entry.path,
-      previousPath: entry.previousPath,
-      parents: entry.parentRevisionIds,
-      bytes,
-      chunkSize: CHUNK_SIZE,
-    })
+    let prepared = entry.preparedRevision
+    if (!prepared) {
+      const exists = await this.vault.exists(entry.path)
+      const action = exists ? (entry.action === "restore" ? "restore" : "upsert") : "delete"
+      const bytes = action === "delete" ? null : await this.vault.read(entry.path)
+      const encrypted = await this.crypto.encryptRevision(device, {
+        operationId: entry.id,
+        revisionId: entry.revisionId,
+        fileId: entry.fileId,
+        action,
+        path: entry.path,
+        previousPath: entry.previousPath,
+        parents: entry.parentRevisionIds,
+        bytes,
+        chunkSize: CHUNK_SIZE,
+      })
+      prepared = { action, bytes, encrypted }
+      await this.journal.putEntry({
+        ...entry,
+        state: "uploading",
+        error: null,
+        preparedRevision: prepared,
+      })
+    } else {
+      await this.journal.updateEntry(entry.id, "uploading")
+    }
     if (shouldStop()) return { stopped: true }
 
-    const blobs = encrypted.blobs.sort((left, right) => left.chunkIndex - right.chunkIndex)
+    const { action, bytes, encrypted } = prepared
+    const blobs = [...encrypted.blobs].sort((left, right) => left.chunkIndex - right.chunkIndex)
     const totalBytes = blobs.reduce((total, blob) => total + blob.bytes.byteLength, 0)
     let transferredBytes = 0
     onProgress({
@@ -163,7 +175,12 @@ export class PushEngine {
       await this.journal.removeSnapshot(entry.path)
     }
     if (entry.previousPath) await this.journal.removeSnapshot(entry.previousPath)
-    await this.journal.updateEntry(entry.id, "complete")
+    await this.journal.putEntry({
+      ...entry,
+      state: "complete",
+      error: null,
+      preparedRevision: null,
+    })
     return { stopped: false, checkpoint: committed }
   }
 }

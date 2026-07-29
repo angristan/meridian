@@ -159,6 +159,7 @@ export interface JournalEntry {
   attempts: number
   state: JournalState
   error: string | null
+  preparedRevision: PreparedJournalRevision | null
 }
 
 export interface LocalRevision {
@@ -234,6 +235,12 @@ export interface EncryptedBlob {
 export interface EncryptedRevision {
   blobs: EncryptedBlob[]
   envelope: unknown
+}
+
+export interface PreparedJournalRevision {
+  action: JournalAction
+  bytes: ArrayBuffer | null
+  encrypted: EncryptedRevision
 }
 
 export interface BlobTransferProgress {
