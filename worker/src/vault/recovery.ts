@@ -42,15 +42,22 @@ export class VaultRecovery {
     assert(vault, new HttpError(409, "not_claimed", "This deployment has not been claimed"))
     const now = Date.now()
     cleanupExpired(this.sql, now)
-    const outstanding = this.sql
-      .exec<{ count: number }>(
-        "SELECT COUNT(*) AS count FROM recovery_challenges WHERE consumed_at IS NULL",
+    const existing = this.sql
+      .exec<{ challenge_id: string; challenge: string; expires_at: number }>(
+        `SELECT challenge_id, challenge, expires_at FROM recovery_challenges
+         WHERE consumed_at IS NULL AND expires_at > ?
+         ORDER BY created_at DESC LIMIT 1`,
+        now,
       )
-      .one().count
-    assert(
-      outstanding < 5,
-      new HttpError(429, "too_many_recovery_challenges", "Try recovery again later"),
-    )
+      .toArray()[0]
+    if (existing) {
+      return json({
+        challengeId: existing.challenge_id,
+        challenge: existing.challenge,
+        expiresAt: existing.expires_at,
+        vaultId: vault.vault_id,
+      })
+    }
     const challengeId = randomToken(18)
     const challenge = randomToken()
     const expiresAt = now + RECOVERY_CHALLENGE_TTL_MS

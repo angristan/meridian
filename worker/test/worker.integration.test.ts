@@ -73,6 +73,14 @@ async function authenticateDevice(
     challengeId: string
     challenge: string
   }
+  const repeatedChallengeResponse = await SELF.fetch("https://example.test/v1/auth/challenge", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ deviceId }),
+  })
+  expect(repeatedChallengeResponse.status).toBe(200)
+  await expect(repeatedChallengeResponse.json()).resolves.toMatchObject(challenge)
+
   const authInput = {
     deviceId,
     challengeId: challenge.challengeId,

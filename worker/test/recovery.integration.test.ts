@@ -1,3 +1,4 @@
+import { SELF } from "cloudflare:test"
 import {
   createFirstDeviceClaimBundle,
   recoverDeviceFromPackage,
@@ -6,7 +7,6 @@ import {
   signRecoveryClaim,
 } from "@meridian/crypto"
 import { encodeDeviceCertificate } from "@meridian/protocol"
-import { SELF } from "cloudflare:test"
 import { expect, it } from "vitest"
 import { base64UrlDecode, base64UrlEncode } from "../src/encoding"
 import type { RecoveryClaim, SetupClaim } from "../src/schemas"
@@ -78,6 +78,12 @@ it("recovers ownership into a fresh device using only the recovery code", async 
     challengeId: string
     challenge: string
   }
+  const repeatedChallengeResponse = await SELF.fetch("https://example.test/v1/recovery/challenge", {
+    method: "POST",
+  })
+  expect(repeatedChallengeResponse.status).toBe(200)
+  await expect(repeatedChallengeResponse.json()).resolves.toMatchObject(challenge)
+
   const replacementPackage = serializeEncryptedRecoveryPackage(replacement.encryptedRecoveryPackage)
   const certificate = encodeDeviceCertificate(replacement.device.certificate)
   const proof = await signRecoveryClaim(first.recoveryCode, {

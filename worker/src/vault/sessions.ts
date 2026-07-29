@@ -36,16 +36,22 @@ export class VaultSessions {
 
     const now = Date.now()
     cleanupExpired(this.sql, now)
-    const activeCount = this.sql
-      .exec<{ count: number }>(
-        "SELECT COUNT(*) AS count FROM auth_challenges WHERE device_id = ? AND consumed_at IS NULL",
+    const existing = this.sql
+      .exec<{ challenge_id: string; challenge: string; expires_at: number }>(
+        `SELECT challenge_id, challenge, expires_at FROM auth_challenges
+         WHERE device_id = ? AND consumed_at IS NULL AND expires_at > ?
+         ORDER BY created_at DESC LIMIT 1`,
         input.deviceId,
+        now,
       )
-      .one().count
-    assert(
-      activeCount < 10,
-      new HttpError(429, "too_many_challenges", "Try authentication again later"),
-    )
+      .toArray()[0]
+    if (existing) {
+      return json({
+        challengeId: existing.challenge_id,
+        challenge: existing.challenge,
+        expiresAt: existing.expires_at,
+      })
+    }
 
     const challengeId = randomToken(18)
     const challenge = randomToken()
