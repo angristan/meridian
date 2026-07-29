@@ -1,3 +1,10 @@
+# [1.6.0](https://github.com/angristan/meridian/compare/1.5.0...1.6.0) (2026-07-29)
+
+
+### Features
+
+* trace blob download streams ([466bd80](https://github.com/angristan/meridian/commit/466bd8029a027561564e91b6060cda0f96e61668))
+
 # [1.5.0](https://github.com/angristan/meridian/compare/1.4.7...1.5.0) (2026-07-29)
 
 
