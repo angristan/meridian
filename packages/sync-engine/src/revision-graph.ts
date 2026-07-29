@@ -148,6 +148,9 @@ export class RevisionGraph {
       if (known !== undefined && known.fileId !== revision.fileId) {
         throw new TypeError(`Revision ${revision.id} references a parent from another file`)
       }
+      if (this.isAncestor(revision.id, parent)) {
+        throw new TypeError(`Revision ${revision.id} would create an ancestry cycle`)
+      }
     }
     for (const child of this.#revisions.values()) {
       if (child.parents.includes(revision.id) && child.fileId !== revision.fileId) {

@@ -123,6 +123,15 @@ describe("RevisionGraph materialization", () => {
     )
   })
 
+  it("rejects cycles completed by child-first delivery", () => {
+    const graph = new RevisionGraph()
+    graph.addRevision(content("a", ["b"], "note.md", "child first"))
+
+    expect(() => graph.addRevision(content("b", ["a"], "note.md", "late parent"))).toThrow(
+      /ancestry cycle/,
+    )
+  })
+
   it("rejects id reuse and cross-file ancestry", () => {
     const graph = new RevisionGraph()
     graph.addRevision(content("a", [], "note.md", "base"))
