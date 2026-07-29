@@ -6,6 +6,7 @@ import type {
   DecryptedRevision,
   DeviceKeyMaterial,
   JournalEntry,
+  LocalRevision,
   RemoteOperation,
   RemotePort,
   VaultPort,
@@ -60,10 +61,7 @@ export class OperationApplier {
       (blobId) => this.remote.getBlob(blobId),
       onBlobProgress,
     )
-    const known = (await this.journal.listRevisions()).some(
-      (candidate) => candidate.revisionId === revision.revisionId,
-    )
-    if (known) return
+    if (await this.validateRevisionGraph(revision, operation)) return
 
     const category = configCategoryForPath(revision.path, this.vault.configDir)
     if (isConfigPath(revision.path, this.vault.configDir) && category === null) {
@@ -124,6 +122,55 @@ export class OperationApplier {
       }
     }
     await this.recordRevision(effectiveRevision, operation, false)
+  }
+
+  private async validateRevisionGraph(
+    revision: DecryptedRevision,
+    operation: RemoteOperation,
+  ): Promise<boolean> {
+    const existing = await this.journal.getRevision(revision.revisionId)
+    if (existing) {
+      if (!sameRevision(existing, revision, operation.cursor)) {
+        throw new Error(`Revision ID ${revision.revisionId} was reused with different content`)
+      }
+      return true
+    }
+
+    if (new Set(revision.parents).size !== revision.parents.length) {
+      throw new Error("Remote revision contains duplicate parents")
+    }
+    if (revision.parents.includes(revision.revisionId)) {
+      throw new Error("Remote revision cannot reference itself as a parent")
+    }
+
+    const revisions = await this.journal.listFileRevisions(revision.fileId)
+    const byId = new Map(revisions.map((candidate) => [candidate.revisionId, candidate]))
+    for (const parentId of revision.parents) {
+      const parent = await this.journal.getRevision(parentId)
+      if (!parent) throw new Error(`Remote revision parent ${parentId} is unknown`)
+      if (parent.fileId !== revision.fileId) {
+        throw new Error("Remote revision parent belongs to another file")
+      }
+      byId.set(parent.revisionId, parent)
+    }
+
+    const visiting = new Set<string>()
+    const visited = new Set<string>()
+    const visit = (revisionId: string): void => {
+      if (revisionId === revision.revisionId) {
+        throw new Error("Remote revision would create an ancestry cycle")
+      }
+      if (visited.has(revisionId)) return
+      if (visiting.has(revisionId)) throw new Error("Stored revision ancestry contains a cycle")
+      const candidate = byId.get(revisionId)
+      if (!candidate) throw new Error(`Stored revision parent ${revisionId} is unknown`)
+      visiting.add(revisionId)
+      for (const parentId of candidate.parents) visit(parentId)
+      visiting.delete(revisionId)
+      visited.add(revisionId)
+    }
+    for (const parentId of revision.parents) visit(parentId)
+    return false
   }
 
   private async materializeConflict(revision: DecryptedRevision): Promise<void> {
@@ -236,6 +283,27 @@ export class OperationApplier {
       return false
     }
   }
+}
+
+function sameRevision(
+  existing: LocalRevision,
+  revision: DecryptedRevision,
+  cursor: number,
+): boolean {
+  return (
+    existing.cursor === cursor &&
+    existing.fileId === revision.fileId &&
+    existing.deviceId === revision.authorDeviceId &&
+    existing.tombstone === (revision.action === "delete") &&
+    sameIds(existing.parents, revision.parents)
+  )
+}
+
+function sameIds(left: readonly string[], right: readonly string[]): boolean {
+  if (left.length !== right.length) return false
+  const sortedLeft = [...left].sort()
+  const sortedRight = [...right].sort()
+  return sortedLeft.every((value, index) => value === sortedRight[index])
 }
 
 function record(value: unknown): Record<string, unknown> | null {

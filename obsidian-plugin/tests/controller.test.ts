@@ -543,6 +543,185 @@ describe("SyncController", () => {
     controller.stop()
   })
 
+  it("rejects remote revisions with unknown parents before applying them", async () => {
+    const vault = new FakeVault()
+    const journal = new MemoryJournal()
+    const remote = new FakeRemote()
+    remote.addRemoteRevision(
+      {
+        operationId: "remote-operation",
+        revisionId: "remote-revision",
+        fileId: randomId(),
+        action: "upsert",
+        path: "remote.md",
+        previousPath: null,
+        parents: ["missing-parent"],
+        authorDeviceId: "device-remote",
+        blobId: "remote-blob",
+        isText: true,
+      },
+      new TextEncoder().encode("remote content").buffer,
+    )
+    const controller = new SyncController(
+      vault,
+      journal,
+      remote,
+      new FakeCrypto(),
+      () => ALL_CATEGORIES,
+      () => {},
+    )
+
+    await controller.start(TEST_DEVICE)
+
+    expect(vault.text("remote.md")).toBeNull()
+    expect(await journal.getCursor()).toBe(0)
+    expect(controller.getStatus().error).toMatch(/parent missing-parent is unknown/)
+    controller.stop()
+  })
+
+  it("rejects self-parented remote revisions", async () => {
+    const vault = new FakeVault()
+    const journal = new MemoryJournal()
+    const remote = new FakeRemote()
+    remote.addRemoteRevision(
+      {
+        operationId: "remote-operation",
+        revisionId: "self-parented",
+        fileId: randomId(),
+        action: "upsert",
+        path: "remote.md",
+        previousPath: null,
+        parents: ["self-parented"],
+        authorDeviceId: "device-remote",
+        blobId: "remote-blob",
+        isText: true,
+      },
+      new TextEncoder().encode("remote content").buffer,
+    )
+    const controller = new SyncController(
+      vault,
+      journal,
+      remote,
+      new FakeCrypto(),
+      () => ALL_CATEGORIES,
+      () => {},
+    )
+
+    await controller.start(TEST_DEVICE)
+
+    expect(vault.text("remote.md")).toBeNull()
+    expect(await journal.getCursor()).toBe(0)
+    expect(controller.getStatus().error).toMatch(/cannot reference itself/)
+    controller.stop()
+  })
+
+  it("rejects revision ID reuse with different content", async () => {
+    const identity = randomId()
+    const vault = new FakeVault()
+    const journal = new MemoryJournal()
+    const remote = new FakeRemote()
+    remote.addRemoteRevision(
+      {
+        operationId: "operation-first",
+        revisionId: "reused-revision",
+        fileId: identity,
+        action: "upsert",
+        path: "first.md",
+        previousPath: null,
+        parents: [],
+        authorDeviceId: "device-remote",
+        blobId: "blob-first",
+        isText: true,
+      },
+      new TextEncoder().encode("first content").buffer,
+    )
+    remote.addRemoteRevision(
+      {
+        operationId: "operation-second",
+        revisionId: "reused-revision",
+        fileId: identity,
+        action: "upsert",
+        path: "second.md",
+        previousPath: null,
+        parents: [],
+        authorDeviceId: "device-remote",
+        blobId: "blob-second",
+        isText: true,
+      },
+      new TextEncoder().encode("second content").buffer,
+    )
+    const controller = new SyncController(
+      vault,
+      journal,
+      remote,
+      new FakeCrypto(),
+      () => ALL_CATEGORIES,
+      () => {},
+    )
+
+    await controller.start(TEST_DEVICE)
+
+    expect(vault.text("first.md")).toBe("first content")
+    expect(vault.text("second.md")).toBeNull()
+    expect(await journal.getCursor()).toBe(1)
+    expect(controller.getStatus().error).toMatch(/reused with different content/)
+    controller.stop()
+  })
+
+  it("rejects descendants of cyclic stored ancestry", async () => {
+    const identity = randomId()
+    const vault = new FakeVault()
+    const journal = new MemoryJournal()
+    for (const [revisionId, parent] of [
+      ["cycle-a", "cycle-b"],
+      ["cycle-b", "cycle-a"],
+    ] as const) {
+      await journal.putRevision({
+        revisionId,
+        fileId: identity,
+        path: "cycle.md",
+        parents: [parent],
+        deviceId: "device-remote",
+        createdAt: 1,
+        cursor: null,
+        tombstone: false,
+        isConflict: false,
+        operation: null,
+      })
+    }
+    const remote = new FakeRemote()
+    remote.addRemoteRevision(
+      {
+        operationId: "child-operation",
+        revisionId: "child-revision",
+        fileId: identity,
+        action: "upsert",
+        path: "child.md",
+        previousPath: null,
+        parents: ["cycle-a"],
+        authorDeviceId: "device-remote",
+        blobId: "child-blob",
+        isText: true,
+      },
+      new TextEncoder().encode("child content").buffer,
+    )
+    const controller = new SyncController(
+      vault,
+      journal,
+      remote,
+      new FakeCrypto(),
+      () => ALL_CATEGORIES,
+      () => {},
+    )
+
+    await controller.start(TEST_DEVICE)
+
+    expect(vault.text("child.md")).toBeNull()
+    expect(await journal.getCursor()).toBe(0)
+    expect(controller.getStatus().error).toMatch(/stored revision ancestry contains a cycle/i)
+    controller.stop()
+  })
+
   it("merges disjoint concurrent text edits and queues the merged revision", async () => {
     const encoder = new TextEncoder()
     const baseBytes = encoder.encode("one\ntwo\n").buffer
@@ -717,23 +896,37 @@ describe("SyncController", () => {
   it("preserves concurrent remote content as an explicit conflict copy", async () => {
     const localBytes = new TextEncoder().encode("local edit").buffer
     const remoteBytes = new TextEncoder().encode("remote edit").buffer
+    const identity = randomId()
     const vault = new FakeVault({ "note.md": "local edit" })
     const journal = new MemoryJournal()
     await journal.replaceSnapshots([
       {
         path: "note.md",
-        fileId: randomId(),
+        fileId: identity,
         fingerprint: await fingerprint(new TextEncoder().encode("common base").buffer),
         size: 11,
         mtime: 1,
         kind: "vault",
       },
     ])
+    await journal.putRevision({
+      revisionId: "common-base",
+      fileId: identity,
+      path: "note.md",
+      parents: [],
+      deviceId: TEST_DEVICE.deviceId,
+      createdAt: 1,
+      cursor: 0,
+      tombstone: false,
+      isConflict: false,
+      operation: null,
+    })
     const remote = new FakeRemote()
     remote.addRemoteRevision(
       {
         operationId: "remote-operation",
         revisionId: "revision-remote",
+        fileId: identity,
         action: "upsert",
         path: "note.md",
         previousPath: null,
