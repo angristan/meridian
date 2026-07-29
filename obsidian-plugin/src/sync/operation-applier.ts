@@ -191,7 +191,13 @@ export class OperationApplier {
         await this.vault.remove(revision.path)
         await this.journal.removeSnapshot(revision.path)
         for (const pending of await this.journal.listPending()) {
-          if (pending.path === revision.path) await this.journal.updateEntry(pending.id, "complete")
+          if (pending.path !== revision.path) continue
+          await this.journal.putEntry({
+            ...pending,
+            state: "complete",
+            error: null,
+            preparedRevision: null,
+          })
         }
       }
     } else {

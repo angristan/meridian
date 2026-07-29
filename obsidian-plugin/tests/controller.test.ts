@@ -3,6 +3,7 @@ import type {
   DeviceKeyMaterial,
   EncryptedBlob,
   EncryptedRevision,
+  JournalEntry,
   RevisionDraft,
   SyncStatus,
 } from "../src/model"
@@ -1027,6 +1028,100 @@ describe("SyncController", () => {
     expect((await journal.listRevisions("note.md")).some((revision) => revision.isConflict)).toBe(
       true,
     )
+    controller.stop()
+  })
+
+  it("clears prepared plaintext when a remote delete completes a conflict", async () => {
+    class InspectingJournal extends MemoryJournal {
+      lastEntry: JournalEntry | null = null
+
+      override async putEntry(entry: JournalEntry): Promise<void> {
+        this.lastEntry = structuredClone(entry)
+        await super.putEntry(entry)
+      }
+    }
+
+    const identity = randomId()
+    const localBytes = new TextEncoder().encode("local edit").buffer
+    const vault = new FakeVault({ "note.md": "local edit" })
+    const journal = new InspectingJournal()
+    await journal.replaceSnapshots([
+      {
+        path: "note.md",
+        fileId: identity,
+        fingerprint: await fingerprint(localBytes),
+        size: localBytes.byteLength,
+        mtime: 1,
+        kind: "vault",
+      },
+    ])
+    await journal.putRevision({
+      revisionId: "base-revision",
+      fileId: identity,
+      path: "note.md",
+      parents: [],
+      deviceId: TEST_DEVICE.deviceId,
+      createdAt: 1,
+      cursor: 0,
+      tombstone: false,
+      isConflict: false,
+      operation: null,
+    })
+    await journal.putEntry({
+      id: "pending-local-edit",
+      action: "upsert",
+      fileId: identity,
+      path: "note.md",
+      previousPath: null,
+      fingerprint: await fingerprint(localBytes),
+      baseRevisionId: "base-revision",
+      parentRevisionIds: ["base-revision"],
+      restoreSourceRevisionId: null,
+      revisionId: "local-revision",
+      createdAt: 2,
+      attempts: 0,
+      state: "uploading",
+      error: null,
+      preparedRevision: {
+        action: "upsert",
+        bytes: localBytes,
+        encrypted: { blobs: [], envelope: { operationId: "prepared-operation" } },
+      },
+    })
+    const remote = new FakeRemote()
+    remote.addRemoteRevision(
+      {
+        operationId: "delete-operation",
+        revisionId: "delete-revision",
+        fileId: identity,
+        action: "delete",
+        path: "note.md",
+        previousPath: null,
+        parents: ["base-revision"],
+        authorDeviceId: "device-remote",
+        blobId: null,
+        isText: true,
+      },
+      null,
+    )
+    const controller = new SyncController(
+      vault,
+      journal,
+      remote,
+      new FakeCrypto(),
+      () => ALL_CATEGORIES,
+      () => {},
+    )
+
+    await controller.start(TEST_DEVICE)
+
+    expect(journal.lastEntry).toMatchObject({
+      id: "pending-local-edit",
+      state: "complete",
+      error: null,
+      preparedRevision: null,
+    })
+    expect(await journal.listPending()).toEqual([])
     controller.stop()
   })
 
