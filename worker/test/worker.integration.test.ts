@@ -885,6 +885,46 @@ describe("Meridian Worker integration", () => {
     })
     expect(revokedSessionResponse.status).toBe(401)
 
+    const reusedIdentityPairingResponse = await SELF.fetch("https://example.test/v1/pairings", {
+      method: "POST",
+      headers: { ...authorization, "content-type": "application/json" },
+      body: JSON.stringify({ expiresInSeconds: 300 }),
+    })
+    expect(reusedIdentityPairingResponse.status).toBe(201)
+    const reusedIdentityPairing = (await reusedIdentityPairingResponse.json()) as {
+      pairingId: string
+      capability: string
+    }
+    const unsignedReusedIdentityJoin: PairingJoin = {
+      capability: reusedIdentityPairing.capability,
+      device: candidate,
+      proof: base64UrlEncode(randomBytes(64)),
+      requestProof: base64UrlEncode(randomBytes(64)),
+    }
+    const reusedIdentityJoin = {
+      ...unsignedReusedIdentityJoin,
+      proof: await sign(
+        candidateKey,
+        pairingJoinSigningMessage(
+          vaultId,
+          reusedIdentityPairing.pairingId,
+          unsignedReusedIdentityJoin,
+        ),
+      ),
+    }
+    const reusedIdentityJoinResponse = await SELF.fetch(
+      `https://example.test/v1/pairings/${reusedIdentityPairing.pairingId}/join`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(reusedIdentityJoin),
+      },
+    )
+    expect(reusedIdentityJoinResponse.status).toBe(409)
+    await expect(reusedIdentityJoinResponse.json()).resolves.toMatchObject({
+      error: { code: "device_exists" },
+    })
+
     const secondSetup = await SELF.fetch("https://example.test/v1/setup/session", {
       method: "POST",
       headers: { "content-type": "application/json" },

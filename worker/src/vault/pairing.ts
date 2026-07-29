@@ -261,8 +261,8 @@ export class VaultPairing {
       new HttpError(404, "pairing_not_found", "Pairing request is invalid or expired"),
     )
     assert(
-      !activeDevice(this.sql, join.device.deviceId),
-      new HttpError(409, "device_exists", "Device is already registered"),
+      !this.deviceExists(join.device.deviceId),
+      new HttpError(409, "device_exists", "Device identifier was already registered"),
     )
 
     const validProof = await verifyEd25519(
@@ -290,8 +290,8 @@ export class VaultPairing {
       new HttpError(409, "pairing_changed", "Pairing request changed or expired"),
     )
     assert(
-      !activeDevice(this.sql, join.device.deviceId),
-      new HttpError(409, "device_exists", "Device is already registered"),
+      !this.deviceExists(join.device.deviceId),
+      new HttpError(409, "device_exists", "Device identifier was already registered"),
     )
     if (currentPairing.status !== "pending") {
       const exactReplay =
@@ -723,6 +723,14 @@ export class VaultPairing {
       .toArray()[0]
     assert(row, new HttpError(404, "pairing_not_found", "Pairing request does not exist"))
     return row
+  }
+
+  private deviceExists(deviceId: string): boolean {
+    return (
+      this.sql
+        .exec<{ present: number }>("SELECT 1 AS present FROM devices WHERE device_id = ?", deviceId)
+        .toArray()[0] !== undefined
+    )
   }
 
   private async capabilityRow(pairingId: string, capability: string): Promise<PairingRow> {
