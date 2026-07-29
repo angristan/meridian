@@ -42,8 +42,16 @@ export class VaultRecords {
     assert(valid, new HttpError(401, "invalid_signature", "Checkpoint signature is invalid"))
 
     const existing = this.sql
-      .exec<{ device_id: string; cursor: number; log_hash: string }>(
-        "SELECT device_id, cursor, log_hash FROM checkpoints WHERE checkpoint_id = ?",
+      .exec<{
+        device_id: string
+        cursor: number
+        log_hash: string
+        epoch_id: string
+        envelope: string
+        signature: string
+      }>(
+        `SELECT device_id, cursor, log_hash, epoch_id, envelope, signature
+         FROM checkpoints WHERE checkpoint_id = ?`,
         checkpoint.checkpointId,
       )
       .toArray()[0]
@@ -51,7 +59,10 @@ export class VaultRecords {
       assert(
         existing.device_id === session.deviceId &&
           existing.cursor === checkpoint.cursor &&
-          existing.log_hash === checkpoint.logHash,
+          existing.log_hash === checkpoint.logHash &&
+          existing.epoch_id === checkpoint.epochId &&
+          existing.envelope === checkpoint.envelope &&
+          existing.signature === checkpoint.signature,
         new HttpError(409, "idempotency_conflict", "Checkpoint ID was used with different content"),
       )
       return json({ checkpointId: checkpoint.checkpointId, duplicate: true })
@@ -106,8 +117,16 @@ export class VaultRecords {
     assert(valid, new HttpError(401, "invalid_signature", "Snapshot signature is invalid"))
 
     const existing = this.sql
-      .exec<{ author_device_id: string; cursor: number; log_hash: string }>(
-        "SELECT author_device_id, cursor, log_hash FROM snapshots WHERE snapshot_id = ?",
+      .exec<{
+        author_device_id: string
+        cursor: number
+        log_hash: string
+        epoch_id: string
+        envelope: string
+        signature: string
+      }>(
+        `SELECT author_device_id, cursor, log_hash, epoch_id, envelope, signature
+         FROM snapshots WHERE snapshot_id = ?`,
         snapshot.snapshotId,
       )
       .toArray()[0]
@@ -115,7 +134,10 @@ export class VaultRecords {
       assert(
         existing.author_device_id === session.deviceId &&
           existing.cursor === snapshot.cursor &&
-          existing.log_hash === snapshot.logHash,
+          existing.log_hash === snapshot.logHash &&
+          existing.epoch_id === snapshot.epochId &&
+          existing.envelope === snapshot.envelope &&
+          existing.signature === snapshot.signature,
         new HttpError(409, "idempotency_conflict", "Snapshot ID was used with different content"),
       )
       return json({ snapshotId: snapshot.snapshotId, duplicate: true })

@@ -1,3 +1,4 @@
+import { env, runInDurableObject, SELF } from "cloudflare:test"
 import {
   createFirstDeviceClaimBundle,
   serializeEncryptedRecoveryPackage,
@@ -9,24 +10,25 @@ import {
   pairingCandidateConfirmationSigningBytes,
   pairingCompletionSigningBytes,
 } from "@meridian/protocol"
-import { env, runInDurableObject, SELF } from "cloudflare:test"
 import { describe, expect, it } from "vitest"
 import { base64UrlDecode, base64UrlEncode, randomToken, sha256, ZERO_HASH } from "../src/encoding"
 import type {
+  Checkpoint,
   Operation,
   PairingApproval,
   PairingJoin,
   PairingRelease,
   SetupClaim,
 } from "../src/schemas"
+import { migrateVaultSchema } from "../src/vault/migrations"
 import {
   authSigningMessage,
+  checkpointSigningMessage,
   operationSigningMessage,
   pairingApprovalSigningMessage,
   pairingJoinSigningMessage,
   setupClaimSigningMessage,
 } from "../src/vault-do"
-import { migrateVaultSchema } from "../src/vault/migrations"
 
 const SETUP_TOKEN = "integration-test-setup-token-32-bytes-long"
 
@@ -227,7 +229,12 @@ describe("Meridian Worker integration", () => {
       body: JSON.stringify(operation),
     })
     expect(firstCommit.status).toBe(201)
-    await expect(firstCommit.json()).resolves.toMatchObject({ cursor: 1, duplicate: false })
+    const firstCommitResult = (await firstCommit.json()) as {
+      cursor: number
+      chainHash: string
+      duplicate: boolean
+    }
+    expect(firstCommitResult).toMatchObject({ cursor: 1, duplicate: false })
 
     const duplicateCommit = await SELF.fetch("https://example.test/v1/operations", {
       method: "POST",
@@ -243,6 +250,48 @@ describe("Meridian Worker integration", () => {
     )
     expect(changes.status).toBe(200)
     await expect(changes.json()).resolves.toMatchObject({ latestCursor: 1, hasMore: false })
+
+    const unsignedCheckpoint: Checkpoint = {
+      checkpointId: randomToken(18),
+      cursor: firstCommitResult.cursor,
+      logHash: firstCommitResult.chainHash,
+      epochId: randomToken(18),
+      envelope: base64UrlEncode(randomBytes(128)),
+      signature: base64UrlEncode(randomBytes(64)),
+    }
+    const checkpoint: Checkpoint = {
+      ...unsignedCheckpoint,
+      signature: await sign(signingKey, checkpointSigningMessage(unsignedCheckpoint)),
+    }
+    const firstCheckpoint = await SELF.fetch("https://example.test/v1/checkpoints", {
+      method: "PUT",
+      headers: { ...authorization, "content-type": "application/json" },
+      body: JSON.stringify(checkpoint),
+    })
+    expect(firstCheckpoint.status).toBe(201)
+
+    const duplicateCheckpoint = await SELF.fetch("https://example.test/v1/checkpoints", {
+      method: "PUT",
+      headers: { ...authorization, "content-type": "application/json" },
+      body: JSON.stringify(checkpoint),
+    })
+    expect(duplicateCheckpoint.status).toBe(200)
+    await expect(duplicateCheckpoint.json()).resolves.toMatchObject({ duplicate: true })
+
+    const conflictingUnsignedCheckpoint = { ...checkpoint, epochId: randomToken(18) }
+    const conflictingCheckpoint = {
+      ...conflictingUnsignedCheckpoint,
+      signature: await sign(signingKey, checkpointSigningMessage(conflictingUnsignedCheckpoint)),
+    }
+    const conflictingCheckpointResponse = await SELF.fetch("https://example.test/v1/checkpoints", {
+      method: "PUT",
+      headers: { ...authorization, "content-type": "application/json" },
+      body: JSON.stringify(conflictingCheckpoint),
+    })
+    expect(conflictingCheckpointResponse.status).toBe(409)
+    await expect(conflictingCheckpointResponse.json()).resolves.toMatchObject({
+      error: { code: "idempotency_conflict" },
+    })
 
     const blobId = randomToken(18)
     const blob = randomBytes(1024)
