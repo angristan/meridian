@@ -1,8 +1,10 @@
+import { tracing } from "cloudflare:workers"
 import { Effect } from "effect"
 import { HttpError } from "../errors"
 import { runResponse } from "./effect-boundary"
 import { requiredParam } from "./request"
 import { sessionToken, validateSessionEffect } from "./session"
+import { observeStreamOutcome, type StreamOutcome } from "./stream-lifecycle"
 import type { WorkerApp } from "./types"
 
 const MAX_BLOB_BYTES = 10 * 1024 * 1024
@@ -100,7 +102,23 @@ export function registerBlobRoutes(app: WorkerApp): void {
           etag: object.httpEtag,
           "content-type": "application/octet-stream",
         })
-        return new Response(object.body, { status: 200, headers })
+        return tracing.startActiveSpan("app.blob.download.stream", (span) => {
+          let ended = false
+          const endSpan = (outcome: StreamOutcome) => {
+            if (ended) return
+            ended = true
+            span.setAttribute("app.blob.download.outcome", outcome)
+            span.end()
+          }
+
+          try {
+            const body = observeStreamOutcome(object.body, endSpan)
+            return new Response(body, { status: 200, headers })
+          } catch (error) {
+            endSpan("failed")
+            throw error
+          }
+        })
       }),
     ),
   )
