@@ -1,5 +1,6 @@
 import type {
   AuthChallengeProof,
+  BlobTransferProgress,
   CryptoPort,
   DecryptedRevision,
   DeviceKeyMaterial,
@@ -68,8 +69,9 @@ class PackageCryptoPort implements CryptoPort {
     device: DeviceKeyMaterial,
     operation: RemoteOperation,
     loadBlob: (blobId: string) => Promise<ArrayBuffer>,
+    onBlobProgress?: (progress: BlobTransferProgress) => void,
   ): Promise<DecryptedRevision> {
-    return decryptRevision(device, operation, loadBlob)
+    return decryptRevision(device, operation, loadBlob, onBlobProgress)
   }
 
   createDeviceRevocation(

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest"
+import type { SyncStatus } from "../src/model"
 import { fingerprint, randomId } from "../src/platform/bytes"
 import { MemoryJournal } from "../src/storage/journal"
 import { SyncController } from "../src/sync/controller"
@@ -34,6 +35,186 @@ describe("SyncController", () => {
     })
     expect(statuses.at(-1)).toBe("idle")
     controller.stop()
+  })
+
+  it("reports live pull cursor chunk and target progress", async () => {
+    const vault = new FakeVault()
+    const journal = new MemoryJournal()
+    const remote = new FakeRemote()
+    for (const [index, content] of ["first", "second"].entries()) {
+      remote.addRemoteRevision(
+        {
+          operationId: `remote-operation-${index}`,
+          revisionId: `remote-revision-${index}`,
+          fileId: randomId(),
+          action: "upsert",
+          path: `remote-${index}.md`,
+          previousPath: null,
+          parents: [],
+          authorDeviceId: "device-remote",
+          blobId: `remote-blob-${index}`,
+          isText: true,
+        },
+        new TextEncoder().encode(content).buffer,
+      )
+    }
+    const statuses: SyncStatus[] = []
+    const controller = new SyncController(
+      vault,
+      journal,
+      remote,
+      new FakeCrypto(),
+      () => ALL_CATEGORIES,
+      (status) => statuses.push(structuredClone(status)),
+      () => ({ deviceName: "Test", platform: "Test" }),
+      { progressThrottleMs: 0 },
+    )
+
+    await controller.start(TEST_DEVICE)
+
+    const pull = statuses.flatMap((status) =>
+      status.progress?.kind === "pull" ? [status.progress] : [],
+    )
+    expect(pull.map((progress) => progress.currentCursor)).toEqual([0, 0, 1, 1, 2])
+    expect(pull.every((progress) => progress.targetCursor === 2)).toBe(true)
+    expect(pull.filter((progress) => progress.currentChunk !== null)).toEqual([
+      expect.objectContaining({
+        currentCursor: 0,
+        currentChunk: 1,
+        totalChunks: 1,
+        transferredBytes: 5,
+        totalBytes: 5,
+      }),
+      expect.objectContaining({
+        currentCursor: 1,
+        currentChunk: 1,
+        totalChunks: 1,
+        transferredBytes: 6,
+        totalBytes: 6,
+      }),
+    ])
+    expect(controller.getStatus()).toMatchObject({
+      phase: "idle",
+      cursor: 2,
+      progress: null,
+    })
+    controller.stop()
+  })
+
+  it("reports upload files chunks queue and committed cursor", async () => {
+    const vault = new FakeVault({ "note.md": "hello" })
+    const journal = new MemoryJournal()
+    const remote = new FakeRemote()
+    const statuses: SyncStatus[] = []
+    const controller = new SyncController(
+      vault,
+      journal,
+      remote,
+      new FakeCrypto(),
+      () => ALL_CATEGORIES,
+      (status) => statuses.push(structuredClone(status)),
+      () => ({ deviceName: "Test", platform: "Test" }),
+      { progressThrottleMs: 0 },
+    )
+
+    await controller.start(TEST_DEVICE)
+
+    const pushing = statuses.filter((status) => status.progress?.kind === "push")
+    expect(pushing).toContainEqual(
+      expect.objectContaining({
+        phase: "pushing",
+        queued: 1,
+        progress: expect.objectContaining({
+          currentPath: "note.md",
+          stage: "uploading",
+          currentChunk: 1,
+          totalChunks: 1,
+          transferredBytes: 5,
+          totalBytes: 5,
+        }),
+      }),
+    )
+    expect(pushing).toContainEqual(
+      expect.objectContaining({
+        cursor: 1,
+        queued: 0,
+        progress: expect.objectContaining({
+          processed: 1,
+          succeeded: 1,
+          failed: 0,
+          total: 1,
+          currentCursor: 1,
+        }),
+      }),
+    )
+    controller.stop()
+  })
+
+  it("pauses a pull before applying the next remote operation", async () => {
+    const vault = new FakeVault()
+    const journal = new MemoryJournal()
+    const remote = new FakeRemote()
+    remote.addRemoteRevision(
+      {
+        operationId: "remote-operation",
+        revisionId: "remote-revision",
+        fileId: randomId(),
+        action: "upsert",
+        path: "remote.md",
+        previousPath: null,
+        parents: [],
+        authorDeviceId: "device-remote",
+        blobId: "remote-blob",
+        isText: true,
+      },
+      new TextEncoder().encode("remote content").buffer,
+    )
+    const barrier = remote.blockNextChangesAfterRead()
+    const controller = new SyncController(
+      vault,
+      journal,
+      remote,
+      new FakeCrypto(),
+      () => ALL_CATEGORIES,
+      () => {},
+    )
+
+    const starting = controller.start(TEST_DEVICE)
+    await barrier.started
+    const pausing = controller.quiesce()
+    expect(controller.getStatus()).toMatchObject({
+      phase: "pausing",
+      message: "Pausing after the current safe boundary",
+    })
+    barrier.release()
+    await Promise.all([starting, pausing])
+
+    expect(vault.text("remote.md")).toBeNull()
+    await expect(journal.getCursor()).resolves.toBe(0)
+  })
+
+  it("finishes an in-flight upload transaction before pausing the queue", async () => {
+    const vault = new FakeVault({ "a.md": "first", "b.md": "second" })
+    const journal = new MemoryJournal()
+    const remote = new FakeRemote()
+    const barrier = remote.blockNextBlobUploadAfterWrite()
+    const controller = new SyncController(
+      vault,
+      journal,
+      remote,
+      new FakeCrypto(),
+      () => ALL_CATEGORIES,
+      () => {},
+    )
+
+    const starting = controller.start(TEST_DEVICE)
+    await barrier.started
+    const pausing = controller.quiesce()
+    barrier.release()
+    await Promise.all([starting, pausing])
+
+    expect(remote.operations).toHaveLength(1)
+    expect(await journal.listPending()).toEqual([expect.objectContaining({ state: "queued" })])
   })
 
   it("skips network work for a file event caused by an applied remote revision", async () => {

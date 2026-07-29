@@ -1,10 +1,11 @@
-import type { MeridianSettings, SyncStatus } from "../model"
+import type { MeridianSettings, SyncPhase, SyncStatus } from "../model"
 
 export type ConnectionAction = "connect" | "pause" | "resume"
 export type ConnectionControlKind =
   | "unconfigured"
   | "active"
   | "paused"
+  | "pausing"
   | "pairing-pending"
   | "removal-pending"
 
@@ -27,13 +28,25 @@ type ConnectionSettings = Pick<
   "enabled" | "endpoint" | "pendingDeviceRemoval" | "pendingPairingCompletion"
 >
 
-export function connectionControlState(settings: ConnectionSettings): ConnectionControlState {
+export function connectionControlState(
+  settings: ConnectionSettings,
+  phase?: SyncPhase,
+): ConnectionControlState {
   if (!settings.endpoint) {
     return {
       kind: "unconfigured",
       action: "connect",
       label: "Connect",
       disabled: false,
+      canSync: false,
+    }
+  }
+  if (phase === "pausing") {
+    return {
+      kind: "pausing",
+      action: null,
+      label: "Pausing…",
+      disabled: true,
       canSync: false,
     }
   }
@@ -89,6 +102,12 @@ export function statusPresentation(
             ? `${status.queued} change${status.queued === 1 ? "" : "s"} queued locally`
             : "Changes stay local until sync resumes",
         liveUpdates: "Paused",
+        syncLabel,
+      }
+    case "pausing":
+      return {
+        summary: "Finishing the current operation at a safe boundary",
+        liveUpdates: "Pausing",
         syncLabel,
       }
     case "pairing-pending":

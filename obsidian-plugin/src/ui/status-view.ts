@@ -1,9 +1,11 @@
 import { ItemView, Notice, type WorkspaceLeaf } from "obsidian"
+import type { SyncProgress } from "../model"
 import { connectionControlState, statusPresentation } from "../plugin/connection-control"
 import { DevicesModal } from "./devices-pairing"
 import { formatTime } from "./format-time"
 import { ConflictsModal, HistoryModal } from "./history-conflicts"
 import type { MeridianUiHost } from "./host"
+import { presentSyncProgress } from "./sync-progress"
 
 export const STATUS_VIEW_TYPE = "meridian-status"
 
@@ -33,7 +35,7 @@ export class MeridianStatusView extends ItemView {
 
   render(): void {
     const status = this.host.getStatus()
-    const connection = connectionControlState(this.host.settings)
+    const connection = connectionControlState(this.host.settings, status.phase)
     const presentation = statusPresentation(status, connection)
     const container = this.contentEl
     container.empty()
@@ -43,6 +45,8 @@ export class MeridianStatusView extends ItemView {
     const title = header.createDiv()
     title.createEl("strong", { text: status.message })
     title.createDiv({ cls: "setting-item-description", text: presentation.summary })
+
+    if (status.progress) renderProgress(container, status.progress)
 
     const grid = container.createDiv({ cls: "meridian-metric-grid" })
     metric(grid, "Cursor", String(status.cursor))
@@ -95,7 +99,7 @@ export class MeridianStatusView extends ItemView {
   }
 
   private async runConnectionAction(): Promise<void> {
-    const action = connectionControlState(this.host.settings).action
+    const action = connectionControlState(this.host.settings, this.host.getStatus().phase).action
     if (action !== "pause" && action !== "resume") return
     try {
       if (action === "pause") await this.host.disconnect()
@@ -107,6 +111,23 @@ export class MeridianStatusView extends ItemView {
       this.render()
     }
   }
+}
+
+function renderProgress(container: HTMLElement, progress: SyncProgress): void {
+  const presentation = presentSyncProgress(progress)
+  const panel = container.createDiv({ cls: "meridian-progress" })
+  const header = panel.createDiv({ cls: "meridian-progress-header" })
+  header.createEl("strong", { text: presentation.label })
+  if (presentation.max > 0) {
+    header.createSpan({
+      cls: "meridian-progress-percent",
+      text: `${Math.floor((presentation.value / presentation.max) * 100)}%`,
+    })
+  }
+  const bar = panel.createEl("progress", { cls: "meridian-progress-bar" })
+  bar.max = Math.max(1, presentation.max)
+  bar.value = Math.min(presentation.value, bar.max)
+  panel.createDiv({ cls: "setting-item-description", text: presentation.detail })
 }
 
 function metric(container: HTMLElement, label: string, value: string): void {

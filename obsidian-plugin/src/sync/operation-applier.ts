@@ -1,5 +1,6 @@
 import { mergeUtf8Text } from "@meridian/sync-engine"
 import type {
+  BlobTransferProgress,
   ConfigCategory,
   CryptoPort,
   DecryptedRevision,
@@ -30,7 +31,11 @@ export class OperationApplier {
     private readonly categories: () => Record<ConfigCategory, boolean>,
   ) {}
 
-  async apply(device: DeviceKeyMaterial, operation: RemoteOperation): Promise<void> {
+  async apply(
+    device: DeviceKeyMaterial,
+    operation: RemoteOperation,
+    onBlobProgress?: (progress: BlobTransferProgress) => void,
+  ): Promise<void> {
     const wire = record(operation.envelope)
     const authorDeviceId = typeof wire?.authorDeviceId === "string" ? wire.authorDeviceId : null
     if (authorDeviceId) {
@@ -48,8 +53,11 @@ export class OperationApplier {
       throw new Error("Remote epoch transition is not supported by this client")
     }
 
-    const revision = await this.crypto.decryptRevision(device, operation, (blobId) =>
-      this.remote.getBlob(blobId),
+    const revision = await this.crypto.decryptRevision(
+      device,
+      operation,
+      (blobId) => this.remote.getBlob(blobId),
+      onBlobProgress,
     )
     const known = (await this.journal.listRevisions()).some(
       (candidate) => candidate.revisionId === revision.revisionId,

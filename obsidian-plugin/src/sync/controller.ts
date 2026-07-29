@@ -22,6 +22,11 @@ import { PushEngine } from "./push-engine"
 import { Reconciler } from "./reconciler"
 import { RevisionLoader } from "./revision-loader"
 
+export interface SyncControllerOptions {
+  progressThrottleMs?: number
+  now?: () => number
+}
+
 export class SyncController {
   private readonly reconciler: Reconciler
   private readonly historyService: HistoryService
@@ -32,6 +37,10 @@ export class SyncController {
   private rerunReason: SyncReason | null = null
   private authenticated = false
   private stopNotifications: (() => void) | null = null
+  private stopRequested = false
+  private lastProgressEmission = 0
+  private readonly progressThrottleMs: number
+  private readonly now: () => number
   private status: SyncStatus = { ...INITIAL_STATUS }
 
   constructor(
@@ -45,7 +54,10 @@ export class SyncController {
       deviceName: "Meridian device",
       platform: "Unknown",
     }),
+    options: SyncControllerOptions = {},
   ) {
+    this.progressThrottleMs = options.progressThrottleMs ?? 200
+    this.now = options.now ?? Date.now
     const revisionLoader = new RevisionLoader(remote, crypto)
     const applier = new OperationApplier(vault, journal, remote, crypto, revisionLoader, categories)
     this.reconciler = new Reconciler(vault, journal)
@@ -55,6 +67,7 @@ export class SyncController {
   }
 
   async start(device: DeviceKeyMaterial): Promise<void> {
+    this.stopRequested = false
     this.device = device
     await this.journal.open()
     const localCheckpoint = await this.journal.getCheckpoint()
@@ -70,35 +83,40 @@ export class SyncController {
       cursor: await this.journal.getCursor(),
       queued: (await this.journal.listPending()).length,
       error: null,
+      progress: null,
     })
     this.startNotifications()
     await this.sync("startup")
   }
 
   async quiesce(): Promise<void> {
-    this.stopNotifications?.()
-    this.stopNotifications = null
-    this.rerunReason = null
+    this.requestStop()
+    this.updateStatus({
+      phase: "pausing",
+      message: "Pausing after the current safe boundary",
+      socketConnected: false,
+      error: null,
+    })
     await this.running
-    this.stop()
+    this.finishStop()
   }
 
   stop(): void {
-    this.stopNotifications?.()
-    this.stopNotifications = null
-    this.journal.close()
-    this.device = null
-    this.authenticated = false
+    this.requestStop()
+    const running = this.running
+    if (running) void running.finally(() => this.finishStop())
+    else this.finishStop()
   }
 
   resume(): Promise<void> {
+    if (this.stopRequested) return Promise.resolve()
     this.authenticated = false
     this.startNotifications()
     return this.sync("resume")
   }
 
   sync(reason: SyncReason): Promise<void> {
-    if (!this.device) return Promise.resolve()
+    if (!this.device || this.stopRequested) return Promise.resolve()
     if (this.running) {
       this.rerunReason = mergeSyncReasons(this.rerunReason, reason)
       return this.running
@@ -196,11 +214,12 @@ export class SyncController {
 
   private async runLoop(initialReason: SyncReason): Promise<void> {
     let reason: SyncReason | null = initialReason
-    while (reason) {
+    while (reason && !this.stopRequested) {
       this.rerunReason = null
       try {
         await this.runOnce(reason)
       } catch (error) {
+        if (this.stopRequested) break
         const message = errorMessage(error)
         this.updateStatus({
           phase: networkAvailable() ? "error" : "offline",
@@ -211,14 +230,20 @@ export class SyncController {
           queued: (await this.journal.listPending()).length,
         })
       }
-      reason = this.rerunReason
+      reason = this.stopRequested ? null : this.rerunReason
     }
   }
 
   private async runOnce(reason: SyncReason): Promise<void> {
     const device = this.requireDevice()
+    if (this.stopRequested) return
     if (reason !== "notification") {
-      this.updateStatus({ phase: "scanning", message: "Checking local changes", error: null })
+      this.updateStatus({
+        phase: "scanning",
+        message: "Checking local changes",
+        error: null,
+        progress: null,
+      })
       const result = await this.reconciler.reconcile(this.categories())
       const pending = await this.journal.listPending()
       this.updateStatus({ queued: pending.length, message: `${result.files} files checked` })
@@ -235,11 +260,41 @@ export class SyncController {
 
     if (!networkAvailable()) throw new Error("No network connection")
     await this.authenticate(device)
+    if (this.stopRequested) return
 
-    this.updateStatus({ phase: "pulling", message: "Downloading changes" })
-    await this.pullEngine.pull(device)
-    this.updateStatus({ phase: "pushing", message: "Uploading local changes" })
-    await this.pushEngine.push(device)
+    this.updateStatus({ phase: "pulling", message: "Downloading changes", progress: null })
+    const pull = await this.pullEngine.pull(
+      device,
+      (progress) =>
+        this.updateProgress({
+          phase: this.stopRequested ? "pausing" : "pulling",
+          message: this.stopRequested
+            ? "Pausing after the current safe boundary"
+            : "Downloading changes",
+          cursor: progress.currentCursor,
+          progress,
+        }),
+      () => this.stopRequested,
+    )
+    if (pull.stopped || this.stopRequested) return
+
+    this.updateStatus({ phase: "pushing", message: "Uploading local changes", progress: null })
+    const push = await this.pushEngine.push(
+      device,
+      (progress) =>
+        this.updateProgress({
+          phase: this.stopRequested ? "pausing" : "pushing",
+          message: this.stopRequested
+            ? "Pausing after the current safe boundary"
+            : "Uploading local changes",
+          cursor: progress.currentCursor,
+          queued: Math.max(0, progress.total - progress.succeeded),
+          progress,
+        }),
+      () => this.stopRequested,
+    )
+    if (push.stopped || this.stopRequested) return
+
     this.updateStatus({
       phase: "idle",
       message: "Up to date",
@@ -247,6 +302,7 @@ export class SyncController {
       queued: (await this.journal.listPending()).length,
       lastSyncedAt: Date.now(),
       error: null,
+      progress: null,
     })
   }
 
@@ -264,7 +320,7 @@ export class SyncController {
     this.stopNotifications = null
     if (!this.device || !this.authenticated) return
     void this.journal.getCursor().then((cursor) => {
-      if (!this.device || !this.authenticated) return
+      if (!this.device || !this.authenticated || this.stopRequested) return
       this.stopNotifications = this.remote.connectNotifications(
         cursor,
         (hintedCursor) => {
@@ -278,6 +334,29 @@ export class SyncController {
   private requireDevice(): DeviceKeyMaterial {
     if (!this.device) throw new Error("No Meridian device keys are loaded")
     return this.device
+  }
+
+  private requestStop(): void {
+    this.stopRequested = true
+    this.rerunReason = null
+    this.stopNotifications?.()
+    this.stopNotifications = null
+  }
+
+  private finishStop(): void {
+    this.journal.close()
+    this.device = null
+    this.authenticated = false
+  }
+
+  private updateProgress(patch: Partial<SyncStatus>): void {
+    this.status = { ...this.status, ...patch }
+    const now = this.now()
+    if (this.progressThrottleMs > 0 && now - this.lastProgressEmission < this.progressThrottleMs) {
+      return
+    }
+    this.lastProgressEmission = now
+    this.onStatus({ ...this.status })
   }
 
   private updateStatus(patch: Partial<SyncStatus>): void {

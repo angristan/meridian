@@ -51,6 +51,7 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
   )
   private status: SyncStatus = { ...INITIAL_STATUS }
   private statusBar: HTMLElement | null = null
+  private pausePromise: Promise<void> | null = null
 
   override async onload(): Promise<void> {
     await this.loadSettings()
@@ -76,7 +77,8 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
       id: "pause-sync",
       name: "Pause sync",
       checkCallback: (checking) => {
-        const available = connectionControlState(this.settings).action === "pause"
+        const available =
+          connectionControlState(this.settings, this.status.phase).action === "pause"
         if (available && !checking) this.runConnectionCommand("pause")
         return available
       },
@@ -85,7 +87,8 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
       id: "resume-sync",
       name: "Resume sync",
       checkCallback: (checking) => {
-        const available = connectionControlState(this.settings).action === "resume"
+        const available =
+          connectionControlState(this.settings, this.status.phase).action === "resume"
         if (available && !checking) this.runConnectionCommand("resume")
         return available
       },
@@ -129,7 +132,7 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
       } else if (this.settings.enabled) {
         void this.initializeExistingConnection()
       } else {
-        this.updateStatus({ phase: "disconnected", message: "Sync is paused" })
+        this.updateStatus({ phase: "disconnected", message: "Sync is paused", progress: null })
       }
     })
   }
@@ -232,8 +235,9 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
     }
 
     const previousDeviceId = this.settings.deviceId
-    this.controller?.stop()
+    const previousController = this.controller
     this.controller = null
+    await previousController?.quiesce()
     if (previousDeviceId && previousDeviceId !== recovered.deviceId) {
       this.secrets.clearDeviceKeyBundle(previousDeviceId)
     }
@@ -250,19 +254,18 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
   }
 
   async disconnect(): Promise<void> {
-    this.settings.enabled = false
-    await this.saveSettings()
-    this.controller?.stop()
-    this.controller = null
-    this.updateStatus({
-      phase: "disconnected",
-      message: "Sync is paused",
-      socketConnected: false,
-      error: null,
-    })
+    if (this.pausePromise) return this.pausePromise
+    const operation = this.pauseConnection()
+    this.pausePromise = operation
+    try {
+      await operation
+    } finally {
+      if (this.pausePromise === operation) this.pausePromise = null
+    }
   }
 
   async resumeConnection(): Promise<void> {
+    await this.pausePromise
     if (this.settings.pendingPairingCompletion) {
       throw new Error("Finish the pending device pairing before resuming sync")
     }
@@ -850,12 +853,28 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
       message: "Meridian was removed from this device",
       socketConnected: false,
       error: null,
+      progress: null,
     })
     new Notice("This device was removed. Local vault files were kept.", 8_000)
   }
 
   private async loadSettings(): Promise<void> {
     this.settings = normalizeSettings(await this.loadData())
+  }
+
+  private async pauseConnection(): Promise<void> {
+    this.settings.enabled = false
+    await this.saveSettings()
+    const controller = this.controller
+    this.controller = null
+    if (controller) await controller.quiesce()
+    this.updateStatus({
+      phase: "disconnected",
+      message: "Sync is paused",
+      socketConnected: false,
+      error: null,
+      progress: null,
+    })
   }
 
   private async initializeExistingConnection(): Promise<void> {
@@ -879,8 +898,9 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
       this.updateStatus({ phase: "disconnected", message: "Connect Meridian to begin syncing" })
       return
     }
-    this.controller?.stop()
+    const previousController = this.controller
     this.controller = null
+    await previousController?.quiesce()
     try {
       const serialized = this.secrets.getDeviceKeyBundle(this.settings.deviceId)
       if (!serialized) throw new Error("Device keys are missing from Obsidian SecretStorage")

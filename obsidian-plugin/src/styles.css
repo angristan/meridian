@@ -26,7 +26,8 @@
 }
 
 .meridian-status-dot.is-error,
-.meridian-status-dot.is-offline {
+.meridian-status-dot.is-offline,
+.meridian-status-dot.is-pausing {
   background: var(--color-orange);
 }
 
@@ -34,6 +35,36 @@
 .meridian-status-dot.is-pulling,
 .meridian-status-dot.is-pushing {
   background: var(--interactive-accent);
+}
+
+.meridian-progress {
+  margin-bottom: var(--size-4-5);
+  padding: var(--size-4-3);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  background: var(--background-secondary);
+  overflow-wrap: anywhere;
+}
+
+.meridian-progress-header {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--size-4-3);
+  margin-bottom: var(--size-2-2);
+}
+
+.meridian-progress-percent {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.meridian-progress-bar {
+  display: block;
+  width: 100%;
+  height: var(--size-4-2);
+  margin-bottom: var(--size-2-2);
+  accent-color: var(--interactive-accent);
 }
 
 .meridian-metric-grid {

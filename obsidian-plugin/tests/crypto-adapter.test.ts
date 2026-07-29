@@ -33,6 +33,12 @@ describe("shared crypto adapter", () => {
       chunkSize: 4 * 1024 * 1024,
     })
     const blobs = new Map(encrypted.blobs.map((blob) => [blob.blobId, blob.bytes]))
+    const transferProgress: Array<{
+      completedChunks: number
+      totalChunks: number
+      transferredBytes: number
+      totalBytes: number
+    }> = []
     const decrypted = await crypto.decryptRevision(
       device,
       { cursor: 1, logHash: randomId(32), envelope: encrypted.envelope },
@@ -41,8 +47,12 @@ describe("shared crypto adapter", () => {
         if (!bytes) throw new Error("Missing encrypted test blob")
         return bytes
       },
+      (progress) => transferProgress.push(progress),
     )
 
+    expect(transferProgress).toEqual([
+      { completedChunks: 1, totalChunks: 1, transferredBytes: 12, totalBytes: 12 },
+    ])
     expect(claim.recoveryCode).toMatch(/^mdn1[.-]/)
     expect(claim.publicClaim).toMatchObject({ setupSession: "setup-session" })
     expect(device.deviceId).toBe(claim.deviceId)

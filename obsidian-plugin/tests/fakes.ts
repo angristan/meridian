@@ -1,5 +1,6 @@
 import type {
   AuthChallengeProof,
+  BlobTransferProgress,
   ConfigCategory,
   CryptoPort,
   DecryptedRevision,
@@ -167,8 +168,18 @@ export class FakeCrypto implements CryptoPort {
     _device: DeviceKeyMaterial,
     operation: RemoteOperation,
     loadBlob: (blobId: string) => Promise<ArrayBuffer>,
+    onBlobProgress?: (progress: BlobTransferProgress) => void,
   ): Promise<DecryptedRevision> {
     const envelope = operation.envelope as FakeEnvelope
+    const bytes = envelope.blobId ? await loadBlob(envelope.blobId) : null
+    if (bytes) {
+      onBlobProgress?.({
+        completedChunks: 1,
+        totalChunks: 1,
+        transferredBytes: bytes.byteLength,
+        totalBytes: bytes.byteLength,
+      })
+    }
     return {
       revisionId: envelope.revisionId,
       operationId: envelope.operationId,
@@ -179,7 +190,7 @@ export class FakeCrypto implements CryptoPort {
       parents: envelope.parents,
       authorDeviceId: envelope.authorDeviceId,
       createdAt: envelope.createdAt ?? Date.now(),
-      bytes: envelope.blobId ? await loadBlob(envelope.blobId) : null,
+      bytes,
       isText: envelope.isText,
     }
   }
@@ -244,6 +255,7 @@ export class FakeRemote implements RemotePort {
   getChangesCount = 0
   private cursor = 0
   private nextChangesBarrier: { started: () => void; resume: Promise<void> } | null = null
+  private nextBlobUploadBarrier: { started: () => void; resume: Promise<void> } | null = null
 
   async claim(_setupSession: string, _claim: SetupClaim): Promise<void> {}
 
@@ -277,8 +289,25 @@ export class FakeRemote implements RemotePort {
     return { started, release }
   }
 
+  blockNextBlobUploadAfterWrite(): { started: Promise<void>; release: () => void } {
+    let markStarted = () => {}
+    let release = () => {}
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve
+    })
+    const resume = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    this.nextBlobUploadBarrier = { started: markStarted, resume }
+    return { started, release }
+  }
+
   async putBlob(blob: EncryptedBlob): Promise<void> {
     this.blobs.set(blob.blobId, blob.bytes.slice(0))
+    const barrier = this.nextBlobUploadBarrier
+    this.nextBlobUploadBarrier = null
+    barrier?.started()
+    await barrier?.resume
   }
 
   async getBlob(blobId: string): Promise<ArrayBuffer> {

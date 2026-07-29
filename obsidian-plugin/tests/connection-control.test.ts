@@ -67,6 +67,22 @@ describe("Meridian connection controls", () => {
     })
   })
 
+  it("disables conflicting actions while pausing at a safe boundary", () => {
+    const connection = connectionControlState({ ...configuredSettings, enabled: false }, "pausing")
+
+    expect(connection).toEqual({
+      kind: "pausing",
+      action: null,
+      label: "Pausing…",
+      disabled: true,
+      canSync: false,
+    })
+    expect(statusPresentation(INITIAL_STATUS, connection)).toMatchObject({
+      summary: "Finishing the current operation at a safe boundary",
+      liveUpdates: "Pausing",
+    })
+  })
+
   it("presents paused state without claiming live polling", () => {
     const connection = connectionControlState({ ...configuredSettings, enabled: false })
 

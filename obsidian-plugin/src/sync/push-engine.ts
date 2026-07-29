@@ -1,8 +1,20 @@
-import type { CryptoPort, DeviceKeyMaterial, JournalEntry, RemotePort, VaultPort } from "../model"
+import type {
+  CryptoPort,
+  DeviceKeyMaterial,
+  JournalEntry,
+  PushSyncProgress,
+  RemotePort,
+  TrustedCheckpoint,
+  VaultPort,
+} from "../model"
 import type { JournalPort } from "../storage/journal"
 import { snapshotFor } from "./snapshots"
 
 const CHUNK_SIZE = 4 * 1024 * 1024
+
+export interface PushResult {
+  stopped: boolean
+}
 
 export class PushEngine {
   constructor(
@@ -12,21 +24,83 @@ export class PushEngine {
     private readonly crypto: CryptoPort,
   ) {}
 
-  async push(device: DeviceKeyMaterial): Promise<void> {
+  async push(
+    device: DeviceKeyMaterial,
+    onProgress: (progress: PushSyncProgress) => void = () => {},
+    shouldStop: () => boolean = () => false,
+  ): Promise<PushResult> {
+    const entries = await this.journal.listPending()
     let firstError: Error | null = null
-    for (const entry of await this.journal.listPending()) {
+    let progress: PushSyncProgress = {
+      kind: "push",
+      processed: 0,
+      succeeded: 0,
+      failed: 0,
+      total: entries.length,
+      currentPath: null,
+      stage: null,
+      currentChunk: null,
+      totalChunks: null,
+      transferredBytes: 0,
+      totalBytes: null,
+      currentCursor: await this.journal.getCursor(),
+    }
+    const emit = (patch: Partial<PushSyncProgress> = {}) => {
+      progress = { ...progress, ...patch, kind: "push" }
+      onProgress({ ...progress })
+    }
+    emit()
+
+    for (const entry of entries) {
+      if (shouldStop()) return { stopped: true }
+      emit({
+        currentPath: entry.path,
+        stage: "encrypting",
+        currentChunk: null,
+        totalChunks: null,
+        transferredBytes: 0,
+        totalBytes: null,
+      })
       try {
-        await this.pushEntry(device, entry)
+        const result = await this.pushEntry(device, entry, emit, shouldStop)
+        if (result.stopped) return result
+        emit({
+          processed: progress.processed + 1,
+          succeeded: progress.succeeded + 1,
+          currentPath: null,
+          stage: null,
+          currentChunk: null,
+          totalChunks: null,
+          transferredBytes: 0,
+          totalBytes: null,
+          currentCursor: result.checkpoint.cursor,
+        })
       } catch (error) {
         const failure = error instanceof Error ? error : new Error(String(error))
         firstError ??= failure
         await this.journal.updateEntry(entry.id, "failed", failure.message)
+        emit({
+          processed: progress.processed + 1,
+          failed: progress.failed + 1,
+          currentPath: null,
+          stage: null,
+          currentChunk: null,
+          totalChunks: null,
+          transferredBytes: 0,
+          totalBytes: null,
+        })
       }
     }
     if (firstError) throw firstError
+    return { stopped: false }
   }
 
-  private async pushEntry(device: DeviceKeyMaterial, entry: JournalEntry): Promise<void> {
+  private async pushEntry(
+    device: DeviceKeyMaterial,
+    entry: JournalEntry,
+    onProgress: (patch: Partial<PushSyncProgress>) => void,
+    shouldStop: () => boolean,
+  ): Promise<{ stopped: true } | { stopped: false; checkpoint: TrustedCheckpoint }> {
     const exists = await this.vault.exists(entry.path)
     const action = exists ? (entry.action === "restore" ? "restore" : "upsert") : "delete"
     const bytes = action === "delete" ? null : await this.vault.read(entry.path)
@@ -42,10 +116,29 @@ export class PushEngine {
       bytes,
       chunkSize: CHUNK_SIZE,
     })
-    for (const blob of encrypted.blobs.sort((left, right) => left.chunkIndex - right.chunkIndex)) {
+    if (shouldStop()) return { stopped: true }
+
+    const blobs = encrypted.blobs.sort((left, right) => left.chunkIndex - right.chunkIndex)
+    const totalBytes = blobs.reduce((total, blob) => total + blob.bytes.byteLength, 0)
+    let transferredBytes = 0
+    onProgress({
+      stage: "uploading",
+      currentChunk: 0,
+      totalChunks: blobs.length,
+      transferredBytes,
+      totalBytes,
+    })
+    for (const [index, blob] of blobs.entries()) {
       await this.remote.putBlob(blob)
+      transferredBytes += blob.bytes.byteLength
+      onProgress({
+        currentChunk: index + 1,
+        transferredBytes,
+      })
     }
+
     await this.journal.updateEntry(entry.id, "committing")
+    onProgress({ stage: "committing" })
     const committed = await this.remote.commit(encrypted.envelope, entry.id)
     await this.journal.setCheckpoint(committed)
     await this.journal.putRevision({
@@ -69,5 +162,6 @@ export class PushEngine {
     }
     if (entry.previousPath) await this.journal.removeSnapshot(entry.previousPath)
     await this.journal.updateEntry(entry.id, "complete")
+    return { stopped: false, checkpoint: committed }
   }
 }

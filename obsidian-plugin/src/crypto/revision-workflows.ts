@@ -1,6 +1,7 @@
 import { decryptFileRevision, deviceEpochKey, encryptFileRevision, sign } from "@meridian/crypto"
 import { decodeOperation, fileId, revisionId } from "@meridian/protocol"
 import type {
+  BlobTransferProgress,
   DecryptedRevision,
   DeviceKeyMaterial,
   EncryptedRevision,
@@ -55,6 +56,7 @@ export async function decryptRevision(
   device: DeviceKeyMaterial,
   operation: RemoteOperation,
   loadBlob: (blobId: string) => Promise<ArrayBuffer>,
+  onBlobProgress?: (progress: BlobTransferProgress) => void,
 ): Promise<DecryptedRevision> {
   const bundle = deviceBundle(device)
   const wire = parseFileWorkerOperation(operation.envelope)
@@ -63,11 +65,33 @@ export async function decryptRevision(
       ? bundle.certificate
       : trustedAuthorCertificate(device, operation)
   const signedOperation = decodeOperation(fromBase64Url(wire.envelope))
+  if (signedOperation.body.type !== "revision") {
+    throw new Error("Worker file operation does not contain an encrypted revision")
+  }
+  const revisionBody = signedOperation.body
+  const chunkLengths = new Map(
+    revisionBody.chunks.map((chunk) => [toBase64Url(chunk.blobId), chunk.plaintextLength]),
+  )
+  const totalBytes = revisionBody.chunks.reduce((total, chunk) => total + chunk.plaintextLength, 0)
+  let completedChunks = 0
+  let transferredBytes = 0
   const decrypted = await decryptFileRevision({
     operation: signedOperation,
-    epochKey: deviceEpochKey(bundle, signedOperation.body.epochId),
+    epochKey: deviceEpochKey(bundle, revisionBody.epochId),
     authorCertificate,
-    loadBlob: async (blobId) => new Uint8Array(await loadBlob(toBase64Url(blobId))),
+    loadBlob: async (blobId) => {
+      const encodedBlobId = toBase64Url(blobId)
+      const bytes = await loadBlob(encodedBlobId)
+      completedChunks += 1
+      transferredBytes += chunkLengths.get(encodedBlobId) ?? bytes.byteLength
+      onBlobProgress?.({
+        completedChunks,
+        totalChunks: revisionBody.chunks.length,
+        transferredBytes,
+        totalBytes,
+      })
+      return new Uint8Array(bytes)
+    },
   })
   return {
     revisionId: toBase64Url(decrypted.operation.revisionId),

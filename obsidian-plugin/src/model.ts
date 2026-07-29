@@ -74,8 +74,37 @@ export type SyncPhase =
   | "scanning"
   | "pulling"
   | "pushing"
+  | "pausing"
   | "offline"
   | "error"
+
+export interface PullSyncProgress {
+  kind: "pull"
+  startCursor: number
+  currentCursor: number
+  targetCursor: number
+  currentChunk: number | null
+  totalChunks: number | null
+  transferredBytes: number
+  totalBytes: number | null
+}
+
+export interface PushSyncProgress {
+  kind: "push"
+  processed: number
+  succeeded: number
+  failed: number
+  total: number
+  currentPath: string | null
+  stage: "encrypting" | "uploading" | "committing" | null
+  currentChunk: number | null
+  totalChunks: number | null
+  transferredBytes: number
+  totalBytes: number | null
+  currentCursor: number
+}
+
+export type SyncProgress = PullSyncProgress | PushSyncProgress
 
 export interface SyncStatus {
   phase: SyncPhase
@@ -85,6 +114,7 @@ export interface SyncStatus {
   lastSyncedAt: number | null
   socketConnected: boolean
   error: string | null
+  progress: SyncProgress | null
 }
 
 export const INITIAL_STATUS: SyncStatus = {
@@ -95,6 +125,7 @@ export const INITIAL_STATUS: SyncStatus = {
   lastSyncedAt: null,
   socketConnected: false,
   error: null,
+  progress: null,
 }
 
 export interface ScannedFileSnapshot {
@@ -205,6 +236,13 @@ export interface EncryptedRevision {
   envelope: unknown
 }
 
+export interface BlobTransferProgress {
+  completedChunks: number
+  totalChunks: number
+  transferredBytes: number
+  totalBytes: number
+}
+
 export interface RemoteOperation {
   cursor: number
   logHash: string
@@ -297,6 +335,7 @@ export interface CryptoPort {
     device: DeviceKeyMaterial,
     operation: RemoteOperation,
     loadBlob: (blobId: string) => Promise<ArrayBuffer>,
+    onBlobProgress?: (progress: BlobTransferProgress) => void,
   ): Promise<DecryptedRevision>
   createDeviceRevocation(
     device: DeviceKeyMaterial,

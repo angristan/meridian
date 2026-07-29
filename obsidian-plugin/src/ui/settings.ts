@@ -5,7 +5,7 @@ import type { MeridianUiHost } from "./host"
 
 export function renderSettings(container: HTMLElement, host: MeridianUiHost): void {
   container.empty()
-  const connection = connectionControlState(host.settings)
+  const connection = connectionControlState(host.settings, host.getStatus().phase)
   const configured = connection.kind !== "unconfigured"
   const removalPending = host.settings.pendingDeviceRemoval !== null
   const pairingPending = host.settings.pendingPairingCompletion !== null
