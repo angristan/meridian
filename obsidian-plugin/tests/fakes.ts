@@ -82,6 +82,19 @@ export class FakeVault implements VaultPort {
     this.files.set(path, bytes.slice(0))
   }
 
+  async replaceIfUnchanged(
+    path: string,
+    expectedBytes: ArrayBuffer | null,
+    replacementBytes: ArrayBuffer | null,
+    _isText: boolean,
+  ): Promise<boolean> {
+    const current = this.files.get(path) ?? null
+    if (!sameOptionalBytes(current, expectedBytes)) return false
+    if (replacementBytes === null) this.files.delete(path)
+    else await this.write(path, replacementBytes)
+    return true
+  }
+
   async rename(from: string, to: string): Promise<void> {
     if (from === to) return
     const bytes = this.files.get(from)
@@ -92,6 +105,14 @@ export class FakeVault implements VaultPort {
     if (this.files.has(to)) throw new Error(`Rename target already exists: ${to}`)
     this.files.set(to, bytes)
     this.files.delete(from)
+  }
+
+  async renameIfUnchanged(from: string, to: string, expectedBytes: ArrayBuffer): Promise<boolean> {
+    const current = this.files.get(from) ?? null
+    if (!sameOptionalBytes(current, expectedBytes)) return false
+    if (from !== to && this.files.has(to)) return false
+    await this.rename(from, to)
+    return true
   }
 
   async remove(path: string): Promise<void> {
@@ -106,6 +127,14 @@ export class FakeVault implements VaultPort {
     const bytes = this.files.get(path)
     return bytes ? new TextDecoder().decode(bytes) : null
   }
+}
+
+function sameOptionalBytes(left: ArrayBuffer | null, right: ArrayBuffer | null): boolean {
+  if (left === null || right === null) return left === right
+  if (left.byteLength !== right.byteLength) return false
+  const leftBytes = new Uint8Array(left)
+  const rightBytes = new Uint8Array(right)
+  return leftBytes.every((byte, index) => byte === rightBytes[index])
 }
 
 export interface FakeEnvelope {

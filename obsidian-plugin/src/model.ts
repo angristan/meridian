@@ -486,7 +486,14 @@ export interface VaultPort {
   listFiles(categories: Record<ConfigCategory, boolean>): Promise<ScannedFileSnapshot[]>
   read(path: string): Promise<ArrayBuffer>
   write(path: string, bytes: ArrayBuffer): Promise<void>
+  replaceIfUnchanged(
+    path: string,
+    expectedBytes: ArrayBuffer | null,
+    replacementBytes: ArrayBuffer | null,
+    isText: boolean,
+  ): Promise<boolean>
   rename(from: string, to: string): Promise<void>
+  renameIfUnchanged(from: string, to: string, expectedBytes: ArrayBuffer): Promise<boolean>
   remove(path: string): Promise<void>
   exists(path: string): Promise<boolean>
 }

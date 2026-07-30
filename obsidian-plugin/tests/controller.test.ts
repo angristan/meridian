@@ -12,6 +12,52 @@ import { MemoryJournal } from "../src/storage/journal"
 import { SyncController } from "../src/sync/controller"
 import { ALL_CATEGORIES, FakeCrypto, FakeRemote, FakeVault, TEST_DEVICE } from "./fakes"
 
+async function seedTrackedText(
+  journal: MemoryJournal,
+  remote: FakeRemote,
+  identity: string,
+  baseBytes: ArrayBuffer,
+): Promise<void> {
+  await journal.replaceSnapshots([
+    {
+      path: "note.md",
+      fileId: identity,
+      fingerprint: await fingerprint(baseBytes),
+      size: baseBytes.byteLength,
+      mtime: 1,
+      kind: "vault",
+    },
+  ])
+  remote.blobs.set("base-blob", baseBytes)
+  await journal.putRevision({
+    revisionId: "common-base",
+    fileId: identity,
+    path: "note.md",
+    parents: [],
+    deviceId: TEST_DEVICE.deviceId,
+    createdAt: 1,
+    cursor: 0,
+    tombstone: false,
+    isConflict: false,
+    operation: {
+      cursor: 0,
+      logHash: "hash-base",
+      envelope: {
+        operationId: "base-operation",
+        revisionId: "common-base",
+        fileId: identity,
+        action: "upsert",
+        path: "note.md",
+        previousPath: null,
+        parents: [],
+        authorDeviceId: TEST_DEVICE.deviceId,
+        blobId: "base-blob",
+        isText: true,
+      },
+    },
+  })
+}
+
 describe("SyncController", () => {
   it("uploads local content as raw encrypted blobs before committing", async () => {
     const vault = new FakeVault({ "note.md": "hello" })
@@ -129,6 +175,197 @@ describe("SyncController", () => {
     expect(await journal.listConflicts(true)).toEqual([
       expect.objectContaining({ sourcePath: "note.bin", remoteRevisionId: "remote-revision" }),
     ])
+    controller.stop()
+  })
+
+  it("merges an edit made while a remote revision is downloading", async () => {
+    const encoder = new TextEncoder()
+    const baseBytes = encoder.encode("one\ntwo\n").buffer
+    const localBytes = encoder.encode("ONE\ntwo\n").buffer
+    const remoteBytes = encoder.encode("one\nTWO\n").buffer
+    const identity = randomId()
+    const vault = new FakeVault({ "note.md": "one\ntwo\n" })
+    const journal = new MemoryJournal()
+    class EditingDownloadRemote extends FakeRemote {
+      private edited = false
+
+      override async getBlob(blobId: string): Promise<ArrayBuffer> {
+        if (blobId === "remote-blob" && !this.edited) {
+          this.edited = true
+          vault.files.set("note.md", localBytes.slice(0))
+        }
+        return super.getBlob(blobId)
+      }
+    }
+    const remote = new EditingDownloadRemote()
+    await seedTrackedText(journal, remote, identity, baseBytes)
+    remote.addRemoteRevision(
+      {
+        operationId: "remote-operation",
+        revisionId: "revision-remote",
+        fileId: identity,
+        action: "upsert",
+        path: "note.md",
+        previousPath: null,
+        parents: ["common-base"],
+        authorDeviceId: "device-remote",
+        blobId: "remote-blob",
+        isText: true,
+      },
+      remoteBytes,
+    )
+    const controller = new SyncController(
+      vault,
+      journal,
+      remote,
+      new FakeCrypto(),
+      () => ALL_CATEGORIES,
+      () => {},
+    )
+
+    await controller.start(TEST_DEVICE)
+
+    expect(vault.text("note.md")).toBe("ONE\nTWO\n")
+    expect(await journal.listConflicts(true)).toEqual([])
+    expect(remote.operations.at(-1)?.envelope).toMatchObject({
+      fileId: identity,
+      parents: ["revision-remote"],
+    })
+    controller.stop()
+  })
+
+  it("preserves a newer edit when the file changes during merge", async () => {
+    const encoder = new TextEncoder()
+    const baseBytes = encoder.encode("one\ntwo\n").buffer
+    const firstLocalBytes = encoder.encode("ONE\ntwo\n").buffer
+    const latestLocalBytes = encoder.encode("LATEST\ntwo\n").buffer
+    const remoteBytes = encoder.encode("one\nTWO\n").buffer
+    const identity = randomId()
+    class RacingVault extends FakeVault {
+      raceNextReplacement = true
+
+      override async replaceIfUnchanged(
+        path: string,
+        expectedBytes: ArrayBuffer | null,
+        replacementBytes: ArrayBuffer | null,
+        isText: boolean,
+      ): Promise<boolean> {
+        if (
+          this.raceNextReplacement &&
+          path === "note.md" &&
+          expectedBytes !== null &&
+          replacementBytes !== null
+        ) {
+          this.raceNextReplacement = false
+          this.files.set(path, latestLocalBytes.slice(0))
+        }
+        return super.replaceIfUnchanged(path, expectedBytes, replacementBytes, isText)
+      }
+    }
+    const vault = new RacingVault({ "note.md": "one\ntwo\n" })
+    const journal = new MemoryJournal()
+    class EditingDownloadRemote extends FakeRemote {
+      private edited = false
+
+      override async getBlob(blobId: string): Promise<ArrayBuffer> {
+        if (blobId === "remote-blob" && !this.edited) {
+          this.edited = true
+          vault.files.set("note.md", firstLocalBytes.slice(0))
+        }
+        return super.getBlob(blobId)
+      }
+    }
+    const remote = new EditingDownloadRemote()
+    await seedTrackedText(journal, remote, identity, baseBytes)
+    remote.addRemoteRevision(
+      {
+        operationId: "remote-operation",
+        revisionId: "revision-remote",
+        fileId: identity,
+        action: "upsert",
+        path: "note.md",
+        previousPath: null,
+        parents: ["common-base"],
+        authorDeviceId: "device-remote",
+        blobId: "remote-blob",
+        isText: true,
+      },
+      remoteBytes,
+    )
+    const controller = new SyncController(
+      vault,
+      journal,
+      remote,
+      new FakeCrypto(),
+      () => ALL_CATEGORIES,
+      () => {},
+    )
+
+    await controller.start(TEST_DEVICE)
+
+    expect(vault.text("note.md")).toBe("LATEST\ntwo\n")
+    const conflicts = await journal.listConflicts(true)
+    expect(conflicts).toHaveLength(1)
+    expect(vault.text(conflicts[0]?.conflictPath ?? "")).toBe("one\nTWO\n")
+    controller.stop()
+  })
+
+  it("preserves a local edit that races with a remote delete", async () => {
+    const encoder = new TextEncoder()
+    const baseBytes = encoder.encode("base content").buffer
+    const lateLocalBytes = encoder.encode("late local edit").buffer
+    const identity = randomId()
+    class RacingDeleteVault extends FakeVault {
+      raceNextDelete = true
+
+      override async replaceIfUnchanged(
+        path: string,
+        expectedBytes: ArrayBuffer | null,
+        replacementBytes: ArrayBuffer | null,
+        isText: boolean,
+      ): Promise<boolean> {
+        if (this.raceNextDelete && path === "note.md" && replacementBytes === null) {
+          this.raceNextDelete = false
+          this.files.set(path, lateLocalBytes.slice(0))
+        }
+        return super.replaceIfUnchanged(path, expectedBytes, replacementBytes, isText)
+      }
+    }
+    const vault = new RacingDeleteVault({ "note.md": "base content" })
+    const journal = new MemoryJournal()
+    const remote = new FakeRemote()
+    await seedTrackedText(journal, remote, identity, baseBytes)
+    remote.addRemoteRevision(
+      {
+        operationId: "remote-delete-operation",
+        revisionId: "remote-delete-revision",
+        fileId: identity,
+        action: "delete",
+        path: "note.md",
+        previousPath: null,
+        parents: ["common-base"],
+        authorDeviceId: "device-remote",
+        blobId: null,
+        isText: true,
+      },
+      null,
+    )
+    const controller = new SyncController(
+      vault,
+      journal,
+      remote,
+      new FakeCrypto(),
+      () => ALL_CATEGORIES,
+      () => {},
+    )
+
+    await controller.start(TEST_DEVICE)
+
+    expect(vault.text("note.md")).toBeNull()
+    const conflicts = await journal.listConflicts(true)
+    expect(conflicts).toHaveLength(1)
+    expect(vault.text(conflicts[0]?.conflictPath ?? "")).toBe("late local edit")
+    expect(await journal.listPending()).toEqual([])
     controller.stop()
   })
 

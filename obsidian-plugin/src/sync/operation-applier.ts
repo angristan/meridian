@@ -20,6 +20,7 @@ import {
   isSyncablePath,
   pathsCollide,
 } from "../vault/path-policy"
+import { revisionHeads } from "./revision-heads"
 import type { RevisionLoader } from "./revision-loader"
 import { snapshotFor } from "./snapshots"
 
@@ -76,6 +77,15 @@ export class OperationApplier {
       throw new Error("Remote operation targets an excluded path")
     }
 
+    await this.applyFileRevision(device, revision, operation, 1)
+  }
+
+  private async applyFileRevision(
+    device: DeviceKeyMaterial,
+    revision: DecryptedRevision,
+    operation: RemoteOperation,
+    retriesRemaining: number,
+  ): Promise<void> {
     const snapshots = await this.journal.getSnapshots()
     const identitySnapshot = [...snapshots.values()].find(
       (snapshot) => snapshot.fileId === revision.fileId,
@@ -101,42 +111,144 @@ export class OperationApplier {
       )
     }
 
-    const pending = (await this.journal.listPending()).find(
-      (entry) => entry.path === effectiveRevision.path || entry.fileId === revision.fileId,
-    )
+    let pending: JournalEntry | null =
+      (await this.journal.listPending()).find(
+        (entry) => entry.path === effectiveRevision.path || entry.fileId === revision.fileId,
+      ) ?? null
+    let expectedBytes: ArrayBuffer | null = null
+    if (!pending && identitySnapshot) {
+      const inspected = await this.inspectTrackedFile(identitySnapshot)
+      pending = inspected.pending
+      expectedBytes = inspected.bytes
+    }
     if (pending) {
+      if (pending.action === "delete" && effectiveRevision.action === "delete") {
+        await this.journal.putEntry({
+          ...pending,
+          state: "complete",
+          error: null,
+          preparedRevision: null,
+        })
+        await this.journal.removeSnapshot(pending.path)
+        await this.recordRevision(effectiveRevision, operation, false)
+        return
+      }
       if (await this.tryMergeText(device, effectiveRevision, operation, pending)) return
       await this.materializeConflict(effectiveRevision)
       await this.recordRevision(effectiveRevision, operation, true)
       return
     }
 
+    if (
+      effectiveRevision.action !== "delete" &&
+      effectiveRevision.path !== identitySnapshot?.path &&
+      !(
+        effectiveRevision.previousPath &&
+        pathsCollide(effectiveRevision.previousPath, effectiveRevision.path)
+      ) &&
+      (await this.vault.exists(effectiveRevision.path))
+    ) {
+      await this.materializeConflict(effectiveRevision)
+      await this.recordRevision(effectiveRevision, operation, true)
+      return
+    }
+
+    let applied = false
     if (effectiveRevision.action === "delete") {
-      await this.vault.remove(effectiveRevision.path)
-      await this.journal.removeSnapshot(effectiveRevision.path)
+      applied = await this.vault.replaceIfUnchanged(
+        effectiveRevision.path,
+        expectedBytes,
+        null,
+        effectiveRevision.isText,
+      )
+      if (applied) await this.journal.removeSnapshot(effectiveRevision.path)
     } else {
       if (!effectiveRevision.bytes) throw new Error("Content revision is missing decrypted bytes")
       const previousPath = effectiveRevision.previousPath
-      const collidingRename =
-        previousPath !== null &&
-        previousPath !== effectiveRevision.path &&
-        pathsCollide(previousPath, effectiveRevision.path)
-      if (collidingRename) await this.vault.rename(previousPath, effectiveRevision.path)
-      await this.vault.write(effectiveRevision.path, effectiveRevision.bytes)
-      await this.journal.putSnapshot(
-        await snapshotFor(
-          effectiveRevision.path,
-          effectiveRevision.fileId,
-          effectiveRevision.bytes,
-          this.vault.configDir,
-        ),
-      )
       if (previousPath && previousPath !== effectiveRevision.path) {
-        if (!collidingRename) await this.vault.remove(previousPath)
-        await this.journal.removeSnapshot(previousPath)
+        applied =
+          expectedBytes !== null &&
+          (await this.vault.renameIfUnchanged(previousPath, effectiveRevision.path, expectedBytes))
+        if (applied) {
+          applied = await this.vault.replaceIfUnchanged(
+            effectiveRevision.path,
+            expectedBytes,
+            effectiveRevision.bytes,
+            effectiveRevision.isText,
+          )
+        }
+      } else {
+        applied = await this.vault.replaceIfUnchanged(
+          effectiveRevision.path,
+          expectedBytes,
+          effectiveRevision.bytes,
+          effectiveRevision.isText,
+        )
+      }
+      if (applied) {
+        await this.journal.putSnapshot(
+          await snapshotFor(
+            effectiveRevision.path,
+            effectiveRevision.fileId,
+            effectiveRevision.bytes,
+            this.vault.configDir,
+          ),
+        )
+        if (previousPath && previousPath !== effectiveRevision.path) {
+          await this.journal.removeSnapshot(previousPath)
+        }
       }
     }
+
+    if (!applied) {
+      if (retriesRemaining > 0) {
+        await this.applyFileRevision(device, revision, operation, retriesRemaining - 1)
+        return
+      }
+      await this.materializeConflict(effectiveRevision)
+      await this.recordRevision(effectiveRevision, operation, true)
+      return
+    }
     await this.recordRevision(effectiveRevision, operation, false)
+  }
+
+  private async inspectTrackedFile(snapshot: {
+    path: string
+    fileId: string
+    fingerprint: string
+  }): Promise<{ pending: JournalEntry | null; bytes: ArrayBuffer | null }> {
+    let bytes: ArrayBuffer | null = null
+    if (await this.vault.exists(snapshot.path)) {
+      try {
+        bytes = await this.vault.read(snapshot.path)
+      } catch (error) {
+        if (await this.vault.exists(snapshot.path)) throw error
+      }
+    }
+    if (bytes && (await fingerprint(bytes)) === snapshot.fingerprint) {
+      return { pending: null, bytes }
+    }
+
+    const heads = revisionHeads(await this.journal.listFileRevisions(snapshot.fileId))
+    const entry: JournalEntry = {
+      id: randomId(),
+      action: bytes ? "upsert" : "delete",
+      fileId: snapshot.fileId,
+      path: snapshot.path,
+      previousPath: null,
+      fingerprint: bytes ? await fingerprint(bytes) : null,
+      baseRevisionId: heads.length === 1 ? (heads[0]?.revisionId ?? null) : null,
+      parentRevisionIds: heads.map((head) => head.revisionId),
+      restoreSourceRevisionId: null,
+      revisionId: randomId(),
+      createdAt: Date.now(),
+      attempts: 0,
+      state: "queued",
+      error: null,
+      preparedRevision: null,
+    }
+    await this.journal.putEntry(entry)
+    return { pending: entry, bytes }
   }
 
   private async validateRevisionGraph(
@@ -199,16 +311,23 @@ export class OperationApplier {
       if (await this.vault.exists(revision.path)) {
         const localBytes = await this.vault.read(revision.path)
         await this.vault.write(target, localBytes)
-        await this.vault.remove(revision.path)
-        await this.journal.removeSnapshot(revision.path)
-        for (const pending of await this.journal.listPending()) {
-          if (pending.path !== revision.path) continue
-          await this.journal.putEntry({
-            ...pending,
-            state: "complete",
-            error: null,
-            preparedRevision: null,
-          })
+        const removed = await this.vault.replaceIfUnchanged(
+          revision.path,
+          localBytes,
+          null,
+          revision.isText,
+        )
+        if (removed) {
+          await this.journal.removeSnapshot(revision.path)
+          for (const pending of await this.journal.listPending()) {
+            if (pending.path !== revision.path) continue
+            await this.journal.putEntry({
+              ...pending,
+              state: "complete",
+              error: null,
+              preparedRevision: null,
+            })
+          }
         }
       }
     } else {
@@ -287,7 +406,9 @@ export class OperationApplier {
       if (merged.status !== "merged") return false
 
       const mergedBytes = copyBuffer(merged.content)
-      await this.vault.write(pending.path, mergedBytes)
+      if (!(await this.vault.replaceIfUnchanged(pending.path, localBytes, mergedBytes, true))) {
+        return false
+      }
       await this.journal.putEntry({
         ...pending,
         fingerprint: await fingerprint(mergedBytes),
