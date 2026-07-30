@@ -130,6 +130,36 @@ describe("Reconciler", () => {
     ])
   })
 
+  it("does not tombstone config files hidden by local category settings", async () => {
+    const identity = randomId()
+    const bytes = new TextEncoder().encode("settings").buffer
+    const vault = new FakeVault({ ".config/app.json": "settings" })
+    const journal = new MemoryJournal()
+    await journal.replaceSnapshots([
+      {
+        path: ".config/app.json",
+        fileId: identity,
+        fingerprint: await fingerprint(bytes),
+        size: bytes.byteLength,
+        mtime: 1,
+        kind: "config",
+      },
+    ])
+    const disabled = { ...ALL_CATEGORIES, main: false }
+
+    await new Reconciler(vault, journal).reconcile(disabled)
+    vault.files.delete(".config/app.json")
+    await new Reconciler(vault, journal).reconcile(disabled)
+
+    expect(await journal.listPending()).toEqual([])
+    expect((await journal.getSnapshots()).get(".config/app.json")?.fileId).toBe(identity)
+
+    await new Reconciler(vault, journal).reconcile(ALL_CATEGORIES)
+    expect(await journal.listPending()).toEqual([
+      expect.objectContaining({ action: "delete", path: ".config/app.json", fileId: identity }),
+    ])
+  })
+
   it("queues tombstones for disappeared files", async () => {
     const journal = new MemoryJournal()
     await journal.replaceSnapshots([

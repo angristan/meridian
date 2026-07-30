@@ -7,7 +7,7 @@ import type {
 } from "../model"
 import { randomId } from "../platform/bytes"
 import type { JournalPort } from "../storage/journal"
-import { pathsCollide } from "../vault/path-policy"
+import { configCategoryForPath, pathsCollide } from "../vault/path-policy"
 import { revisionHeads } from "./revision-heads"
 
 export interface ReconcileResult {
@@ -30,7 +30,14 @@ export class Reconciler {
     const pendingBefore = new Set(pendingEntries.map((entry) => entry.path))
     const pendingByPath = new Map(pendingEntries.map((entry) => [entry.path, entry]))
     const currentByPath = new Map(current.map((snapshot) => [snapshot.path, snapshot]))
-    const removed = [...previous.values()].filter((snapshot) => !currentByPath.has(snapshot.path))
+    const ignoredPrevious = [...previous.values()].filter(
+      (snapshot) => !categoryEnabled(snapshot, categories, this.vault.configDir),
+    )
+    const removed = [...previous.values()].filter(
+      (snapshot) =>
+        categoryEnabled(snapshot, categories, this.vault.configDir) &&
+        !currentByPath.has(snapshot.path),
+    )
     const removedByFingerprint = groupByFingerprint(removed)
     const consumedRemovals = new Set<string>()
     const identifiedCurrent = new Map<string, FileSnapshot>()
@@ -89,7 +96,10 @@ export class Reconciler {
       queued += 1
     }
 
-    const nextSnapshots = new Map(identifiedCurrent)
+    const nextSnapshots = new Map(
+      ignoredPrevious.map((snapshot) => [snapshot.path, snapshot] as const),
+    )
+    for (const [path, snapshot] of identifiedCurrent) nextSnapshots.set(path, snapshot)
     for (const path of pendingBefore) {
       const baseline = previous.get(path)
       if (baseline) nextSnapshots.set(path, baseline)
@@ -134,6 +144,16 @@ export class Reconciler {
       parentRevisionIds: heads.map((revision) => revision.revisionId),
     }
   }
+}
+
+function categoryEnabled(
+  snapshot: FileSnapshot,
+  categories: Record<ConfigCategory, boolean>,
+  configDir: string,
+): boolean {
+  if (snapshot.kind === "vault") return true
+  const category = configCategoryForPath(snapshot.path, configDir)
+  return category !== null && categories[category]
 }
 
 function groupByFingerprint(snapshots: FileSnapshot[]): Map<string, FileSnapshot[]> {
