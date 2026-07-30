@@ -90,6 +90,17 @@ export class OperationApplier {
           ? identitySnapshot.path
           : null),
     }
+    const targetSnapshot = snapshots.get(effectiveRevision.path)
+    if (targetSnapshot && targetSnapshot.fileId !== revision.fileId) {
+      if (effectiveRevision.action === "delete") {
+        await this.recordRevision(effectiveRevision, operation, false)
+        return
+      }
+      throw new Error(
+        `Remote path ${effectiveRevision.path} belongs to another tracked file; rename it locally and retry`,
+      )
+    }
+
     const pending = (await this.journal.listPending()).find(
       (entry) => entry.path === effectiveRevision.path || entry.fileId === revision.fileId,
     )

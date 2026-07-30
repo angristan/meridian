@@ -907,6 +907,67 @@ describe("SyncController", () => {
     controller.stop()
   })
 
+  it("rejects remote content that reuses another file identity path", async () => {
+    const occupiedIdentity = randomId()
+    const incomingIdentity = randomId()
+    const occupiedBytes = new TextEncoder().encode("occupied content").buffer
+    const vault = new FakeVault({ "shared.md": "occupied content" })
+    const journal = new MemoryJournal()
+    await journal.replaceSnapshots([
+      {
+        path: "shared.md",
+        fileId: occupiedIdentity,
+        fingerprint: await fingerprint(occupiedBytes),
+        size: occupiedBytes.byteLength,
+        mtime: 1,
+        kind: "vault",
+      },
+    ])
+    await journal.putRevision({
+      revisionId: "incoming-base",
+      fileId: incomingIdentity,
+      path: "old-name.md",
+      parents: [],
+      deviceId: "device-remote",
+      createdAt: 1,
+      cursor: 0,
+      tombstone: false,
+      isConflict: false,
+      operation: null,
+    })
+    const remote = new FakeRemote()
+    remote.addRemoteRevision(
+      {
+        operationId: "path-reuse-operation",
+        revisionId: "path-reuse-revision",
+        fileId: incomingIdentity,
+        action: "upsert",
+        path: "shared.md",
+        previousPath: null,
+        parents: ["incoming-base"],
+        authorDeviceId: "device-remote",
+        blobId: "path-reuse-blob",
+        isText: true,
+      },
+      new TextEncoder().encode("incoming content").buffer,
+    )
+    const controller = new SyncController(
+      vault,
+      journal,
+      remote,
+      new FakeCrypto(),
+      () => ALL_CATEGORIES,
+      () => {},
+    )
+
+    await controller.start(TEST_DEVICE)
+
+    expect(vault.text("shared.md")).toBe("occupied content")
+    expect(await journal.getCursor()).toBe(0)
+    expect(controller.getStatus().error).toMatch(/belongs to another tracked file/)
+    controller.stop()
+  })
+
   it("restores retained history as a new revision", async () => {
     const encoder = new TextEncoder()
     const oldBytes = encoder.encode("old content").buffer
@@ -993,6 +1054,70 @@ describe("SyncController", () => {
       fileId: identity,
       parents: ["revision-current", "revision-old"],
     })
+    controller.stop()
+  })
+
+  it("rejects history restores onto another file identity", async () => {
+    const sourceIdentity = randomId()
+    const occupiedIdentity = randomId()
+    const sourceBytes = new TextEncoder().encode("historical content").buffer
+    const occupiedBytes = new TextEncoder().encode("occupied content").buffer
+    const vault = new FakeVault({ "shared.md": "occupied content" })
+    const journal = new MemoryJournal()
+    await journal.replaceSnapshots([
+      {
+        path: "shared.md",
+        fileId: occupiedIdentity,
+        fingerprint: await fingerprint(occupiedBytes),
+        size: occupiedBytes.byteLength,
+        mtime: 1,
+        kind: "vault",
+      },
+    ])
+    const remote = new FakeRemote()
+    remote.blobs.set("source-blob", sourceBytes)
+    await journal.putRevision({
+      revisionId: "source-revision",
+      fileId: sourceIdentity,
+      path: "shared.md",
+      parents: [],
+      deviceId: TEST_DEVICE.deviceId,
+      createdAt: 1,
+      cursor: 0,
+      tombstone: false,
+      isConflict: false,
+      operation: {
+        cursor: 0,
+        logHash: "hash-source",
+        envelope: {
+          operationId: "source-operation",
+          revisionId: "source-revision",
+          fileId: sourceIdentity,
+          action: "upsert",
+          path: "shared.md",
+          previousPath: null,
+          parents: [],
+          authorDeviceId: TEST_DEVICE.deviceId,
+          blobId: "source-blob",
+          isText: true,
+        },
+      },
+    })
+    const controller = new SyncController(
+      vault,
+      journal,
+      remote,
+      new FakeCrypto(),
+      () => ALL_CATEGORIES,
+      () => {},
+    )
+    await controller.start(TEST_DEVICE)
+
+    await expect(controller.restoreRevision("source-revision")).rejects.toThrow(
+      /belongs to another tracked file/,
+    )
+    expect(vault.text("shared.md")).toBe("occupied content")
+    expect(await journal.listPending()).toEqual([])
     controller.stop()
   })
 

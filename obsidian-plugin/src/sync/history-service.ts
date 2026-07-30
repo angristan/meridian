@@ -32,10 +32,15 @@ export class HistoryService {
     const decrypted = await this.revisions.load(device, source)
     if (!decrypted.bytes) throw new Error("The selected revision has no content")
     const heads = revisionHeads(await this.journal.listFileRevisions(source.fileId))
-    const currentSnapshot = [...(await this.journal.getSnapshots()).values()].find(
+    const snapshots = await this.journal.getSnapshots()
+    const currentSnapshot = [...snapshots.values()].find(
       (snapshot) => snapshot.fileId === source.fileId,
     )
     const path = currentSnapshot?.path ?? heads[0]?.path ?? source.path
+    const occupant = snapshots.get(path)
+    if (occupant && occupant.fileId !== source.fileId) {
+      throw new Error(`Restore path ${path} belongs to another tracked file`)
+    }
     const parents = uniqueIds([...heads.map((revision) => revision.revisionId), source.revisionId])
     const entry: JournalEntry = {
       id: randomId(),
