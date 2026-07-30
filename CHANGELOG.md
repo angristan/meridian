@@ -1,3 +1,11 @@
+## [1.6.2](https://github.com/angristan/meridian/compare/1.6.1...1.6.2) (2026-07-30)
+
+
+### Performance Improvements
+
+* avoid quadratic vault collision scans ([e32df5e](https://github.com/angristan/meridian/commit/e32df5eee3908dfc27f44beaa111f076196ede58))
+* yield during large vault reconciliation ([d19a7c9](https://github.com/angristan/meridian/commit/d19a7c9ad6a3121c8ce3bb683a09a72c30ce2692))
+
 ## [1.6.1](https://github.com/angristan/meridian/compare/1.6.0...1.6.1) (2026-07-30)
 
 
