@@ -15,6 +15,7 @@ const CHUNK_SIZE = 4 * 1024 * 1024
 export interface PushResult {
   stopped: boolean
   committed: boolean
+  error: Error | null
 }
 
 export class PushEngine {
@@ -54,7 +55,7 @@ export class PushEngine {
     emit()
 
     for (const entry of entries) {
-      if (shouldStop()) return { stopped: true, committed }
+      if (shouldStop()) return { stopped: true, committed, error: firstError }
       emit({
         currentPath: entry.path,
         stage: "encrypting",
@@ -65,7 +66,7 @@ export class PushEngine {
       })
       try {
         const result = await this.pushEntry(device, entry, emit, shouldStop)
-        if (result.stopped) return { stopped: true, committed }
+        if (result.stopped) return { stopped: true, committed, error: firstError }
         committed = true
         emit({
           processed: progress.processed + 1,
@@ -94,8 +95,7 @@ export class PushEngine {
         })
       }
     }
-    if (firstError) throw firstError
-    return { stopped: false, committed }
+    return { stopped: false, committed, error: firstError }
   }
 
   private async pushEntry(

@@ -295,6 +295,7 @@ export class SyncController {
     if (push.committed) {
       this.rerunReason = mergeSyncReasons(this.rerunReason, "notification")
     }
+    if (push.error) throw push.error
 
     this.updateStatus({
       phase: "idle",

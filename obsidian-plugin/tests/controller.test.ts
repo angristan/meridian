@@ -179,6 +179,38 @@ describe("SyncController", () => {
     controller.stop()
   })
 
+  it("pulls successful commits before surfacing a later push failure", async () => {
+    class PartiallyFailingRemote extends FakeRemote {
+      private commitAttempts = 0
+
+      override async commit(envelope: unknown): Promise<{ cursor: number; logHash: string }> {
+        this.commitAttempts += 1
+        if (this.commitAttempts >= 2) throw new Error("second commit remains unavailable")
+        return super.commit(envelope)
+      }
+    }
+
+    const vault = new FakeVault({ "first.md": "first", "second.md": "second" })
+    const journal = new MemoryJournal()
+    const remote = new PartiallyFailingRemote()
+    const controller = new SyncController(
+      vault,
+      journal,
+      remote,
+      new FakeCrypto(),
+      () => ALL_CATEGORIES,
+      () => {},
+    )
+
+    await controller.start(TEST_DEVICE)
+
+    expect(remote.operations).toHaveLength(1)
+    expect(remote.getChangesCount).toBeGreaterThanOrEqual(2)
+    expect(await journal.getCursor()).toBe(1)
+    expect(controller.getStatus().error).toMatch(/second commit remains unavailable/)
+    controller.stop()
+  })
+
   it("replays the exact prepared revision after an ambiguous commit", async () => {
     class AmbiguousCommitRemote extends FakeRemote {
       readonly attempts: unknown[] = []
