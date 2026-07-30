@@ -52,8 +52,12 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
   private status: SyncStatus = { ...INITIAL_STATUS }
   private statusBar: HTMLElement | null = null
   private pausePromise: Promise<void> | null = null
+  private initializationPromise: Promise<void> | null = null
+  private initializationKey: string | null = null
+  private pluginLoaded = false
 
   override async onload(): Promise<void> {
+    this.pluginLoaded = true
     await this.loadSettings()
     if (!this.settings.deviceName) this.settings.deviceName = defaultDeviceName()
 
@@ -138,6 +142,7 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
   }
 
   override onunload(): void {
+    this.pluginLoaded = false
     this.scheduling.stop()
     this.controller?.stop()
     this.controller = null
@@ -877,7 +882,29 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
     })
   }
 
-  private async initializeExistingConnection(): Promise<void> {
+  private initializeExistingConnection(): Promise<void> {
+    const key = this.connectionInitializationKey()
+    if (this.initializationPromise && this.initializationKey === key) {
+      return this.initializationPromise
+    }
+
+    const previous = this.initializationPromise?.catch(() => {}) ?? Promise.resolve()
+    let operation: Promise<void>
+    operation = previous
+      .then(() => this.initializeExistingConnectionOnce(key))
+      .finally(() => {
+        if (this.initializationPromise === operation) {
+          this.initializationPromise = null
+          this.initializationKey = null
+        }
+      })
+    this.initializationKey = key
+    this.initializationPromise = operation
+    return operation
+  }
+
+  private async initializeExistingConnectionOnce(expectedKey: string): Promise<void> {
+    if (!this.pluginLoaded || this.connectionInitializationKey() !== expectedKey) return
     if (this.settings.pendingPairingCompletion) {
       this.updateStatus({
         phase: "error",
@@ -901,7 +928,9 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
     const previousController = this.controller
     this.controller = null
     await previousController?.quiesce()
+    let nextController: SyncController | null = null
     try {
+      if (!this.pluginLoaded || this.connectionInitializationKey() !== expectedKey) return
       const serialized = this.secrets.getDeviceKeyBundle(this.settings.deviceId)
       if (!serialized) throw new Error("Device keys are missing from Obsidian SecretStorage")
       const device = await this.cryptoPort.loadDevice(serialized)
@@ -914,7 +943,7 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
       )
       const journal = new IndexedDbJournal(`meridian-${this.settings.vaultId}`)
       const remote = new MeridianRemoteClient(this.settings.endpoint, new ObsidianHttpTransport())
-      this.controller = new SyncController(
+      nextController = new SyncController(
         vault,
         journal,
         remote,
@@ -926,17 +955,35 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
           platform: defaultDevicePlatform(),
         }),
       )
-      await this.controller.start(device)
+      await nextController.start(device)
+      if (!this.pluginLoaded || this.connectionInitializationKey() !== expectedKey) {
+        await nextController.quiesce()
+        return
+      }
+      this.controller = nextController
+      nextController = null
       this.scheduling.connectionStarted()
     } catch (error) {
-      this.controller?.stop()
-      this.controller = null
-      this.updateStatus({
-        phase: "error",
-        message: "Meridian could not start",
-        error: error instanceof Error ? error.message : String(error),
-      })
+      nextController?.stop()
+      if (this.pluginLoaded && this.connectionInitializationKey() === expectedKey) {
+        this.updateStatus({
+          phase: "error",
+          message: "Meridian could not start",
+          error: error instanceof Error ? error.message : String(error),
+        })
+      }
     }
+  }
+
+  private connectionInitializationKey(): string {
+    return JSON.stringify([
+      this.settings.enabled,
+      this.settings.endpoint,
+      this.settings.vaultId,
+      this.settings.deviceId,
+      this.settings.pendingPairingCompletion?.pairingId ?? null,
+      this.settings.pendingDeviceRemoval?.deviceId ?? null,
+    ])
   }
 
   private runConnectionCommand(action: "pause" | "resume"): void {
