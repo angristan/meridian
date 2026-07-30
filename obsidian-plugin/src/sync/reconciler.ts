@@ -6,6 +6,7 @@ import type {
   VaultPort,
 } from "../model"
 import { randomId } from "../platform/bytes"
+import { yieldToEventLoop } from "../platform/scheduling"
 import type { JournalPort } from "../storage/journal"
 import { configCategoryForPath, normalizeVaultPath } from "../vault/path-policy"
 import { revisionHeads } from "./revision-heads"
@@ -23,11 +24,12 @@ export class Reconciler {
 
   async reconcile(categories: Record<ConfigCategory, boolean>): Promise<ReconcileResult> {
     const current = await this.vault.listFiles(categories)
-    assertNoCaseCollisions(current)
+    await assertNoCaseCollisions(current)
 
     const previous = await this.journal.getSnapshots()
     const pendingEntries = await this.journal.listPending()
     const pendingBefore = new Set(pendingEntries.map((entry) => entry.path))
+    const pendingPaths = new Set(pendingBefore)
     const pendingByPath = new Map(pendingEntries.map((entry) => [entry.path, entry]))
     const currentByPath = new Map(current.map((snapshot) => [snapshot.path, snapshot]))
     const ignoredPrevious = [...previous.values()].filter(
@@ -42,8 +44,11 @@ export class Reconciler {
     const consumedRemovals = new Set<string>()
     const identifiedCurrent = new Map<string, FileSnapshot>()
     let queued = 0
+    let processed = 0
 
     for (const scanned of current) {
+      processed += 1
+      if (processed % 100 === 0) await yieldToEventLoop()
       const prior = previous.get(scanned.path)
       const renameSource = !prior
         ? uniqueUnconsumedMatch(removedByFingerprint.get(scanned.fingerprint), consumedRemovals)
@@ -65,15 +70,18 @@ export class Reconciler {
       // the old path and silently split one file identity into two operations.
       if (renameSource) consumedRemovals.add(renameSource.path)
       if (prior?.fingerprint === snapshot.fingerprint) continue
-      if (await this.journal.hasPendingPath(snapshot.path)) continue
+      if (pendingPaths.has(snapshot.path)) continue
 
       await this.queueUpsert(snapshot, renameSource?.path ?? null)
+      pendingPaths.add(snapshot.path)
       queued += 1
     }
 
     for (const snapshot of removed) {
+      processed += 1
+      if (processed % 100 === 0) await yieldToEventLoop()
       if (consumedRemovals.has(snapshot.path)) continue
-      if (await this.journal.hasPendingPath(snapshot.path)) continue
+      if (pendingPaths.has(snapshot.path)) continue
       const { baseRevisionId, parentRevisionIds } = await this.revisionAncestry(snapshot.fileId)
       const entry: JournalEntry = {
         id: randomId(),
@@ -93,6 +101,7 @@ export class Reconciler {
         preparedRevision: null,
       }
       await this.journal.putEntry(entry)
+      pendingPaths.add(snapshot.path)
       queued += 1
     }
 
@@ -106,8 +115,7 @@ export class Reconciler {
       else nextSnapshots.delete(path)
     }
     for (const snapshot of removed) {
-      if (await this.journal.hasPendingPath(snapshot.path))
-        nextSnapshots.set(snapshot.path, snapshot)
+      if (pendingPaths.has(snapshot.path)) nextSnapshots.set(snapshot.path, snapshot)
     }
     await this.journal.replaceSnapshots([...nextSnapshots.values()])
     return { queued, files: current.length }
@@ -175,9 +183,12 @@ function uniqueUnconsumedMatch(
   return available.length === 1 ? (available[0] ?? null) : null
 }
 
-function assertNoCaseCollisions(snapshots: ScannedFileSnapshot[]): void {
+async function assertNoCaseCollisions(snapshots: ScannedFileSnapshot[]): Promise<void> {
   const pathByCollisionKey = new Map<string, string>()
+  let processed = 0
   for (const snapshot of snapshots) {
+    processed += 1
+    if (processed % 100 === 0) await yieldToEventLoop()
     const collisionKey = normalizeVaultPath(snapshot.path).toLocaleLowerCase("en-US")
     const existing = pathByCollisionKey.get(collisionKey)
     if (existing !== undefined && existing !== snapshot.path) {

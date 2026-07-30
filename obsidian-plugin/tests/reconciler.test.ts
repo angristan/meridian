@@ -17,6 +17,42 @@ describe("Reconciler", () => {
     expect(JSON.stringify(pending)).not.toContain("private text")
   })
 
+  it("uses the initial pending index instead of rescanning the journal per file", async () => {
+    class IndexedPendingJournal extends MemoryJournal {
+      override hasPendingPath(): Promise<boolean> {
+        throw new Error("Reconciliation should not rescan all journal entries")
+      }
+    }
+
+    const vault = new FakeVault({ "note.md": "pending content" })
+    const journal = new IndexedPendingJournal()
+    const fileId = randomId()
+    await journal.putEntry({
+      id: randomId(),
+      action: "upsert",
+      fileId,
+      path: "note.md",
+      previousPath: null,
+      fingerprint: "pending-fingerprint",
+      baseRevisionId: null,
+      parentRevisionIds: [],
+      restoreSourceRevisionId: null,
+      revisionId: randomId(),
+      createdAt: 1,
+      attempts: 0,
+      state: "queued",
+      error: null,
+      preparedRevision: null,
+    })
+
+    const result = await new Reconciler(vault, journal).reconcile(ALL_CATEGORIES)
+
+    expect(result).toEqual({ queued: 0, files: 1 })
+    expect(await journal.listPending()).toEqual([
+      expect.objectContaining({ fileId, path: "note.md" }),
+    ])
+  })
+
   it("recovers a stable file identity from exact-path revision history", async () => {
     const identity = randomId()
     const vault = new FakeVault({ "note.md": "existing content" })

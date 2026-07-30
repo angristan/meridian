@@ -1,6 +1,7 @@
 import { normalizePath, TFile, type Vault } from "obsidian"
 import type { ConfigCategory, ScannedFileSnapshot, VaultPort } from "../model"
 import { fingerprint } from "../platform/bytes"
+import { yieldToEventLoop } from "../platform/scheduling"
 import {
   configCategoryForPath,
   isConfigPath,
@@ -47,7 +48,7 @@ export class ObsidianVaultPort implements VaultPort {
         kind: isConfigPath(path, this.configDir) ? "config" : "vault",
       })
       index += 1
-      if (index % 25 === 0) await yieldToUi()
+      if (index % 25 === 0) await yieldToEventLoop()
     }
     return snapshots
   }
@@ -212,8 +213,4 @@ export class ObsidianVaultPort implements VaultPort {
       }
     }
   }
-}
-
-function yieldToUi(): Promise<void> {
-  return new Promise((resolve) => window.setTimeout(resolve, 0))
 }
