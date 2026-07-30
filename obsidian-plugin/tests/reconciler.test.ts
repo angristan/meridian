@@ -104,6 +104,16 @@ describe("Reconciler", () => {
     ])
   })
 
+  it("rejects case-insensitive path collisions before queuing changes", async () => {
+    const vault = new FakeVault({ "Notes/Example.md": "one", "notes/example.md": "two" })
+    const journal = new MemoryJournal()
+
+    await expect(new Reconciler(vault, journal).reconcile(ALL_CATEGORIES)).rejects.toThrow(
+      /Case or Unicode path collision/,
+    )
+    expect(await journal.listPending()).toEqual([])
+  })
+
   it("recognizes a unique same-content move as a rename", async () => {
     const vault = new FakeVault({ "new/name.md": "same content" })
     const journal = new MemoryJournal()

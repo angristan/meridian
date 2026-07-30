@@ -7,7 +7,7 @@ import type {
 } from "../model"
 import { randomId } from "../platform/bytes"
 import type { JournalPort } from "../storage/journal"
-import { configCategoryForPath, pathsCollide } from "../vault/path-policy"
+import { configCategoryForPath, normalizeVaultPath } from "../vault/path-policy"
 import { revisionHeads } from "./revision-heads"
 
 export interface ReconcileResult {
@@ -176,16 +176,13 @@ function uniqueUnconsumedMatch(
 }
 
 function assertNoCaseCollisions(snapshots: ScannedFileSnapshot[]): void {
-  const sorted = [...snapshots].sort((left, right) => left.path.localeCompare(right.path))
-  for (let left = 0; left < sorted.length; left += 1) {
-    const candidate = sorted[left]
-    if (!candidate) continue
-    for (let right = left + 1; right < sorted.length; right += 1) {
-      const other = sorted[right]
-      if (!other) continue
-      if (pathsCollide(candidate.path, other.path) && candidate.path !== other.path) {
-        throw new Error(`Case or Unicode path collision: ${candidate.path} and ${other.path}`)
-      }
+  const pathByCollisionKey = new Map<string, string>()
+  for (const snapshot of snapshots) {
+    const collisionKey = normalizeVaultPath(snapshot.path).toLocaleLowerCase("en-US")
+    const existing = pathByCollisionKey.get(collisionKey)
+    if (existing !== undefined && existing !== snapshot.path) {
+      throw new Error(`Case or Unicode path collision: ${existing} and ${snapshot.path}`)
     }
+    pathByCollisionKey.set(collisionKey, snapshot.path)
   }
 }
