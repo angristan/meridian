@@ -120,7 +120,10 @@ export class DeletedFilesModal extends Modal {
           text: "Content is not available in local history.",
         })
       }
-      const history = row.createEl("button", { text: "History" })
+      const history = row.createEl("button", {
+        attr: { "aria-label": `View history for ${record.path}` },
+        text: "History",
+      })
       history.addEventListener("click", () => new HistoryModal(this.host, record.path).open())
     }
     this.updateRecoverButton()

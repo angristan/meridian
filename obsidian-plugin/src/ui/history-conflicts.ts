@@ -105,7 +105,9 @@ export class HistoryModal extends Modal {
     )
     for (const revision of revisions) {
       const button = this.list.createEl("button", { cls: "meridian-history-item" })
-      button.toggleClass("is-selected", revision.revisionId === this.selectedRevisionId)
+      const selected = revision.revisionId === this.selectedRevisionId
+      button.toggleClass("is-selected", selected)
+      button.setAttribute("aria-pressed", String(selected))
       button.setAttribute(
         "aria-label",
         `${revisionLabel(revision)} ${revision.path}, ${formatTime(revision.createdAt)}`,

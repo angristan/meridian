@@ -22,7 +22,12 @@ export class StorageModal extends Modal {
   private async render(): Promise<void> {
     const generation = ++this.generation
     this.contentEl.empty()
-    this.contentEl.createDiv({ cls: "setting-item-description", text: "Calculating storage…" })
+    const loading = this.contentEl.createDiv({
+      cls: "setting-item-description",
+      text: "Calculating storage…",
+    })
+    loading.setAttribute("role", "status")
+    loading.setAttribute("aria-live", "polite")
     try {
       const usage = await this.host.getStorageUsage()
       if (generation !== this.generation) return
@@ -114,12 +119,13 @@ class StoragePruneConfirmationModal extends Modal {
             const result = await this.host.pruneStorage()
             this.contentEl.empty()
             this.setTitle("Cleanup complete")
-            this.contentEl.createDiv({
+            const resultMessage = this.contentEl.createDiv({
               text:
                 result.deletedCount === 0
                   ? `No unused uploads older than ${result.graceDays} days were found.`
                   : `Deleted ${result.deletedCount} unused uploads (${formatBytes(result.deletedBytes)}).`,
             })
+            resultMessage.setAttribute("role", "status")
             new Setting(this.contentEl).addButton((done) =>
               done
                 .setButtonText("Done")

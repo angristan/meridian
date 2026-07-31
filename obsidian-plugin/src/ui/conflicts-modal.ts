@@ -77,7 +77,9 @@ export class ConflictsModal extends Modal {
     }
     for (const conflict of this.conflicts) {
       const button = this.list.createEl("button", { cls: "meridian-history-item" })
-      button.toggleClass("is-selected", conflict.id === this.selectedId)
+      const selected = conflict.id === this.selectedId
+      button.toggleClass("is-selected", selected)
+      button.setAttribute("aria-pressed", String(selected))
       button.setAttribute("aria-label", `Review conflict for ${conflict.sourcePath}`)
       button.createEl("strong", { text: conflict.sourcePath })
       const meta = button.createDiv({
@@ -177,7 +179,10 @@ export class ConflictsModal extends Modal {
     const copy = choice.createDiv()
     copy.createEl("strong", { text: title })
     copy.createDiv({ cls: "setting-item-description", text: description })
-    const button = choice.createEl("button", { text: title })
+    const button = choice.createEl("button", {
+      attr: { "aria-label": `${title} for ${details.conflict.sourcePath}` },
+      text: title,
+    })
     if (action === "use-incoming") button.addClass("mod-cta")
     if (action === "keep-current") button.addClass("mod-warning")
     button.addEventListener("click", () => {
@@ -235,7 +240,10 @@ function renderFilePreview(
   const header = panel.createDiv({ cls: "meridian-conflict-preview-header" })
   header.createEl("strong", { text: title })
   if (preview.kind !== "missing") {
-    const open = header.createEl("button", { text: "Open" })
+    const open = header.createEl("button", {
+      attr: { "aria-label": `Open ${title.toLowerCase()} at ${path}` },
+      text: "Open",
+    })
     open.addEventListener("click", () => void host.openPath(path))
   }
   if (preview.kind === "missing") {
