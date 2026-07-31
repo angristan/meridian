@@ -1,3 +1,10 @@
+## [1.6.6](https://github.com/angristan/meridian/compare/1.6.5...1.6.6) (2026-07-31)
+
+
+### Bug Fixes
+
+* streamline sync status view ([de66833](https://github.com/angristan/meridian/commit/de668338b471482c4eb6eae024e6d3280b2d453b))
+
 ## [1.6.5](https://github.com/angristan/meridian/compare/1.6.4...1.6.5) (2026-07-31)
 
 
