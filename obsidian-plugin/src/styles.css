@@ -208,6 +208,33 @@
   color: var(--text-normal);
 }
 
+.meridian-deleted-list {
+  display: grid;
+  gap: var(--size-4-2);
+  max-height: min(60vh, 640px);
+  overflow-y: auto;
+}
+
+.meridian-deleted-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: var(--size-4-3);
+  align-items: center;
+  padding: var(--size-4-3);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+}
+
+.meridian-deleted-item > input[type="checkbox"] {
+  width: var(--checkbox-size);
+  height: var(--checkbox-size);
+}
+
+.meridian-deleted-details {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .meridian-history-layout {
   display: grid;
   grid-template-columns: minmax(180px, 0.4fr) minmax(0, 1fr);
@@ -467,6 +494,15 @@
 
 .is-mobile .meridian-status-view {
   --meridian-view-padding: var(--size-4-3);
+}
+
+.is-mobile .meridian-deleted-item {
+  grid-template-columns: auto minmax(0, 1fr);
+}
+
+.is-mobile .meridian-deleted-item > button {
+  grid-column: 2;
+  justify-self: start;
 }
 
 .is-mobile .meridian-history-layout {

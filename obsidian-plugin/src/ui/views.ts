@@ -4,6 +4,7 @@ export {
   RecoveryModal,
   SetupLinkModal,
 } from "./connection-modals"
+export { DeletedFilesModal } from "./deleted-files-modal"
 export { PairingJoinModal } from "./devices-pairing"
 export { HistoryModal } from "./history-conflicts"
 export type { MeridianUiHost } from "./host"

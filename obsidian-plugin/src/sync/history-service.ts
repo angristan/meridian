@@ -1,4 +1,5 @@
 import type {
+  DeletedFileRecord,
   DeviceKeyMaterial,
   JournalEntry,
   LocalRevision,
@@ -39,6 +40,53 @@ export class HistoryService {
 
   async activity(localDeviceId: string, limit = 200): Promise<SyncActivity[]> {
     return revisionActivity(await this.journal.listRevisions(), localDeviceId, limit)
+  }
+
+  async deletedFiles(): Promise<DeletedFileRecord[]> {
+    const pendingFileIds = new Set((await this.journal.listPending()).map((entry) => entry.fileId))
+    const byFile = new Map<string, LocalRevision[]>()
+    for (const revision of await this.journal.listRevisions()) {
+      const revisions = byFile.get(revision.fileId) ?? []
+      revisions.push(revision)
+      byFile.set(revision.fileId, revisions)
+    }
+    const deleted: DeletedFileRecord[] = []
+    for (const [fileId, revisions] of byFile) {
+      if (pendingFileIds.has(fileId)) continue
+      const heads = revisionHeads(revisions)
+      if (heads.length === 0 || heads.some((revision) => !revision.tombstone)) continue
+      const latest = [...heads].sort(compareRevisionsDescending)[0]
+      if (!latest) continue
+      const source = nearestContentAncestor(
+        heads,
+        new Map(revisions.map((item) => [item.revisionId, item])),
+      )
+      deleted.push({
+        fileId,
+        path: latest.path,
+        deletedRevisionId: latest.revisionId,
+        deletedAt: latest.createdAt,
+        deviceId: latest.deviceId,
+        recoverableRevisionId: source?.revisionId ?? null,
+      })
+    }
+    return deleted.sort((left, right) => right.deletedAt - left.deletedAt)
+  }
+
+  async recoverDeleted(device: DeviceKeyMaterial, revisionId: string): Promise<RestoreResult> {
+    const deletion = await this.requireRevision(revisionId)
+    if (!deletion.tombstone) throw new Error("The selected revision is not a deletion")
+    const revisions = await this.journal.listFileRevisions(deletion.fileId)
+    const heads = revisionHeads(revisions)
+    if (heads.length === 0 || heads.some((revision) => !revision.tombstone)) {
+      throw new Error("This file is no longer deleted")
+    }
+    const source = nearestContentAncestor(
+      heads,
+      new Map(revisions.map((revision) => [revision.revisionId, revision])),
+    )
+    if (!source) throw new Error("No recoverable content is available for this file")
+    return this.restore(device, source.revisionId)
   }
 
   async preview(device: DeviceKeyMaterial, revisionId: string): Promise<RevisionPreview> {
@@ -203,6 +251,39 @@ export class HistoryService {
     if (!revision) throw new Error("The selected revision is no longer in local history")
     return revision
   }
+}
+
+function nearestContentAncestor(
+  starts: LocalRevision[],
+  byId: ReadonlyMap<string, LocalRevision>,
+): LocalRevision | null {
+  const visited = new Set(starts.map((revision) => revision.revisionId))
+  let frontier = uniqueIds(starts.flatMap((revision) => revision.parents))
+  while (frontier.length > 0) {
+    const revisions = frontier.flatMap((revisionId) => {
+      const revision = byId.get(revisionId)
+      return revision ? [revision] : []
+    })
+    const content = revisions.filter((revision) => !revision.tombstone)
+    if (content.length > 0) return content.sort(compareRevisionsDescending)[0] ?? null
+    const next: string[] = []
+    for (const revision of revisions) {
+      visited.add(revision.revisionId)
+      for (const parentId of revision.parents) {
+        if (!visited.has(parentId)) next.push(parentId)
+      }
+    }
+    frontier = uniqueIds(next)
+  }
+  return null
+}
+
+function compareRevisionsDescending(left: LocalRevision, right: LocalRevision): number {
+  return (
+    right.createdAt - left.createdAt ||
+    (right.cursor ?? -1) - (left.cursor ?? -1) ||
+    right.revisionId.localeCompare(left.revisionId)
+  )
 }
 
 function uniqueIds(values: string[]): string[] {

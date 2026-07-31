@@ -1,5 +1,6 @@
 import { Menu, Notice } from "obsidian"
 import { ActivityModal } from "./activity-modal"
+import { DeletedFilesModal } from "./deleted-files-modal"
 import { DevicesModal } from "./devices-pairing"
 import { DiagnosticsModal } from "./diagnostics-modal"
 import { ConflictsModal, HistoryModal } from "./history-conflicts"
@@ -76,6 +77,9 @@ function runAction(
       return
     case "history":
       if (activePath) new HistoryModal(host, activePath).open()
+      return
+    case "deleted":
+      new DeletedFilesModal(host).open()
       return
     case "conflicts":
       new ConflictsModal(host).open()

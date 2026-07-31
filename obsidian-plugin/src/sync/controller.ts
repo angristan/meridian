@@ -139,6 +139,16 @@ export class SyncController {
     return this.historyService.activity(this.requireDevice().deviceId, limit)
   }
 
+  deletedFiles() {
+    return this.historyService.deletedFiles()
+  }
+
+  async recoverDeleted(revisionId: string): Promise<void> {
+    const device = this.requireDevice()
+    await this.authenticate(device)
+    this.updateStatus(await this.historyService.recoverDeleted(device, revisionId))
+  }
+
   async previewRevision(revisionId: string) {
     const device = this.requireDevice()
     await this.authenticate(device)

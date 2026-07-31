@@ -3,6 +3,7 @@ import { createPackageCryptoPort } from "./crypto/package-adapter"
 import {
   type ConflictRecord,
   DEFAULT_SETTINGS,
+  type DeletedFileRecord,
   INITIAL_STATUS,
   type LocalRevision,
   type MeridianSettings,
@@ -36,6 +37,7 @@ import { IndexedDbJournal } from "./storage/journal"
 import { SyncController } from "./sync/controller"
 import { showQuickStatusMenu, showQuickStatusMenuAtElement } from "./ui/quick-status-menu"
 import {
+  DeletedFilesModal,
   HistoryModal,
   MeridianStatusView,
   type MeridianUiHost,
@@ -122,6 +124,15 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
       id: "recover-vault",
       name: "Recover vault ownership",
       callback: () => new RecoveryConnectModal(this).open(),
+    })
+    this.addCommand({
+      id: "show-deleted-files",
+      name: "Show deleted files",
+      checkCallback: (checking) => {
+        const available = Boolean(this.settings.endpoint)
+        if (available && !checking) new DeletedFilesModal(this).open()
+        return available
+      },
     })
     this.addCommand({
       id: "show-history",
@@ -325,6 +336,15 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
 
   async getActivity(limit = 200): Promise<SyncActivity[]> {
     return this.controller?.activity(limit) ?? []
+  }
+
+  async getDeletedFiles(): Promise<DeletedFileRecord[]> {
+    return this.controller?.deletedFiles() ?? []
+  }
+
+  async recoverDeleted(revisionId: string): Promise<void> {
+    if (!this.controller) throw new Error("Meridian is not connected")
+    await this.controller.recoverDeleted(revisionId)
   }
 
   getDiagnostics(): SyncDiagnostic[] {

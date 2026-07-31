@@ -227,6 +227,15 @@ export interface SyncActivity {
   local: boolean
 }
 
+export interface DeletedFileRecord {
+  fileId: string
+  path: string
+  deletedRevisionId: string
+  deletedAt: number
+  deviceId: string
+  recoverableRevisionId: string | null
+}
+
 export interface ConflictRecord {
   id: string
   sourcePath: string

@@ -1,6 +1,7 @@
 import type { App } from "obsidian"
 import type {
   ConflictRecord,
+  DeletedFileRecord,
   LocalRevision,
   MeridianSettings,
   PairingInvitation,
@@ -27,6 +28,8 @@ export interface MeridianUiHost {
   getStatus(): SyncStatus
   getHistory(path?: string): Promise<LocalRevision[]>
   getActivity(limit?: number): Promise<SyncActivity[]>
+  getDeletedFiles(): Promise<DeletedFileRecord[]>
+  recoverDeleted(revisionId: string): Promise<void>
   getDiagnostics(): SyncDiagnostic[]
   getDebugReport(): string
   previewRevision(revisionId: string): Promise<RevisionPreview>

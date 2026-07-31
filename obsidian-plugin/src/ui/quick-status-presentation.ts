@@ -7,6 +7,7 @@ export type QuickStatusActionId =
   | "resume"
   | "activity"
   | "history"
+  | "deleted"
   | "diagnostics"
   | "conflicts"
   | "devices"
@@ -73,6 +74,13 @@ export function presentQuickStatus(
     })
   }
   actions.push(
+    {
+      id: "deleted",
+      title: "Deleted files",
+      icon: "trash-2",
+      disabled: connection.kind === "unconfigured",
+      section: "inspect",
+    },
     {
       id: "conflicts",
       title: "Conflicts",

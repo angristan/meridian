@@ -2,6 +2,7 @@ import { ItemView, Notice, type WorkspaceLeaf } from "obsidian"
 import type { SyncPhase, SyncProgress } from "../model"
 import { connectionControlState, statusPresentation } from "../plugin/connection-control"
 import { ActivityModal } from "./activity-modal"
+import { DeletedFilesModal } from "./deleted-files-modal"
 import { DevicesModal } from "./devices-pairing"
 import { formatRelativeTime, formatTime } from "./format-time"
 import { ConflictsModal, HistoryModal } from "./history-conflicts"
@@ -151,6 +152,9 @@ export class MeridianStatusView extends ItemView {
 
     const historyButton = actionGrid.createEl("button", { text: "History" })
     historyButton.addEventListener("click", () => new HistoryModal(this.host).open())
+
+    const deletedButton = actionGrid.createEl("button", { text: "Deleted files" })
+    deletedButton.addEventListener("click", () => new DeletedFilesModal(this.host).open())
 
     const conflictsButton = actionGrid.createEl("button")
     conflictsButton.createSpan({ text: "Conflicts" })

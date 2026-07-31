@@ -132,6 +132,86 @@ describe("HistoryService", () => {
     })
   })
 
+  it("lists current deletions and recovers from the nearest content ancestor", async () => {
+    const vault = new FakeVault()
+    const journal = new MemoryJournal()
+    const remote = new FakeRemote()
+    const sourceBytes = new TextEncoder().encode("recover me").buffer
+    remote.blobs.set("source-blob", sourceBytes)
+    await journal.putRevision({
+      revisionId: "source-revision",
+      fileId: "deleted-file",
+      path: "Archive/deleted.md",
+      action: "upsert",
+      previousPath: null,
+      parents: [],
+      deviceId: TEST_DEVICE.deviceId,
+      createdAt: 1,
+      cursor: 1,
+      tombstone: false,
+      isConflict: false,
+      operation: {
+        cursor: 1,
+        logHash: "hash-1",
+        envelope: {
+          operationId: "source-operation",
+          revisionId: "source-revision",
+          fileId: "deleted-file",
+          action: "upsert",
+          path: "Archive/deleted.md",
+          previousPath: null,
+          parents: [],
+          authorDeviceId: TEST_DEVICE.deviceId,
+          blobId: "source-blob",
+          isText: true,
+        },
+      },
+    })
+    for (const [revisionId, createdAt] of [
+      ["deletion-one", 2],
+      ["deletion-two", 3],
+    ] as const) {
+      await journal.putRevision({
+        revisionId,
+        fileId: "deleted-file",
+        path: "Archive/deleted.md",
+        action: "delete",
+        previousPath: null,
+        parents: ["source-revision"],
+        deviceId: TEST_DEVICE.deviceId,
+        createdAt,
+        cursor: createdAt,
+        tombstone: true,
+        isConflict: false,
+        operation: null,
+      })
+    }
+    const history = service(vault, journal, remote)
+
+    await expect(history.deletedFiles()).resolves.toEqual([
+      {
+        fileId: "deleted-file",
+        path: "Archive/deleted.md",
+        deletedRevisionId: "deletion-two",
+        deletedAt: 3,
+        deviceId: TEST_DEVICE.deviceId,
+        recoverableRevisionId: "source-revision",
+      },
+    ])
+    await history.recoverDeleted(TEST_DEVICE, "deletion-two")
+
+    expect(vault.text("Archive/deleted.md")).toBe("recover me")
+    expect(await journal.listPending()).toMatchObject([
+      {
+        action: "restore",
+        fileId: "deleted-file",
+        parentRevisionIds: ["deletion-one", "deletion-two"],
+        restoreSourceRevisionId: "source-revision",
+      },
+    ])
+    await expect(history.deletedFiles()).resolves.toEqual([])
+  })
+
   it("never restores over an untracked occupied path", async () => {
     const vault = new FakeVault({ "shared.md": "untracked content" })
     const journal = new MemoryJournal()
