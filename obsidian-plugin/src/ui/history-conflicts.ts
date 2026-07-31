@@ -1,4 +1,4 @@
-import { Modal, Notice, Setting } from "obsidian"
+import { Modal, Notice, SearchComponent, Setting } from "obsidian"
 import type {
   LocalRevision,
   RemoteDevice,
@@ -18,6 +18,7 @@ export class HistoryModal extends Modal {
   private mode: "preview" | "changes" = "preview"
   private list: HTMLDivElement | null = null
   private detail: HTMLDivElement | null = null
+  private resultCount: HTMLDivElement | null = null
   private generation = 0
 
   constructor(
@@ -28,6 +29,7 @@ export class HistoryModal extends Modal {
   }
 
   override onOpen(): void {
+    this.modalEl.addClass("meridian-history-modal")
     this.setTitle(this.path ? `History · ${this.path}` : "Revision history")
     this.renderShell()
     void this.load()
@@ -39,17 +41,28 @@ export class HistoryModal extends Modal {
     this.devices = []
     this.list = null
     this.detail = null
+    this.resultCount = null
     this.contentEl.empty()
   }
 
   private renderShell(): void {
-    const search = new Setting(this.contentEl)
-    search.addSearch((component) =>
-      component.setPlaceholder("Search file history").onChange((value) => {
-        this.query = value
-        this.renderRevisionList()
-      }),
-    )
+    const toolbar = this.contentEl.createDiv({ cls: "meridian-history-toolbar" })
+    this.resultCount = toolbar.createDiv({
+      cls: "setting-item-description meridian-history-result-count",
+      text: "Loading revisions…",
+    })
+    this.resultCount.setAttribute("role", "status")
+    this.resultCount.setAttribute("aria-live", "polite")
+    const searchContainer = toolbar.createDiv({ cls: "meridian-history-search" })
+    const search = new SearchComponent(searchContainer)
+    search.setPlaceholder("Search file history").onChange((value) => {
+      this.query = value
+      const previousSelection = this.selectedRevisionId
+      this.selectFirstVisibleRevision()
+      this.renderRevisionList()
+      if (this.selectedRevisionId !== previousSelection) void this.renderDetail()
+    })
+    search.inputEl.setAttribute("aria-label", "Search revision history")
     const layout = this.contentEl.createDiv({ cls: "meridian-history-layout" })
     this.list = layout.createDiv({ cls: "meridian-history-list" })
     this.detail = layout.createDiv({ cls: "meridian-history-detail" })
@@ -79,15 +92,29 @@ export class HistoryModal extends Modal {
     }
   }
 
-  private renderRevisionList(): void {
-    if (!this.list) return
+  private visibleRevisions(): LocalRevision[] {
     const query = this.query.trim().toLocaleLowerCase()
-    const revisions = this.revisions.filter((revision) => {
+    return this.revisions.filter((revision) => {
       if (!query) return true
       return [revision.path, revision.previousPath ?? "", revisionLabel(revision)].some((value) =>
         value.toLocaleLowerCase().includes(query),
       )
     })
+  }
+
+  private selectFirstVisibleRevision(): void {
+    const revisions = this.visibleRevisions()
+    if (!revisions.some((revision) => revision.revisionId === this.selectedRevisionId)) {
+      this.selectedRevisionId = revisions[0]?.revisionId ?? null
+    }
+  }
+
+  private renderRevisionList(): void {
+    if (!this.list) return
+    const revisions = this.visibleRevisions()
+    this.resultCount?.setText(
+      `${revisions.length} ${revisions.length === 1 ? "revision" : "revisions"}`,
+    )
     this.list.empty()
     if (revisions.length === 0) {
       this.list.createDiv({
@@ -112,11 +139,21 @@ export class HistoryModal extends Modal {
         "aria-label",
         `${revisionLabel(revision)} ${revision.path}, ${formatTime(revision.createdAt)}`,
       )
-      button.createEl("strong", { text: revisionLabel(revision) })
-      button.createDiv({ cls: "meridian-history-path", text: revision.path })
+      const itemHeader = button.createDiv({ cls: "meridian-history-item-header" })
+      itemHeader.createEl("strong", { text: revisionLabel(revision) })
+      const relativeTime = itemHeader.createSpan({
+        cls: "setting-item-description meridian-history-item-time",
+        text: formatRelativeTime(revision.createdAt),
+      })
+      relativeTime.title = formatTime(revision.createdAt)
+      const path = button.createDiv({ cls: "meridian-history-path", text: revision.path })
+      path.title = revision.path
       button.createDiv({
-        cls: "setting-item-description",
-        text: `${revision.deviceId === this.host.settings.deviceId ? "This device" : (names.get(revision.deviceId) ?? shortId(revision.deviceId))} · ${formatRelativeTime(revision.createdAt)}`,
+        cls: "setting-item-description meridian-history-item-source",
+        text:
+          revision.deviceId === this.host.settings.deviceId
+            ? "This device"
+            : (names.get(revision.deviceId) ?? shortId(revision.deviceId)),
       })
       button.addEventListener("click", () => {
         this.selectedRevisionId = revision.revisionId
@@ -127,7 +164,16 @@ export class HistoryModal extends Modal {
   }
 
   private async renderDetail(): Promise<void> {
-    if (!this.detail || !this.selectedRevisionId) return
+    if (!this.detail) return
+    if (!this.selectedRevisionId) {
+      this.generation += 1
+      this.detail.empty()
+      this.detail.createDiv({
+        cls: "setting-item-description meridian-history-placeholder",
+        text: "Select a revision to preview it.",
+      })
+      return
+    }
     const revision = this.revisions.find((item) => item.revisionId === this.selectedRevisionId)
     if (!revision) return
     const generation = ++this.generation
@@ -159,13 +205,15 @@ export class HistoryModal extends Modal {
   private renderDetailToolbar(revision: LocalRevision): void {
     if (!this.detail) return
     const header = this.detail.createDiv({ cls: "meridian-history-detail-header" })
-    const title = header.createDiv()
+    const title = header.createDiv({ cls: "meridian-history-detail-title" })
     title.createEl("strong", { text: revision.path })
     title.createDiv({
       cls: "setting-item-description",
       text: `${revisionLabel(revision)} · ${formatTime(revision.createdAt)}`,
     })
     const actions = header.createDiv({ cls: "meridian-history-detail-actions" })
+    actions.setAttribute("role", "toolbar")
+    actions.setAttribute("aria-label", "Revision actions")
     const preview = actions.createEl("button", { text: "Preview" })
     preview.toggleClass("mod-cta", this.mode === "preview")
     preview.setAttribute("aria-pressed", String(this.mode === "preview"))
@@ -181,7 +229,10 @@ export class HistoryModal extends Modal {
       void this.renderDetail()
     })
     if (!revision.tombstone) {
-      const restore = actions.createEl("button", { text: "Restore" })
+      const restore = actions.createEl("button", {
+        cls: "meridian-history-restore",
+        text: "Restore",
+      })
       restore.addClass("mod-warning")
       restore.addEventListener("click", () => {
         new RestoreRevisionModal(this.host, revision, () => this.close()).open()
