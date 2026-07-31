@@ -1,3 +1,10 @@
+## [1.6.3](https://github.com/angristan/meridian/compare/1.6.2...1.6.3) (2026-07-31)
+
+
+### Bug Fixes
+
+* preserve edits made during remote apply ([0b92a49](https://github.com/angristan/meridian/commit/0b92a49352751ea3b63243255352a814dd567d92))
+
 ## [1.6.2](https://github.com/angristan/meridian/compare/1.6.1...1.6.2) (2026-07-30)
 
 
