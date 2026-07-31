@@ -14,9 +14,14 @@ export type LegacyJournalEntry = Omit<
   preparedRevision?: JournalEntry["preparedRevision"]
 }
 
-export type LegacyLocalRevision = Omit<LocalRevision, "fileId" | "operation"> & {
+export type LegacyLocalRevision = Omit<
+  LocalRevision,
+  "fileId" | "operation" | "action" | "previousPath"
+> & {
   fileId?: string
   operation?: LocalRevision["operation"]
+  action?: LocalRevision["action"]
+  previousPath?: LocalRevision["previousPath"]
 }
 
 export interface MigratedJournalRecords {

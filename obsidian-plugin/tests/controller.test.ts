@@ -83,6 +83,8 @@ describe("SyncController", () => {
     expect(await journal.listPending()).toEqual([])
     expect((await journal.listRevisions("note.md"))[0]).toMatchObject({
       path: "note.md",
+      action: "upsert",
+      previousPath: null,
       tombstone: false,
       cursor: 1,
     })

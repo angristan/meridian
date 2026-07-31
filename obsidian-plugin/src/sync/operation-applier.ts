@@ -362,6 +362,8 @@ export class OperationApplier {
       revisionId: revision.revisionId,
       fileId: revision.fileId,
       path: revision.path,
+      action: revision.action,
+      previousPath: revision.previousPath,
       parents: revision.parents,
       deviceId: revision.authorDeviceId,
       createdAt: revision.createdAt,

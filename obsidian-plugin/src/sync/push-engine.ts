@@ -159,6 +159,8 @@ export class PushEngine {
       revisionId: entry.revisionId,
       fileId: entry.fileId,
       path: entry.path,
+      action,
+      previousPath: entry.previousPath,
       parents: entry.parentRevisionIds,
       deviceId: device.deviceId,
       createdAt: entry.createdAt,

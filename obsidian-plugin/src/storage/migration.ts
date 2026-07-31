@@ -126,6 +126,8 @@ export function migrateJournalRecords(
       (revision): LocalRevision => ({
         ...revision,
         fileId: idFor(revision.path),
+        action: revision.action ?? (revision.tombstone ? "delete" : "upsert"),
+        previousPath: revision.previousPath ?? null,
         operation: revision.operation ?? null,
       }),
     ),

@@ -64,6 +64,19 @@ describe("journal record migration", () => {
       restoreSourceRevisionId: null,
       preparedRevision: null,
     })
-    expect(migrated.revisions.every((record) => record.operation === null)).toBe(true)
+    expect(migrated.revisions).toEqual([
+      expect.objectContaining({
+        revisionId: "revision-original",
+        action: "upsert",
+        previousPath: null,
+        operation: null,
+      }),
+      expect.objectContaining({
+        revisionId: "revision-renamed",
+        action: "upsert",
+        previousPath: null,
+        operation: null,
+      }),
+    ])
   })
 })

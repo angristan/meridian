@@ -166,6 +166,10 @@ export interface LocalRevision {
   revisionId: string
   fileId: string
   path: string
+  /** Added after the initial journal schema; absent records are treated as upserts or deletes. */
+  action?: JournalAction
+  /** Previous normalized path for a rename, when recorded by the author. */
+  previousPath?: string | null
   parents: string[]
   deviceId: string
   createdAt: number
