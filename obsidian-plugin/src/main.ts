@@ -1,4 +1,4 @@
-import { Notice, Platform, Plugin } from "obsidian"
+import { apiVersion, Notice, Platform, Plugin } from "obsidian"
 import { createPackageCryptoPort } from "./crypto/package-adapter"
 import {
   type ConflictRecord,
@@ -10,12 +10,14 @@ import {
   type PairingStatus,
   type RemoteDevice,
   type SyncActivity,
+  type SyncDiagnostic,
   type SyncStatus,
 } from "./model"
 import { ObsidianHttpTransport } from "./network/obsidian-transport"
 import { MeridianRemoteClient, normalizeEndpoint } from "./network/remote-client"
 import { MeridianHttpError } from "./network/response-parsers"
 import { connectionControlState } from "./plugin/connection-control"
+import { createSanitizedDebugReport, SyncDiagnostics } from "./plugin/diagnostics"
 import { confirmRemotePairingCompletion } from "./plugin/pairing-completion"
 import { createPairingDeepLink, hasConfiguredMeridianIdentity } from "./plugin/pairing-link"
 import { registerProtocolHandlers } from "./plugin/protocol-handlers"
@@ -52,6 +54,7 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
     () => this.settings,
   )
   private status: SyncStatus = { ...INITIAL_STATUS }
+  private readonly diagnostics = new SyncDiagnostics()
   private statusBar: HTMLElement | null = null
   private pausePromise: Promise<void> | null = null
   private initializationPromise: Promise<void> | null = null
@@ -308,6 +311,23 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
 
   async getActivity(limit = 200): Promise<SyncActivity[]> {
     return this.controller?.activity(limit) ?? []
+  }
+
+  getDiagnostics(): SyncDiagnostic[] {
+    return this.diagnostics.entries()
+  }
+
+  getDebugReport(): string {
+    return createSanitizedDebugReport(
+      {
+        meridianVersion: this.manifest.version,
+        obsidianVersion: apiVersion,
+        platform: defaultDevicePlatform(),
+        settings: this.settings,
+      },
+      this.status,
+      this.diagnostics.entries(),
+    )
   }
 
   async restoreRevision(revisionId: string): Promise<void> {
@@ -1026,6 +1046,7 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
 
   private updateStatus(patch: Partial<SyncStatus>): void {
     this.status = { ...this.status, ...patch }
+    this.diagnostics.record(this.status)
     if (this.statusBar) this.statusBar.setText(`Meridian: ${this.status.message}`)
     for (const leaf of this.app.workspace.getLeavesOfType(STATUS_VIEW_TYPE)) {
       if (leaf.view instanceof MeridianStatusView) leaf.view.render()

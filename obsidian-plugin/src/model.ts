@@ -188,6 +188,13 @@ export type SyncActivityKind =
   | "restored"
   | "conflict"
 
+export interface SyncDiagnostic {
+  timestamp: number
+  phase: SyncPhase
+  message: string
+  error: string | null
+}
+
 export interface SyncActivity {
   revisionId: string
   fileId: string

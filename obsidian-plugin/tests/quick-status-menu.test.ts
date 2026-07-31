@@ -28,6 +28,7 @@ describe("quick status menu presentation", () => {
       "activity",
       "history",
       "conflicts",
+      "diagnostics",
       "devices",
       "status",
       "settings",
@@ -53,6 +54,7 @@ describe("quick status menu presentation", () => {
     expect(presentation.actions.map((action) => [action.id, action.disabled])).toEqual([
       ["activity", true],
       ["conflicts", true],
+      ["diagnostics", false],
       ["devices", true],
       ["status", false],
       ["settings", false],

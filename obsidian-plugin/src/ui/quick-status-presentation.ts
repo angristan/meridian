@@ -7,6 +7,7 @@ export type QuickStatusActionId =
   | "resume"
   | "activity"
   | "history"
+  | "diagnostics"
   | "conflicts"
   | "devices"
   | "status"
@@ -78,6 +79,13 @@ export function presentQuickStatus(
       icon: "git-compare-arrows",
       disabled: connection.kind === "unconfigured",
       section: "inspect",
+    },
+    {
+      id: "diagnostics",
+      title: "Sync diagnostics",
+      icon: "list-filter",
+      disabled: false,
+      section: "manage",
     },
     {
       id: "devices",

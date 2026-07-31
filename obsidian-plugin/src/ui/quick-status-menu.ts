@@ -1,6 +1,7 @@
 import { Menu, Notice } from "obsidian"
 import { ActivityModal } from "./activity-modal"
 import { DevicesModal } from "./devices-pairing"
+import { DiagnosticsModal } from "./diagnostics-modal"
 import { ConflictsModal, HistoryModal } from "./history-conflicts"
 import type { MeridianUiHost } from "./host"
 import {
@@ -78,6 +79,9 @@ function runAction(
       return
     case "conflicts":
       new ConflictsModal(host).open()
+      return
+    case "diagnostics":
+      new DiagnosticsModal(host).open()
       return
     case "devices":
       new DevicesModal(host).open()

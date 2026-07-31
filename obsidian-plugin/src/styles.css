@@ -251,6 +251,22 @@
   text-align: center;
 }
 
+.meridian-diagnostic-list {
+  max-height: min(60vh, 560px);
+  overflow-y: auto;
+}
+
+.meridian-diagnostic-row {
+  padding-block: var(--size-4-3);
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.meridian-diagnostic-error {
+  margin-top: var(--size-4-2);
+  color: var(--text-error);
+  overflow-wrap: anywhere;
+}
+
 .meridian-callout {
   margin: var(--size-4-3) 0;
   padding: var(--size-4-3);
