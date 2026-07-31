@@ -1,6 +1,7 @@
 import type {
   ConflictRecord,
   DeviceRevocationRecord,
+  DirtyPath,
   FileSnapshot,
   JournalEntry,
   JournalState,
@@ -68,6 +69,36 @@ export class IndexedDbJournal implements JournalPort {
   async hasPendingPath(path: string): Promise<boolean> {
     const entries = await this.getAll<JournalEntry>("entries")
     return entries.some((entry) => entry.path === path && entry.state !== "complete")
+  }
+
+  async putDirtyPath(change: DirtyPath): Promise<void> {
+    await this.put("dirty-paths", change)
+  }
+
+  async listDirtyPaths(): Promise<DirtyPath[]> {
+    return (await this.getAll<DirtyPath>("dirty-paths")).sort(
+      (left, right) => left.observedAt - right.observedAt || left.path.localeCompare(right.path),
+    )
+  }
+
+  async consumeDirtyPaths(changes: readonly DirtyPath[]): Promise<void> {
+    if (changes.length === 0) return
+    const database = this.requireDatabase()
+    const transaction = database.transaction("dirty-paths", "readwrite")
+    const done = transactionDone(transaction)
+    const store = transaction.objectStore("dirty-paths")
+    for (const change of changes) {
+      const current = await requestResult<DirtyPath | undefined>(store.get(change.path))
+      if (current?.token === change.token) store.delete(change.path)
+    }
+    await done
+  }
+
+  async clearDirtyPaths(): Promise<void> {
+    const database = this.requireDatabase()
+    const transaction = database.transaction("dirty-paths", "readwrite")
+    transaction.objectStore("dirty-paths").clear()
+    await transactionDone(transaction)
   }
 
   async getSnapshots(): Promise<Map<string, FileSnapshot>> {

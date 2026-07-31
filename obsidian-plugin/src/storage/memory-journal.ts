@@ -1,6 +1,7 @@
 import type {
   ConflictRecord,
   DeviceRevocationRecord,
+  DirtyPath,
   FileSnapshot,
   JournalEntry,
   JournalState,
@@ -13,6 +14,7 @@ import { sortRevisions } from "./types"
 export class MemoryJournal implements JournalPort {
   private readonly entries = new Map<string, JournalEntry>()
   private snapshots = new Map<string, FileSnapshot>()
+  private readonly dirtyPaths = new Map<string, DirtyPath>()
   private cursor = 0
   private checkpoint: TrustedCheckpoint | null = null
   private readonly revocations = new Map<string, DeviceRevocationRecord>()
@@ -49,6 +51,30 @@ export class MemoryJournal implements JournalPort {
     return [...this.entries.values()].some(
       (entry) => entry.path === path && entry.state !== "complete",
     )
+  }
+
+  async putDirtyPath(change: DirtyPath): Promise<void> {
+    this.dirtyPaths.set(change.path, structuredClone(change))
+  }
+
+  async listDirtyPaths(): Promise<DirtyPath[]> {
+    return [...this.dirtyPaths.values()]
+      .sort(
+        (left, right) => left.observedAt - right.observedAt || left.path.localeCompare(right.path),
+      )
+      .map((change) => structuredClone(change))
+  }
+
+  async consumeDirtyPaths(changes: readonly DirtyPath[]): Promise<void> {
+    for (const change of changes) {
+      if (this.dirtyPaths.get(change.path)?.token === change.token) {
+        this.dirtyPaths.delete(change.path)
+      }
+    }
+  }
+
+  async clearDirtyPaths(): Promise<void> {
+    this.dirtyPaths.clear()
   }
 
   async getSnapshots(): Promise<Map<string, FileSnapshot>> {

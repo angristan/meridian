@@ -151,6 +151,12 @@ export interface FileSnapshot extends ScannedFileSnapshot {
   fileId: string
 }
 
+export interface DirtyPath {
+  path: string
+  token: string
+  observedAt: number
+}
+
 export type JournalAction = "upsert" | "delete" | "restore"
 export type JournalState = "queued" | "uploading" | "committing" | "complete" | "failed"
 

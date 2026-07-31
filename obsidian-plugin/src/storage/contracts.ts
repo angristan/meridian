@@ -1,6 +1,7 @@
 import type {
   ConflictRecord,
   DeviceRevocationRecord,
+  DirtyPath,
   FileSnapshot,
   JournalEntry,
   JournalState,
@@ -15,6 +16,10 @@ export interface JournalPort {
   putEntry(entry: JournalEntry): Promise<void>
   updateEntry(id: string, state: JournalState, error?: string | null): Promise<void>
   hasPendingPath(path: string): Promise<boolean>
+  putDirtyPath(change: DirtyPath): Promise<void>
+  listDirtyPaths(): Promise<DirtyPath[]>
+  consumeDirtyPaths(changes: readonly DirtyPath[]): Promise<void>
+  clearDirtyPaths(): Promise<void>
   getSnapshots(): Promise<Map<string, FileSnapshot>>
   replaceSnapshots(snapshots: FileSnapshot[]): Promise<void>
   putSnapshot(snapshot: FileSnapshot): Promise<void>
