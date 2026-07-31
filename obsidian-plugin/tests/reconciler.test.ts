@@ -355,6 +355,51 @@ describe("Reconciler", () => {
     expect(await journal.listDirtyPaths()).toEqual([])
   })
 
+  it("retains dirty paths until an existing pending revision commits", async () => {
+    const original = new TextEncoder().encode("original").buffer
+    const vault = new FakeVault({ "note.md": "newer edit" })
+    const journal = new MemoryJournal()
+    await journal.replaceSnapshots([
+      {
+        path: "note.md",
+        fileId: "stable-id",
+        fingerprint: await fingerprint(original),
+        size: original.byteLength,
+        mtime: 1,
+        kind: "vault",
+      },
+    ])
+    await journal.putEntry({
+      id: "pending",
+      action: "upsert",
+      fileId: "stable-id",
+      path: "note.md",
+      previousPath: null,
+      fingerprint: "older-fingerprint",
+      baseRevisionId: null,
+      parentRevisionIds: [],
+      restoreSourceRevisionId: null,
+      revisionId: "pending-revision",
+      createdAt: 1,
+      attempts: 0,
+      state: "uploading",
+      error: null,
+      preparedRevision: {
+        action: "upsert",
+        bytes: original,
+        encrypted: { blobs: [], envelope: { prepared: true } },
+      },
+    })
+    await journal.putDirtyPath({ path: "note.md", token: "newer-edit", observedAt: 2 })
+
+    const result = await new Reconciler(vault, journal).reconcileDirty(ALL_CATEGORIES)
+
+    expect(result).toEqual({ queued: 0, files: 1 })
+    expect(await journal.listDirtyPaths()).toEqual([
+      { path: "note.md", token: "newer-edit", observedAt: 2 },
+    ])
+  })
+
   it("retains a newer event that arrives while reconciliation commits", async () => {
     class RacingJournal extends MemoryJournal {
       override async commitReconciliation(commit: ReconciliationCommit): Promise<void> {

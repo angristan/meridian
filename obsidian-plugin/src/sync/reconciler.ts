@@ -86,6 +86,9 @@ export class Reconciler {
     if (options.shouldStop?.()) throw new Error("Vault reconciliation canceled")
     const pendingEntries = await this.journal.listPending()
     const pendingBefore = new Set(pendingEntries.map((entry) => entry.path))
+    const preparedPendingPaths = new Set(
+      pendingEntries.filter((entry) => entry.preparedRevision !== null).map((entry) => entry.path),
+    )
     const pendingPaths = new Set(pendingBefore)
     const pendingByPath = new Map(pendingEntries.map((entry) => [entry.path, entry]))
     const inScope = (path: string) => scope === null || scope.has(path)
@@ -203,7 +206,9 @@ export class Reconciler {
         (snapshot) => !sameSnapshot(previous.get(snapshot.path), snapshot),
       ),
       removeSnapshotPaths: [...previous.keys()].filter((path) => !nextSnapshots.has(path)),
-      consumeDirtyPaths: dirtyPaths,
+      // A prepared retry may contain older bytes than the current file. Keep its event durable until
+      // the pending revision commits, then the mandatory rerun compares the resulting snapshot.
+      consumeDirtyPaths: dirtyPaths.filter((change) => !preparedPendingPaths.has(change.path)),
     })
     return { queued: entries.length, files: scope?.size ?? current.length }
   }

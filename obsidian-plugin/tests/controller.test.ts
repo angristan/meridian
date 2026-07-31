@@ -686,6 +686,72 @@ describe("SyncController", () => {
     controller.stop()
   })
 
+  it("requeues a dirty edit behind a prepared revision retry", async () => {
+    const oldBytes = new TextEncoder().encode("prepared content").buffer
+    const operationId = randomId()
+    const revisionId = randomId()
+    const fileId = randomId()
+    const crypto = new FakeCrypto()
+    const prepared = await crypto.encryptRevision(TEST_DEVICE, {
+      operationId,
+      revisionId,
+      fileId,
+      action: "upsert",
+      path: "note.md",
+      previousPath: null,
+      parents: [],
+      bytes: oldBytes,
+      chunkSize: 4 * 1024 * 1024,
+    })
+    const vault = new FakeVault({ "note.md": "newer local edit" })
+    const journal = new MemoryJournal()
+    await journal.replaceSnapshots([
+      {
+        path: "note.md",
+        fileId,
+        fingerprint: await fingerprint(oldBytes),
+        size: oldBytes.byteLength,
+        mtime: 1,
+        kind: "vault",
+      },
+    ])
+    await journal.putEntry({
+      id: operationId,
+      action: "upsert",
+      fileId,
+      path: "note.md",
+      previousPath: null,
+      fingerprint: await fingerprint(oldBytes),
+      baseRevisionId: null,
+      parentRevisionIds: [],
+      restoreSourceRevisionId: null,
+      revisionId,
+      createdAt: 1,
+      attempts: 0,
+      state: "uploading",
+      error: null,
+      preparedRevision: { action: "upsert", bytes: oldBytes, encrypted: prepared },
+    })
+    await journal.putDirtyPath({ path: "note.md", token: "newer-edit", observedAt: 2 })
+    const remote = new FakeRemote()
+    const controller = new SyncController(
+      vault,
+      journal,
+      remote,
+      crypto,
+      () => ALL_CATEGORIES,
+      () => {},
+    )
+
+    await controller.start(TEST_DEVICE)
+
+    expect(remote.operations).toHaveLength(2)
+    expect(await journal.listPending()).toEqual([])
+    expect(await journal.listDirtyPaths()).toEqual([])
+    expect(vault.text("note.md")).toBe("newer local edit")
+    controller.stop()
+  })
+
   it("reports live pull cursor chunk and target progress", async () => {
     const vault = new FakeVault()
     const journal = new MemoryJournal()
