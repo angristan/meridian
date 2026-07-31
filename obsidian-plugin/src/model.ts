@@ -218,6 +218,17 @@ export interface RevisionComparison {
   unavailableReason: string | null
 }
 
+export interface StorageUsage {
+  totalBytes: number
+  blobBytes: number
+  databaseBytes: number
+  blobCount: number
+  operationCount: number
+  checkpointCount: number
+  snapshotCount: number
+  pruningAvailable: false
+}
+
 export interface SyncDiagnostic {
   timestamp: number
   phase: SyncPhase
@@ -565,6 +576,7 @@ export interface RemotePort {
   getChanges(after: number, checkpoint: TrustedCheckpoint | null): Promise<RemoteChanges>
   putBlob(blob: EncryptedBlob): Promise<void>
   getBlob(blobId: string): Promise<ArrayBuffer>
+  getStorageUsage(): Promise<StorageUsage>
   commit(envelope: unknown, idempotencyKey: string): Promise<{ cursor: number; logHash: string }>
   listDevices(): Promise<RemoteDevice[]>
   updateDeviceDescriptor(descriptor: PairingDeviceDescriptor): Promise<void>

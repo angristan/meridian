@@ -9,6 +9,7 @@ export type QuickStatusActionId =
   | "history"
   | "deleted"
   | "diagnostics"
+  | "storage"
   | "conflicts"
   | "devices"
   | "status"
@@ -93,6 +94,13 @@ export function presentQuickStatus(
       title: "Sync diagnostics",
       icon: "list-filter",
       disabled: false,
+      section: "manage",
+    },
+    {
+      id: "storage",
+      title: "Storage and retention",
+      icon: "database",
+      disabled: connection.kind === "unconfigured",
       section: "manage",
     },
     {

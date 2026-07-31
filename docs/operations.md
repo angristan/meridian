@@ -69,7 +69,9 @@ Synchronization is not a backup. Keep a separate backup of the plaintext vault a
 
 ## Retention and garbage collection
 
-Automatic garbage collection remains disabled until acknowledgement-aware retention is implemented and validated. When enabled, deletion work must be idempotent, retain pinned revisions, tolerate offline devices, and keep an orphan grace period for upload-before-commit failures.
+Automatic garbage collection remains disabled until acknowledgement-aware retention is implemented and validated. Meridian shows this gate in the storage view instead of offering an unsafe delete action. When enabled, deletion work must be idempotent, retain pinned revisions, tolerate offline devices, and keep an orphan grace period for upload-before-commit failures.
+
+The storage view reports the Durable Object SQLite size and enumerates the vault's encrypted R2 objects on demand. The R2 scan is read-only and may take longer for large vaults.
 
 ## Privacy-safe support bundle
 

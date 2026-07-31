@@ -10,6 +10,7 @@ import type {
   RemoteDevice,
   RemotePort,
   SetupClaim,
+  StorageUsage,
   TrustedCheckpoint,
 } from "../model"
 import { connectCursorNotifications } from "./notifications"
@@ -132,6 +133,20 @@ export class MeridianRemoteClient implements RemotePort {
     })
     const latestCursor = optionalNumber(result.latestCursor) ?? operations.at(-1)?.cursor ?? after
     return { operations, latestCursor }
+  }
+
+  async getStorageUsage(): Promise<StorageUsage> {
+    const result = await this.jsonRequest("/v1/storage", { method: "GET", authenticated: true })
+    return {
+      totalBytes: requiredNumber(result, "totalBytes"),
+      blobBytes: requiredNumber(result, "blobBytes"),
+      databaseBytes: requiredNumber(result, "databaseBytes"),
+      blobCount: requiredNumber(result, "blobCount"),
+      operationCount: requiredNumber(result, "operationCount"),
+      checkpointCount: requiredNumber(result, "checkpointCount"),
+      snapshotCount: requiredNumber(result, "snapshotCount"),
+      pruningAvailable: false,
+    }
   }
 
   async putBlob(blob: EncryptedBlob): Promise<void> {

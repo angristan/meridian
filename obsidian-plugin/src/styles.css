@@ -208,6 +208,30 @@
   color: var(--text-normal);
 }
 
+.meridian-storage-total {
+  padding: var(--size-4-4);
+  text-align: center;
+}
+
+.meridian-storage-total > strong {
+  display: block;
+  font-size: var(--font-ui-large);
+}
+
+.meridian-storage-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--size-4-2);
+}
+
+.meridian-storage-metric {
+  display: grid;
+  gap: var(--size-2-1);
+  padding: var(--size-4-3);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+}
+
 .meridian-deleted-list {
   display: grid;
   gap: var(--size-4-2);
@@ -579,6 +603,10 @@
 
 .is-mobile .meridian-status-view {
   --meridian-view-padding: var(--size-4-3);
+}
+
+.is-mobile .meridian-storage-grid {
+  grid-template-columns: 1fr;
 }
 
 .is-mobile .meridian-conflicts-layout,

@@ -11,6 +11,7 @@ import {
   type QuickStatusAction,
   type QuickStatusActionId,
 } from "./quick-status-presentation"
+import { StorageModal } from "./storage-modal"
 
 export function showQuickStatusMenu(
   host: MeridianUiHost,
@@ -87,6 +88,9 @@ function runAction(
       return
     case "diagnostics":
       new DiagnosticsModal(host).open()
+      return
+    case "storage":
+      new StorageModal(host).open()
       return
     case "devices":
       new DevicesModal(host).open()

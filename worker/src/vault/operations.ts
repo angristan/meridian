@@ -304,6 +304,25 @@ export class VaultOperations {
     )
   }
 
+  async storageStats(request: Request): Promise<Response> {
+    await authenticate(this.sql, request)
+    const operationCount = this.sql
+      .exec<{ count: number }>("SELECT COUNT(*) AS count FROM operations")
+      .one().count
+    const checkpointCount = this.sql
+      .exec<{ count: number }>("SELECT COUNT(*) AS count FROM checkpoints")
+      .one().count
+    const snapshotCount = this.sql
+      .exec<{ count: number }>("SELECT COUNT(*) AS count FROM snapshots")
+      .one().count
+    return json({
+      databaseBytes: this.sql.databaseSize,
+      operationCount,
+      checkpointCount,
+      snapshotCount,
+    })
+  }
+
   async changes(request: Request): Promise<Response> {
     await authenticate(this.sql, request)
     const url = new URL(request.url)

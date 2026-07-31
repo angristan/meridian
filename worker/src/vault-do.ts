@@ -88,6 +88,8 @@ export class VaultDurableObject extends DurableObject<VaultDurableObjectEnv> {
         return await this.pairing.createPairing(request)
       if (request.method === "GET" && pathname === "/v1/changes")
         return await this.operations.changes(request)
+      if (request.method === "GET" && pathname === "/v1/storage")
+        return await this.operations.storageStats(request)
       if (request.method === "POST" && pathname === "/v1/operations")
         return await this.operations.commitOperation(request)
       if (request.method === "PUT" && pathname === "/v1/checkpoints")

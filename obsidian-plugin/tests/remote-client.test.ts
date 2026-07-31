@@ -120,6 +120,36 @@ describe("Meridian remote client", () => {
     ])
   })
 
+  it("parses authenticated storage usage conservatively", async () => {
+    const transport = new QueueTransport([
+      response({ challengeId: "challenge-id", challenge: "challenge" }),
+      response({ sessionToken: "session-token", expiresAt: Number.MAX_SAFE_INTEGER }),
+      response({
+        totalBytes: 1_500,
+        blobBytes: 1_000,
+        databaseBytes: 500,
+        blobCount: 4,
+        operationCount: 7,
+        checkpointCount: 2,
+        snapshotCount: 1,
+      }),
+    ])
+    const client = new MeridianRemoteClient("https://example.test", transport)
+
+    await client.authenticate(TEST_DEVICE, new FakeCrypto())
+    await expect(client.getStorageUsage()).resolves.toEqual({
+      totalBytes: 1_500,
+      blobBytes: 1_000,
+      databaseBytes: 500,
+      blobCount: 4,
+      operationCount: 7,
+      checkpointCount: 2,
+      snapshotCount: 1,
+      pruningAvailable: false,
+    })
+    expect(transport.requests.at(-1)?.url).toBe("https://example.test/v1/storage")
+  })
+
   it("refreshes a session before it enters the expiry margin", async () => {
     let now = 0
     const transport = new QueueTransport([

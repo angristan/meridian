@@ -223,6 +223,12 @@ export class SyncController {
     })
   }
 
+  async storageUsage() {
+    const device = this.requireDevice()
+    await this.authenticate(device)
+    return this.remote.getStorageUsage()
+  }
+
   async devices(): Promise<RemoteDevice[]> {
     const device = this.requireDevice()
     await this.authenticate(device)

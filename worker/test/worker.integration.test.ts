@@ -349,6 +349,31 @@ describe("Meridian Worker integration", () => {
     expect(concurrentDownload.status).toBe(200)
     expect(new Uint8Array(await concurrentDownload.arrayBuffer())).toEqual(concurrentBlob)
 
+    const unauthenticatedStorage = await SELF.fetch("https://example.test/v1/storage")
+    expect(unauthenticatedStorage.status).toBe(401)
+    const storageResponse = await SELF.fetch("https://example.test/v1/storage", {
+      headers: authorization,
+    })
+    expect(storageResponse.status).toBe(200)
+    const storage = (await storageResponse.json()) as {
+      totalBytes: number
+      blobBytes: number
+      databaseBytes: number
+      blobCount: number
+      operationCount: number
+      checkpointCount: number
+      snapshotCount: number
+    }
+    expect(storage).toMatchObject({
+      blobCount: 2,
+      operationCount: 1,
+      checkpointCount: 1,
+      snapshotCount: 0,
+    })
+    expect(storage.blobBytes).toBe(2048)
+    expect(storage.databaseBytes).toBeGreaterThan(0)
+    expect(storage.totalBytes).toBe(storage.blobBytes + storage.databaseBytes)
+
     const pairingResponse = await SELF.fetch("https://example.test/v1/pairings", {
       method: "POST",
       headers: { ...authorization, "content-type": "application/json" },

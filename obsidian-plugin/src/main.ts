@@ -14,6 +14,7 @@ import {
   type RemoteDevice,
   type RevisionComparison,
   type RevisionPreview,
+  type StorageUsage,
   type SyncActivity,
   type SyncDiagnostic,
   type SyncStatus,
@@ -351,6 +352,11 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
 
   getDiagnostics(): SyncDiagnostic[] {
     return this.diagnostics.entries()
+  }
+
+  async getStorageUsage(): Promise<StorageUsage> {
+    if (!this.controller) throw new Error("Meridian is not connected")
+    return this.controller.storageUsage()
   }
 
   getDebugReport(): string {

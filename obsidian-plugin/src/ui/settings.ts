@@ -10,6 +10,7 @@ import type { MeridianSettingKey } from "../plugin/settings-controls"
 import { normalizeExcludedExtension, normalizeExcludedFolder } from "../vault/path-policy"
 import { ConnectionModal, RecoveryConnectModal } from "./connection-modals"
 import type { MeridianUiHost } from "./host"
+import { StorageModal } from "./storage-modal"
 
 export function renderSettings(container: HTMLElement, host: MeridianUiHost): void {
   container.empty()
@@ -258,6 +259,20 @@ export function renderSettings(container: HTMLElement, host: MeridianUiHost): vo
         }),
     )
 
+  new Setting(container).setName("Storage and retention").setHeading()
+  new Setting(container)
+    .setName("Storage usage")
+    .setDesc("Review encrypted blob, operation, checkpoint, and snapshot storage.")
+    .addButton((button) =>
+      button.setButtonText("View usage").onClick(() => new StorageModal(host).open()),
+    )
+  new Setting(container)
+    .setName("Automatic pruning")
+    .setDesc(
+      "Unavailable until every active device can acknowledge and rebootstrap from a signed generation-aware snapshot.",
+    )
+    .addButton((button) => button.setButtonText("Not available").setDisabled(true))
+
   new Setting(container).setName("Recovery and repair").setHeading()
   new Setting(container)
     .setName("Recover vault ownership")
@@ -406,6 +421,27 @@ export function getMeridianSettingDefinitions(
             key: "maxFileSizeMiB",
             options: { "16": "16 MiB", "32": "32 MiB", "64": "64 MiB", "128": "128 MiB" },
           },
+        },
+      ],
+    },
+    {
+      type: "group",
+      heading: "Storage and retention",
+      items: [
+        {
+          name: "Storage usage",
+          desc: "Review encrypted blob, operation, checkpoint, and snapshot storage.",
+          aliases: ["quota", "space", "R2", "database"],
+          action: () => new StorageModal(host).open(),
+        },
+        {
+          name: "Automatic pruning",
+          desc: "Unavailable until every active device can acknowledge and rebootstrap from a signed generation-aware snapshot.",
+          aliases: ["retention", "delete old history", "cleanup"],
+          render: (setting) =>
+            void setting.addButton((button) =>
+              button.setButtonText("Not available").setDisabled(true),
+            ),
         },
       ],
     },

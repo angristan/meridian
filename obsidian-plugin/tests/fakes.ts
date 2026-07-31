@@ -26,6 +26,7 @@ import type {
   ScannedFileSnapshot,
   SelectiveSyncSettings,
   SetupClaim,
+  StorageUsage,
   TrustedCheckpoint,
   VaultPort,
 } from "../src/model"
@@ -402,6 +403,20 @@ export class FakeRemote implements RemotePort {
     this.nextBlobUploadBarrier = null
     barrier?.started()
     await barrier?.resume
+  }
+
+  async getStorageUsage(): Promise<StorageUsage> {
+    const blobBytes = [...this.blobs.values()].reduce((total, bytes) => total + bytes.byteLength, 0)
+    return {
+      totalBytes: blobBytes,
+      blobBytes,
+      databaseBytes: 0,
+      blobCount: this.blobs.size,
+      operationCount: this.operations.length,
+      checkpointCount: 0,
+      snapshotCount: 0,
+      pruningAvailable: false,
+    }
   }
 
   async getBlob(blobId: string): Promise<ArrayBuffer> {
