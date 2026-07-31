@@ -1,3 +1,10 @@
+## [1.7.1](https://github.com/angristan/meridian/compare/1.7.0...1.7.1) (2026-07-31)
+
+
+### Bug Fixes
+
+* clean up revision history layout ([5159617](https://github.com/angristan/meridian/commit/51596170150147e4468ec48ebd0139af4324b7ef))
+
 # [1.7.0](https://github.com/angristan/meridian/compare/1.6.6...1.7.0) (2026-07-31)
 
 
