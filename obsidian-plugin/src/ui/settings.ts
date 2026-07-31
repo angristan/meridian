@@ -1,5 +1,6 @@
 import { Modal, Notice, Setting } from "obsidian"
 import { connectionControlState } from "../plugin/connection-control"
+import { normalizeExcludedExtension, normalizeExcludedFolder } from "../vault/path-policy"
 import { ConnectionModal, RecoveryConnectModal } from "./connection-modals"
 import type { MeridianUiHost } from "./host"
 
@@ -130,6 +131,63 @@ export function renderSettings(container: HTMLElement, host: MeridianUiHost): vo
     }
   }
 
+  new Setting(container).setName("Selective sync").setHeading()
+  container.createDiv({
+    cls: "setting-item-description meridian-section-description",
+    text: "Exclusions are local to this device. Excluded files remain in the vault and in remote history. Re-enabling a locally changed file creates a new revision instead of deleting prior versions.",
+  })
+  new Setting(container)
+    .setName("Excluded folders")
+    .setDesc(
+      "One vault-relative folder per line. Hidden folders and Obsidian configuration are managed separately.",
+    )
+    .addTextArea((text) => {
+      text.inputEl.rows = 3
+      return text
+        .setPlaceholder("Archive\nAttachments/private")
+        .setValue(host.settings.selectiveSync.excludedFolders.join("\n"))
+        .onChange(async (value) => {
+          host.settings.selectiveSync.excludedFolders = normalizeList(
+            value.split("\n"),
+            normalizeExcludedFolder,
+          )
+          await host.saveSettings()
+        })
+    })
+  new Setting(container)
+    .setName("Excluded file extensions")
+    .setDesc("Comma-separated extensions without a leading dot, for example mov, zip, or psd.")
+    .addText((text) =>
+      text
+        .setPlaceholder("mov, zip")
+        .setValue(host.settings.selectiveSync.excludedExtensions.join(", "))
+        .onChange(async (value) => {
+          host.settings.selectiveSync.excludedExtensions = normalizeList(
+            value.split(/[\s,]+/),
+            normalizeExcludedExtension,
+          )
+          await host.saveSettings()
+        }),
+    )
+  new Setting(container)
+    .setName("Apply selective sync")
+    .setDesc(
+      "Scan now with the current exclusions. Changing exclusions never creates deletion records.",
+    )
+    .addButton((button) =>
+      button.setButtonText("Apply now").onClick(async () => {
+        button.setDisabled(true)
+        try {
+          await host.syncNow()
+          new Notice("Selective sync settings applied")
+        } catch (error) {
+          new Notice(error instanceof Error ? error.message : "Unable to apply selective sync")
+        } finally {
+          button.setDisabled(false)
+        }
+      }),
+    )
+
   new Setting(container).setName("Configuration sync").setHeading()
   container.createDiv({
     cls: "setting-item-description meridian-section-description",
@@ -217,6 +275,11 @@ export function renderSettings(container: HTMLElement, host: MeridianUiHost): vo
           new Notice("Meridian local index rebuilt")
         }),
     )
+}
+
+function normalizeList(values: string[], normalize: (value: string) => string | null): string[] {
+  const normalized = values.map(normalize).filter((value): value is string => value !== null)
+  return [...new Set(normalized)].sort().slice(0, 200)
 }
 
 class RemoveCurrentDeviceModal extends Modal {

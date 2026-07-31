@@ -1046,6 +1046,7 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
           deviceName: this.settings.deviceName || defaultDeviceName(),
           platform: defaultDevicePlatform(),
         }),
+        { selection: () => structuredClone(this.settings.selectiveSync) },
       )
       await nextController.start(device)
       if (!this.pluginLoaded || this.connectionInitializationKey() !== expectedKey) {

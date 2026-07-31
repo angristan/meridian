@@ -36,6 +36,24 @@ describe("Meridian settings lifecycle", () => {
     ).toBeNull()
   })
 
+  it("migrates and bounds normalized selective sync lists", () => {
+    expect(
+      normalizeSettings({
+        selectiveSync: {
+          excludedFolders: ["Archive\\private", "Archive/private", "../unsafe", 42],
+          excludedExtensions: [".MOV", "mov", "bad/path", "tar.gz"],
+        },
+      }).selectiveSync,
+    ).toEqual({
+      excludedFolders: ["Archive/private"],
+      excludedExtensions: ["mov", "tar.gz"],
+    })
+    expect(normalizeSettings({}).selectiveSync).toEqual({
+      excludedFolders: [],
+      excludedExtensions: [],
+    })
+  })
+
   it("forgets identity while preserving local preferences", () => {
     const settings = {
       ...structuredClone(DEFAULT_SETTINGS),

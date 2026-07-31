@@ -1,4 +1,4 @@
-import type { ConfigCategory } from "../model"
+import type { ConfigCategory, SelectiveSyncSettings } from "../model"
 
 export const CONFIG_ALLOWLIST_VERSION = 1
 
@@ -91,6 +91,42 @@ export function isSyncablePath(
   // active Obsidian config directory is considered above, through its explicit allowlist.
   if (segments.some((segment) => segment.startsWith("."))) return false
   return true
+}
+
+export function isSelectedForSync(
+  path: string,
+  configDir: string,
+  selection: SelectiveSyncSettings,
+): boolean {
+  const normalized = normalizeVaultPath(path)
+  if (isConfigPath(normalized, configDir)) return true
+  if (
+    selection.excludedFolders.some(
+      (folder) => normalized === folder || normalized.startsWith(`${folder}/`),
+    )
+  ) {
+    return false
+  }
+  const filename = normalized.split("/").at(-1)?.toLocaleLowerCase("en-US") ?? ""
+  return !selection.excludedExtensions.some((extension) => filename.endsWith(`.${extension}`))
+}
+
+export function normalizeExcludedFolder(value: string): string | null {
+  let normalized: string
+  try {
+    normalized = normalizeVaultPath(value.trim())
+  } catch {
+    return null
+  }
+  if (normalized.length === 0) return null
+  if (normalized.split("/").some((segment) => segment.startsWith("."))) return null
+  return normalized
+}
+
+export function normalizeExcludedExtension(value: string): string | null {
+  const normalized = value.trim().replace(/^\.+/, "").toLocaleLowerCase("en-US")
+  if (!/^[a-z0-9][a-z0-9._+-]{0,31}$/.test(normalized)) return null
+  return normalized
 }
 
 export function isConfigPath(path: string, configDir: string): boolean {

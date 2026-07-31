@@ -9,6 +9,7 @@ import type {
   PairingStatus,
   RemoteDevice,
   RemotePort,
+  SelectiveSyncSettings,
   SyncReason,
   SyncStatus,
   VaultPort,
@@ -26,6 +27,7 @@ import { RevisionLoader } from "./revision-loader"
 export interface SyncControllerOptions {
   progressThrottleMs?: number
   now?: () => number
+  selection?: () => SelectiveSyncSettings
 }
 
 export class SyncController {
@@ -44,6 +46,7 @@ export class SyncController {
   private lastProgressEmission = 0
   private readonly progressThrottleMs: number
   private readonly now: () => number
+  private readonly selection: () => SelectiveSyncSettings
   private status: SyncStatus = { ...INITIAL_STATUS }
 
   constructor(
@@ -61,8 +64,17 @@ export class SyncController {
   ) {
     this.progressThrottleMs = options.progressThrottleMs ?? 200
     this.now = options.now ?? Date.now
+    this.selection = options.selection ?? (() => ({ excludedFolders: [], excludedExtensions: [] }))
     const revisionLoader = new RevisionLoader(remote, crypto, () => vault.maxFileBytes())
-    const applier = new OperationApplier(vault, journal, remote, crypto, revisionLoader, categories)
+    const applier = new OperationApplier(
+      vault,
+      journal,
+      remote,
+      crypto,
+      revisionLoader,
+      categories,
+      this.selection,
+    )
     this.reconciler = new Reconciler(vault, journal)
     this.historyService = new HistoryService(vault, journal, revisionLoader)
     this.conflictService = new ConflictService(vault, journal)
@@ -306,7 +318,7 @@ export class SyncController {
       error: null,
       progress: null,
     })
-    const result = await this.reconciler.reconcile(this.categories())
+    const result = await this.reconciler.reconcile(this.categories(), this.selection())
     const pending = await this.journal.listPending()
     this.updateStatus({ queued: pending.length, message: `${result.files} files checked` })
     if (reason === "file-event" && result.queued === 0 && pending.length === 0) {

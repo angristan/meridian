@@ -1427,6 +1427,53 @@ describe("SyncController", () => {
     controller.stop()
   })
 
+  it("records excluded remote revisions without changing local files", async () => {
+    const vault = new FakeVault()
+    const journal = new MemoryJournal()
+    const remote = new FakeRemote()
+    remote.addRemoteRevision(
+      {
+        operationId: "excluded-operation",
+        revisionId: "excluded-revision",
+        fileId: "excluded-file",
+        action: "upsert",
+        path: "Archive/private/note.md",
+        previousPath: null,
+        parents: [],
+        authorDeviceId: "device-remote",
+        blobId: "excluded-blob",
+        isText: true,
+      },
+      new TextEncoder().encode("remote private content").buffer,
+    )
+    const controller = new SyncController(
+      vault,
+      journal,
+      remote,
+      new FakeCrypto(),
+      () => ALL_CATEGORIES,
+      () => {},
+      undefined,
+      {
+        selection: () => ({
+          excludedFolders: ["Archive/private"],
+          excludedExtensions: [],
+        }),
+      },
+    )
+
+    await controller.start(TEST_DEVICE)
+
+    expect(vault.text("Archive/private/note.md")).toBeNull()
+    await expect(journal.getRevision("excluded-revision")).resolves.toMatchObject({
+      path: "Archive/private/note.md",
+      cursor: 1,
+    })
+    await expect(journal.getCursor()).resolves.toBe(1)
+    expect(await journal.getSnapshots()).toEqual(new Map())
+    controller.stop()
+  })
+
   it("clears prepared plaintext when a remote delete completes a conflict", async () => {
     class InspectingJournal extends MemoryJournal {
       lastEntry: JournalEntry | null = null

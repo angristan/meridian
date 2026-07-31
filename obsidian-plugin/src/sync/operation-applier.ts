@@ -9,6 +9,7 @@ import type {
   LocalRevision,
   RemoteOperation,
   RemotePort,
+  SelectiveSyncSettings,
   VaultPort,
 } from "../model"
 import { fingerprint, randomId } from "../platform/bytes"
@@ -17,6 +18,7 @@ import {
   configCategoryForPath,
   conflictPath,
   isConfigPath,
+  isSelectedForSync,
   isSyncablePath,
   pathsCollide,
 } from "../vault/path-policy"
@@ -32,6 +34,10 @@ export class OperationApplier {
     private readonly crypto: CryptoPort,
     private readonly revisions: RevisionLoader,
     private readonly categories: () => Record<ConfigCategory, boolean>,
+    private readonly selection: () => SelectiveSyncSettings = () => ({
+      excludedFolders: [],
+      excludedExtensions: [],
+    }),
   ) {}
 
   async apply(
@@ -70,6 +76,10 @@ export class OperationApplier {
       throw new Error("Remote operation targets an excluded configuration path")
     }
     if (category && !this.categories()[category]) {
+      await this.recordRevision(revision, operation, false)
+      return
+    }
+    if (!isSelectedForSync(revision.path, this.vault.configDir, this.selection())) {
       await this.recordRevision(revision, operation, false)
       return
     }

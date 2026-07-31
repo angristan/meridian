@@ -3,12 +3,13 @@ import type {
   FileSnapshot,
   JournalEntry,
   ScannedFileSnapshot,
+  SelectiveSyncSettings,
   VaultPort,
 } from "../model"
 import { randomId } from "../platform/bytes"
 import { yieldToEventLoop } from "../platform/scheduling"
 import type { JournalPort } from "../storage/journal"
-import { configCategoryForPath, normalizeVaultPath } from "../vault/path-policy"
+import { configCategoryForPath, isSelectedForSync, normalizeVaultPath } from "../vault/path-policy"
 import { revisionHeads } from "./revision-heads"
 
 export interface ReconcileResult {
@@ -22,8 +23,11 @@ export class Reconciler {
     private readonly journal: JournalPort,
   ) {}
 
-  async reconcile(categories: Record<ConfigCategory, boolean>): Promise<ReconcileResult> {
-    const current = await this.vault.listFiles(categories)
+  async reconcile(
+    categories: Record<ConfigCategory, boolean>,
+    selection: SelectiveSyncSettings = { excludedFolders: [], excludedExtensions: [] },
+  ): Promise<ReconcileResult> {
+    const current = await this.vault.listFiles(categories, selection)
     await assertNoCaseCollisions(current)
 
     const previous = await this.journal.getSnapshots()
@@ -33,11 +37,11 @@ export class Reconciler {
     const pendingByPath = new Map(pendingEntries.map((entry) => [entry.path, entry]))
     const currentByPath = new Map(current.map((snapshot) => [snapshot.path, snapshot]))
     const ignoredPrevious = [...previous.values()].filter(
-      (snapshot) => !categoryEnabled(snapshot, categories, this.vault.configDir),
+      (snapshot) => !snapshotEnabled(snapshot, categories, selection, this.vault.configDir),
     )
     const removed = [...previous.values()].filter(
       (snapshot) =>
-        categoryEnabled(snapshot, categories, this.vault.configDir) &&
+        snapshotEnabled(snapshot, categories, selection, this.vault.configDir) &&
         !currentByPath.has(snapshot.path),
     )
     const removedByFingerprint = groupByFingerprint(removed)
@@ -154,12 +158,13 @@ export class Reconciler {
   }
 }
 
-function categoryEnabled(
+function snapshotEnabled(
   snapshot: FileSnapshot,
   categories: Record<ConfigCategory, boolean>,
+  selection: SelectiveSyncSettings,
   configDir: string,
 ): boolean {
-  if (snapshot.kind === "vault") return true
+  if (snapshot.kind === "vault") return isSelectedForSync(snapshot.path, configDir, selection)
   const category = configCategoryForPath(snapshot.path, configDir)
   return category !== null && categories[category]
 }

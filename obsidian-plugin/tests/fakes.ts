@@ -23,12 +23,13 @@ import type {
   RemotePort,
   RevisionDraft,
   ScannedFileSnapshot,
+  SelectiveSyncSettings,
   SetupClaim,
   TrustedCheckpoint,
   VaultPort,
 } from "../src/model"
 import { fingerprint } from "../src/platform/bytes"
-import { isConfigPath, isSyncablePath } from "../src/vault/path-policy"
+import { isConfigPath, isSelectedForSync, isSyncablePath } from "../src/vault/path-policy"
 
 export const TEST_DEVICE: DeviceKeyMaterial = {
   vaultId: "vault-1",
@@ -54,10 +55,18 @@ export class FakeVault implements VaultPort {
     return this.fileSizeLimit
   }
 
-  async listFiles(categories: Record<ConfigCategory, boolean>): Promise<ScannedFileSnapshot[]> {
+  async listFiles(
+    categories: Record<ConfigCategory, boolean>,
+    selection: SelectiveSyncSettings = { excludedFolders: [], excludedExtensions: [] },
+  ): Promise<ScannedFileSnapshot[]> {
     const snapshots: ScannedFileSnapshot[] = []
     for (const [path, bytes] of this.files) {
-      if (!isSyncablePath(path, this.configDir, categories)) continue
+      if (
+        !isSyncablePath(path, this.configDir, categories) ||
+        !isSelectedForSync(path, this.configDir, selection)
+      ) {
+        continue
+      }
       snapshots.push({
         path,
         fingerprint: await fingerprint(bytes),

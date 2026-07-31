@@ -3,7 +3,10 @@ import { DEFAULT_SETTINGS } from "../src/model"
 import {
   configCategoryForPath,
   conflictPath,
+  isSelectedForSync,
   isSyncablePath,
+  normalizeExcludedExtension,
+  normalizeExcludedFolder,
   normalizeVaultPath,
 } from "../src/vault/path-policy"
 
@@ -38,6 +41,22 @@ describe("path policy", () => {
   it("normalizes Unicode and refuses parent traversal", () => {
     expect(normalizeVaultPath("Notes\\Cafe\u0301.md")).toBe("Notes/Café.md")
     expect(() => normalizeVaultPath("../outside.md")).toThrow("Unsafe vault path")
+  })
+
+  it("matches normalized device-local folder and extension exclusions", () => {
+    const selection = {
+      excludedFolders: ["Archive/private"],
+      excludedExtensions: ["mov", "tar.gz"],
+    }
+    expect(isSelectedForSync("Archive/private/note.md", ".obsidian", selection)).toBe(false)
+    expect(isSelectedForSync("Archive/public/note.md", ".obsidian", selection)).toBe(true)
+    expect(isSelectedForSync("Media/clip.MOV", ".obsidian", selection)).toBe(false)
+    expect(isSelectedForSync("exports/backup.tar.gz", ".obsidian", selection)).toBe(false)
+    expect(isSelectedForSync(".obsidian/app.json", ".obsidian", selection)).toBe(true)
+    expect(normalizeExcludedFolder(" /Archive\\private/ ")).toBe("Archive/private")
+    expect(normalizeExcludedFolder("../outside")).toBeNull()
+    expect(normalizeExcludedExtension(".MOV")).toBe("mov")
+    expect(normalizeExcludedExtension("bad/path")).toBeNull()
   })
 
   it("keeps configuration conflicts outside the active config directory", () => {

@@ -1,10 +1,16 @@
 import { normalizePath, TFile, type Vault } from "obsidian"
-import type { ConfigCategory, ScannedFileSnapshot, VaultPort } from "../model"
+import type {
+  ConfigCategory,
+  ScannedFileSnapshot,
+  SelectiveSyncSettings,
+  VaultPort,
+} from "../model"
 import { fingerprint } from "../platform/bytes"
 import { yieldToEventLoop } from "../platform/scheduling"
 import {
   configCategoryForPath,
   isConfigPath,
+  isSelectedForSync,
   isSyncablePath,
   normalizeVaultPath,
   pathsCollide,
@@ -32,11 +38,18 @@ export class ObsidianVaultPort implements VaultPort {
     return this.fileSizeLimit()
   }
 
-  async listFiles(categories: Record<ConfigCategory, boolean>): Promise<ScannedFileSnapshot[]> {
+  async listFiles(
+    categories: Record<ConfigCategory, boolean>,
+    selection: SelectiveSyncSettings = { excludedFolders: [], excludedExtensions: [] },
+  ): Promise<ScannedFileSnapshot[]> {
     const paths = new Set<string>()
     for (const file of this.vault.getFiles()) {
-      if (isSyncablePath(file.path, this.configDir, categories))
+      if (
+        isSyncablePath(file.path, this.configDir, categories) &&
+        isSelectedForSync(file.path, this.configDir, selection)
+      ) {
         paths.add(normalizeVaultPath(file.path))
+      }
     }
     for (const path of await this.listSelectedConfigFiles(categories)) paths.add(path)
 

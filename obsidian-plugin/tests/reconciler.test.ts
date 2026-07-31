@@ -206,6 +206,43 @@ describe("Reconciler", () => {
     ])
   })
 
+  it("never tombstones files hidden by local selective sync", async () => {
+    const identity = randomId()
+    const bytes = new TextEncoder().encode("private content").buffer
+    const vault = new FakeVault({ "Archive/private/note.md": "private content" })
+    const journal = new MemoryJournal()
+    await journal.replaceSnapshots([
+      {
+        path: "Archive/private/note.md",
+        fileId: identity,
+        fingerprint: await fingerprint(bytes),
+        size: bytes.byteLength,
+        mtime: 1,
+        kind: "vault",
+      },
+    ])
+    const excluded = {
+      excludedFolders: ["Archive/private"],
+      excludedExtensions: [] as string[],
+    }
+
+    await new Reconciler(vault, journal).reconcile(ALL_CATEGORIES, excluded)
+    vault.files.delete("Archive/private/note.md")
+    await new Reconciler(vault, journal).reconcile(ALL_CATEGORIES, excluded)
+
+    expect(await journal.listPending()).toEqual([])
+    expect((await journal.getSnapshots()).get("Archive/private/note.md")?.fileId).toBe(identity)
+
+    await new Reconciler(vault, journal).reconcile(ALL_CATEGORIES)
+    expect(await journal.listPending()).toEqual([
+      expect.objectContaining({
+        action: "delete",
+        path: "Archive/private/note.md",
+        fileId: identity,
+      }),
+    ])
+  })
+
   it("queues tombstones for disappeared files", async () => {
     const journal = new MemoryJournal()
     await journal.replaceSnapshots([

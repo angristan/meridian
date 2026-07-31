@@ -24,6 +24,11 @@ export interface PendingPairingCompletion {
   expiresAt: number
 }
 
+export interface SelectiveSyncSettings {
+  excludedFolders: string[]
+  excludedExtensions: string[]
+}
+
 export interface MeridianSettings {
   enabled: boolean
   endpoint: string
@@ -35,6 +40,7 @@ export interface MeridianSettings {
   pollIntervalSeconds: number
   scanIntervalMinutes: number
   maxFileSizeMiB: number
+  selectiveSync: SelectiveSyncSettings
   configCategories: Record<ConfigCategory, boolean>
 }
 
@@ -49,6 +55,10 @@ export const DEFAULT_SETTINGS: MeridianSettings = {
   pollIntervalSeconds: 45,
   scanIntervalMinutes: 5,
   maxFileSizeMiB: 64,
+  selectiveSync: {
+    excludedFolders: [],
+    excludedExtensions: [],
+  },
   configCategories: {
     main: true,
     appearance: true,
@@ -560,7 +570,10 @@ export interface RemotePort {
 export interface VaultPort {
   configDir: string
   maxFileBytes(): number
-  listFiles(categories: Record<ConfigCategory, boolean>): Promise<ScannedFileSnapshot[]>
+  listFiles(
+    categories: Record<ConfigCategory, boolean>,
+    selection?: SelectiveSyncSettings,
+  ): Promise<ScannedFileSnapshot[]>
   read(path: string): Promise<ArrayBuffer>
   write(path: string, bytes: ArrayBuffer): Promise<void>
   replaceIfUnchanged(
