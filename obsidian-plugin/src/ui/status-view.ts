@@ -103,7 +103,10 @@ export class MeridianStatusView extends ItemView {
     )
     elements.connectionButton.disabled = connection.disabled
     elements.connectionButton.toggleClass("mod-cta", connection.action === "resume")
-    elements.connectionButton.toggleClass("meridian-connection-link", connection.action === "pause")
+    elements.connectionButton.toggleClass(
+      "meridian-connection-secondary",
+      connection.action === "pause",
+    )
 
     const phaseChanged = this.lastPhase !== status.phase
     this.lastPhase = status.phase

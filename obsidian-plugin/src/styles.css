@@ -197,18 +197,14 @@
   margin-block-start: var(--size-4-2);
 }
 
-.meridian-connection-control.meridian-connection-link {
+.meridian-connection-control.meridian-connection-secondary {
   width: auto;
   margin-inline: auto;
-  border-color: transparent;
-  background: transparent;
-  box-shadow: none;
   color: var(--text-muted);
   font-size: var(--font-ui-small);
 }
 
-.meridian-connection-control.meridian-connection-link:hover {
-  background: var(--background-modifier-hover);
+.meridian-connection-control.meridian-connection-secondary:hover {
   color: var(--text-normal);
 }
 
