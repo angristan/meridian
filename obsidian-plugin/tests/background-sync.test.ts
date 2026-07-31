@@ -3,9 +3,15 @@ import {
   BackgroundSyncCompute,
   type IndexPlanningInput,
   planIndexCooperatively,
+  SYNC_WORKER_SOURCE,
   type SyncWorkerLike,
 } from "../src/platform/background-sync"
 import { fingerprint } from "../src/platform/bytes"
+
+interface WorkerSourceScope {
+  onmessage: ((event: MessageEvent<unknown>) => Promise<void>) | null
+  postMessage(message: unknown): void
+}
 
 class FakeSyncWorker implements SyncWorkerLike {
   onmessage: ((event: MessageEvent<unknown>) => void) | null = null
@@ -75,6 +81,41 @@ describe("background sync compute", () => {
     })
     expect(worker.transfers).toEqual([])
     compute.close()
+  })
+
+  it("executes the bundled Worker source", async () => {
+    let response: unknown = null
+    const scope: WorkerSourceScope = {
+      onmessage: null,
+      postMessage: (message) => {
+        response = message
+      },
+    }
+    const initializeWorker = new Function("self", SYNC_WORKER_SOURCE) as (
+      workerScope: WorkerSourceScope,
+    ) => void
+    initializeWorker(scope)
+
+    await scope.onmessage?.({
+      data: {
+        id: 1,
+        kind: "plan-index",
+        input: {
+          current: [{ path: "new.md", fingerprint: "same" }],
+          previous: [{ path: "old.md", fingerprint: "same" }],
+          collisionPaths: ["new.md"],
+        },
+      },
+    } as MessageEvent<unknown>)
+
+    expect(response).toEqual({
+      id: 1,
+      kind: "plan-index",
+      plan: {
+        removedPaths: ["old.md"],
+        renameSources: [{ path: "new.md", previousPath: "old.md" }],
+      },
+    })
   })
 
   it("uses cooperative fallbacks when Workers are unavailable", async () => {

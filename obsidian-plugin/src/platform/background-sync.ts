@@ -332,7 +332,7 @@ function isIndexPlan(value: unknown): value is IndexPlan {
   )
 }
 
-const SYNC_WORKER_SOURCE = `
+export const SYNC_WORKER_SOURCE = `
 const planIndex = (input) => {
   const pathByCollisionKey = new Map();
   for (const path of input.collisionPaths) {
