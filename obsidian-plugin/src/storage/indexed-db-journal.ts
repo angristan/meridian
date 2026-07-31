@@ -87,9 +87,10 @@ export class IndexedDbJournal implements JournalPort {
     const transaction = database.transaction("dirty-paths", "readwrite")
     const done = transactionDone(transaction)
     const store = transaction.objectStore("dirty-paths")
+    const current = await requestResult<DirtyPath[]>(store.getAll())
+    const tokenByPath = new Map(current.map((change) => [change.path, change.token]))
     for (const change of changes) {
-      const current = await requestResult<DirtyPath | undefined>(store.get(change.path))
-      if (current?.token === change.token) store.delete(change.path)
+      if (tokenByPath.get(change.path) === change.token) store.delete(change.path)
     }
     await done
   }
@@ -111,9 +112,10 @@ export class IndexedDbJournal implements JournalPort {
     for (const entry of commit.entries) entries.put(entry)
     for (const snapshot of commit.putSnapshots) files.put(snapshot)
     for (const path of commit.removeSnapshotPaths) files.delete(path)
+    const currentDirtyPaths = await requestResult<DirtyPath[]>(dirtyPaths.getAll())
+    const tokenByPath = new Map(currentDirtyPaths.map((change) => [change.path, change.token]))
     for (const change of commit.consumeDirtyPaths) {
-      const current = await requestResult<DirtyPath | undefined>(dirtyPaths.get(change.path))
-      if (current?.token === change.token) dirtyPaths.delete(change.path)
+      if (tokenByPath.get(change.path) === change.token) dirtyPaths.delete(change.path)
     }
     await done
   }
