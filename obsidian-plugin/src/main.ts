@@ -29,6 +29,7 @@ import {
 } from "./plugin/settings"
 import { IndexedDbJournal } from "./storage/journal"
 import { SyncController } from "./sync/controller"
+import { showQuickStatusMenu, showQuickStatusMenuAtElement } from "./ui/quick-status-menu"
 import {
   HistoryModal,
   MeridianStatusView,
@@ -63,12 +64,26 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
 
     this.registerView(STATUS_VIEW_TYPE, (leaf) => new MeridianStatusView(leaf, this))
     this.addSettingTab(new MeridianSettingsTab(this.app, this))
-    this.addRibbonIcon("cloud-cog", "Open Meridian sync", () => void this.openStatus())
+    this.addRibbonIcon("cloud-cog", "Open Meridian sync menu", (event) =>
+      showQuickStatusMenu(this, event, () => void this.openStatus()),
+    )
     if (!Platform.isMobileApp) {
       this.statusBar = this.addStatusBarItem()
       this.statusBar.addClass("meridian-status-bar")
       this.statusBar.setText("Meridian: starting")
-      this.statusBar.addEventListener("click", () => void this.openStatus())
+      this.statusBar.setAttribute("role", "button")
+      this.statusBar.tabIndex = 0
+      this.statusBar.setAttribute("aria-label", "Open Meridian sync menu")
+      this.registerDomEvent(this.statusBar, "click", (event) =>
+        showQuickStatusMenu(this, event, () => void this.openStatus()),
+      )
+      this.registerDomEvent(this.statusBar, "keydown", (event) => {
+        if (event.key !== "Enter" && event.key !== " ") return
+        event.preventDefault()
+        if (this.statusBar) {
+          showQuickStatusMenuAtElement(this, this.statusBar, () => void this.openStatus())
+        }
+      })
     }
 
     this.addCommand({ id: "sync-now", name: "Sync now", callback: () => void this.syncNow() })
