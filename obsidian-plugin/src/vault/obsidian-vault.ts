@@ -62,7 +62,7 @@ export class ObsidianVaultPort implements VaultPort {
       discovered += 1
       if (discovered % 500 === 0) await yieldToEventLoop()
     }
-    for (const path of await this.listSelectedConfigFiles(categories)) paths.add(path)
+    for (const path of await this.listSelectedConfigFiles(categories, options)) paths.add(path)
 
     return this.scanFiles([...paths], categories, selection, options)
   }
@@ -295,6 +295,7 @@ export class ObsidianVaultPort implements VaultPort {
 
   private async listSelectedConfigFiles(
     categories: Record<ConfigCategory, boolean>,
+    options: VaultScanOptions,
   ): Promise<string[]> {
     const paths: string[] = []
     const root = this.configDir
@@ -328,7 +329,9 @@ export class ObsidianVaultPort implements VaultPort {
       "zk-prefixer.json",
     ]
 
+    let processed = 0
     for (const relative of candidates) {
+      if (options.shouldStop?.()) throw new Error("Vault scan canceled")
       const path = normalizeVaultPath(`${root}/${relative}`)
       const category = configCategoryForPath(path, root)
       if (
@@ -338,25 +341,31 @@ export class ObsidianVaultPort implements VaultPort {
       ) {
         paths.push(path)
       }
+      processed += 1
+      if (processed % 25 === 0) await yieldToEventLoop()
     }
     if (categories.themes) {
-      paths.push(...(await this.listAdapterFiles(`${root}/themes`)))
-      paths.push(...(await this.listAdapterFiles(`${root}/snippets`)))
+      paths.push(...(await this.listAdapterFiles(`${root}/themes`, options)))
+      paths.push(...(await this.listAdapterFiles(`${root}/snippets`, options)))
     }
     return paths.filter((path) => isSyncablePath(path, root, categories))
   }
 
-  private async listAdapterFiles(root: string): Promise<string[]> {
+  private async listAdapterFiles(root: string, options: VaultScanOptions): Promise<string[]> {
     const normalizedRoot = normalizePath(normalizeVaultPath(root))
     if (!(await this.vault.adapter.exists(normalizedRoot))) return []
     const pending = [normalizedRoot]
     const files: string[] = []
+    let processed = 0
     while (pending.length > 0) {
+      if (options.shouldStop?.()) throw new Error("Vault scan canceled")
       const directory = pending.pop()
       if (!directory) continue
       const listed = await this.vault.adapter.list(directory)
       files.push(...listed.files.map(normalizeVaultPath))
       pending.push(...listed.folders.map(normalizeVaultPath))
+      processed += 1
+      if (processed % 25 === 0) await yieldToEventLoop()
     }
     return files
   }
