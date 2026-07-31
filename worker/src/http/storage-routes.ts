@@ -10,6 +10,7 @@ interface CoordinatorStorage {
   operationCount: number
   checkpointCount: number
   snapshotCount: number
+  canPrune: boolean
 }
 
 export function registerStorageRoutes(app: WorkerApp): void {
@@ -34,6 +35,16 @@ export function registerStorageRoutes(app: WorkerApp): void {
           { ...coordinator, ...blobs, totalBytes: coordinator.databaseBytes + blobs.blobBytes },
           { headers: { "cache-control": "private, no-store" } },
         )
+      }),
+    ),
+  )
+
+  app.post("/v1/storage/prune-orphans", (c) =>
+    runResponse(
+      Effect.gen(function* () {
+        const token = sessionToken(c)
+        yield* validateSessionEffect(c.env, token)
+        return yield* callVaultEffect(c.env, "/v1/storage/prune-orphans", "POST", undefined, token)
       }),
     ),
   )
@@ -69,7 +80,13 @@ async function parseCoordinatorStorage(response: Response): Promise<CoordinatorS
     operationCount: nonNegativeNumber(value.operationCount, "operationCount"),
     checkpointCount: nonNegativeNumber(value.checkpointCount, "checkpointCount"),
     snapshotCount: nonNegativeNumber(value.snapshotCount, "snapshotCount"),
+    canPrune: boolean(value.canPrune, "canPrune"),
   }
+}
+
+function boolean(value: unknown, field: string): boolean {
+  if (typeof value !== "boolean") throw new Error(`Coordinator storage field ${field} is invalid`)
+  return value
 }
 
 function nonNegativeNumber(value: unknown, field: string): number {

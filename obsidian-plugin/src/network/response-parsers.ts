@@ -165,6 +165,13 @@ export function requiredString(value: unknown, key: string): string {
   return value[key]
 }
 
+export function requiredBoolean(value: unknown, key: string): boolean {
+  if (!isRecord(value) || typeof value[key] !== "boolean") {
+    throw new Error(`Server response is missing ${key}`)
+  }
+  return value[key]
+}
+
 export function requiredNumber(value: unknown, key: string): number {
   if (!isRecord(value)) throw new Error(`Server response is missing ${key}`)
   const parsed = optionalNumber(value[key])

@@ -18,7 +18,7 @@ export {
   snapshotSigningMessage,
 } from "./vault/signing"
 
-export type VaultDurableObjectEnv = Record<never, never>
+export type VaultDurableObjectEnv = Pick<Env, "BLOBS">
 
 export class VaultDurableObject extends DurableObject<VaultDurableObjectEnv> {
   private readonly sql: SqlStorage
@@ -46,6 +46,7 @@ export class VaultDurableObject extends DurableObject<VaultDurableObjectEnv> {
       transactionSync,
       (cursor, authorDeviceId) => this.notifications.notifyCursor(cursor, authorDeviceId),
       (deviceId) => this.notifications.closeRevokedDevice(deviceId),
+      env.BLOBS,
     )
     this.records = new VaultRecords(this.sql)
   }
@@ -90,6 +91,19 @@ export class VaultDurableObject extends DurableObject<VaultDurableObjectEnv> {
         return await this.operations.changes(request)
       if (request.method === "GET" && pathname === "/v1/storage")
         return await this.operations.storageStats(request)
+      if (request.method === "POST" && pathname === "/v1/storage/prune-orphans") {
+        return await this.ctx.blockConcurrencyWhile(async () => {
+          try {
+            return await this.operations.pruneOrphanBlobs(request)
+          } catch (error) {
+            return errorResponse(error)
+          }
+        })
+      }
+      const blobClaimMatch = /^\/internal\/blobs\/([^/]+)\/claim$/.exec(pathname)
+      const claimedBlobId = blobClaimMatch?.at(1)
+      if (request.method === "POST" && claimedBlobId !== undefined)
+        return await this.operations.claimBlob(request, claimedBlobId)
       if (request.method === "POST" && pathname === "/v1/operations")
         return await this.operations.commitOperation(request)
       if (request.method === "PUT" && pathname === "/v1/checkpoints")

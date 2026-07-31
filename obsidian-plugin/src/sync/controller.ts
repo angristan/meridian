@@ -227,6 +227,14 @@ export class SyncController {
     return this.remote.getStorageUsage()
   }
 
+  async pruneStorage() {
+    return this.runMaintenance(async () => {
+      const device = this.requireDevice()
+      await this.authenticate(device)
+      return this.remote.pruneStorage()
+    })
+  }
+
   async devices(): Promise<RemoteDevice[]> {
     const device = this.requireDevice()
     await this.authenticate(device)
@@ -317,16 +325,20 @@ export class SyncController {
     await this.historyBackfill.backfill(device)
   }
 
-  private runMaintenance(operation: () => Promise<void>): Promise<void> {
+  private runMaintenance<T>(operation: () => Promise<T>): Promise<T> {
     if (this.stopRequested) return Promise.reject(new Error("Meridian sync is paused"))
     const predecessor = this.maintenance ?? this.running ?? Promise.resolve()
     const work = predecessor.then(operation)
     let settled: Promise<void>
-    settled = work.finally(() => {
+    settled = work.then(
+      () => undefined,
+      () => undefined,
+    )
+    settled = settled.finally(() => {
       if (this.maintenance === settled) this.maintenance = null
     })
     this.maintenance = settled
-    return settled
+    return work
   }
 
   private async runLoop(initialReason: SyncReason): Promise<void> {

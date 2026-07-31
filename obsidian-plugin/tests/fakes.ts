@@ -26,6 +26,7 @@ import type {
   ScannedFileSnapshot,
   SelectiveSyncSettings,
   SetupClaim,
+  StoragePruneResult,
   StorageUsage,
   TrustedCheckpoint,
   VaultPort,
@@ -415,8 +416,12 @@ export class FakeRemote implements RemotePort {
       operationCount: this.operations.length,
       checkpointCount: 0,
       snapshotCount: 0,
-      pruningAvailable: false,
+      pruningAvailable: true,
     }
+  }
+
+  async pruneStorage(): Promise<StoragePruneResult> {
+    return { deletedBytes: 0, deletedCount: 0, graceDays: 7 }
   }
 
   async getBlob(blobId: string): Promise<ArrayBuffer> {

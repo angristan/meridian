@@ -6,6 +6,7 @@ import { requiredParam } from "./request"
 import { sessionToken, validateSessionEffect } from "./session"
 import { observeStreamOutcome, type StreamOutcome } from "./stream-lifecycle"
 import type { WorkerApp } from "./types"
+import { callVaultEffect } from "./vault-proxy"
 
 const MAX_BLOB_BYTES = 10 * 1024 * 1024
 
@@ -59,6 +60,15 @@ export function registerBlobRoutes(app: WorkerApp): void {
             new HttpError(400, "empty_blob", "Encrypted blob body is required"),
           )
         }
+        const claim = yield* callVaultEffect(
+          c.env,
+          `/internal/blobs/${encodeURIComponent(blobId)}/claim`,
+          "POST",
+          undefined,
+          token,
+        )
+        if (!claim.ok) return claim
+
         const key = `vaults/${auth.vaultId}/blobs/${blobId}`
         const stored = yield* Effect.tryPromise({
           try: () =>

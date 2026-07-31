@@ -10,6 +10,7 @@ import type {
   RemoteDevice,
   RemotePort,
   SetupClaim,
+  StoragePruneResult,
   StorageUsage,
   TrustedCheckpoint,
 } from "../model"
@@ -23,6 +24,7 @@ import {
   parseOperation,
   parsePairingResult,
   parsePairingStatus,
+  requiredBoolean,
   requiredNumber,
   requiredString,
 } from "./response-parsers"
@@ -145,7 +147,19 @@ export class MeridianRemoteClient implements RemotePort {
       operationCount: requiredNumber(result, "operationCount"),
       checkpointCount: requiredNumber(result, "checkpointCount"),
       snapshotCount: requiredNumber(result, "snapshotCount"),
-      pruningAvailable: false,
+      pruningAvailable: requiredBoolean(result, "canPrune"),
+    }
+  }
+
+  async pruneStorage(): Promise<StoragePruneResult> {
+    const result = await this.jsonRequest("/v1/storage/prune-orphans", {
+      method: "POST",
+      authenticated: true,
+    })
+    return {
+      deletedBytes: requiredNumber(result, "deletedBytes"),
+      deletedCount: requiredNumber(result, "deletedCount"),
+      graceDays: requiredNumber(result, "graceDays"),
     }
   }
 

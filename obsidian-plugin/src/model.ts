@@ -226,7 +226,13 @@ export interface StorageUsage {
   operationCount: number
   checkpointCount: number
   snapshotCount: number
-  pruningAvailable: false
+  pruningAvailable: boolean
+}
+
+export interface StoragePruneResult {
+  deletedBytes: number
+  deletedCount: number
+  graceDays: number
 }
 
 export interface SyncDiagnostic {
@@ -577,6 +583,7 @@ export interface RemotePort {
   putBlob(blob: EncryptedBlob): Promise<void>
   getBlob(blobId: string): Promise<ArrayBuffer>
   getStorageUsage(): Promise<StorageUsage>
+  pruneStorage(): Promise<StoragePruneResult>
   commit(envelope: unknown, idempotencyKey: string): Promise<{ cursor: number; logHash: string }>
   listDevices(): Promise<RemoteDevice[]>
   updateDeviceDescriptor(descriptor: PairingDeviceDescriptor): Promise<void>

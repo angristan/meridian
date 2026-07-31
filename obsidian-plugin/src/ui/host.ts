@@ -11,6 +11,7 @@ import type {
   RemoteDevice,
   RevisionComparison,
   RevisionPreview,
+  StoragePruneResult,
   StorageUsage,
   SyncActivity,
   SyncDiagnostic,
@@ -36,6 +37,7 @@ export interface MeridianUiHost {
   getDiagnostics(): SyncDiagnostic[]
   getDebugReport(): string
   getStorageUsage(): Promise<StorageUsage>
+  pruneStorage(): Promise<StoragePruneResult>
   previewRevision(revisionId: string): Promise<RevisionPreview>
   compareRevisionToCurrent(revisionId: string): Promise<RevisionComparison>
   restoreRevision(revisionId: string): Promise<void>

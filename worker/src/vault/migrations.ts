@@ -241,5 +241,19 @@ export function migrateVaultSchema(sql: SqlStorage, transactionSync: Transaction
       `)
       sql.exec("INSERT INTO _sql_schema_migrations (id, applied_at) VALUES (3, ?)", Date.now())
     })
+    version = 3
+  }
+
+  if (version < 4) {
+    transactionSync(() => {
+      sql.exec(`
+        CREATE TABLE IF NOT EXISTS blob_claims (
+          blob_id TEXT PRIMARY KEY,
+          claimed_at INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS blob_claims_age ON blob_claims(claimed_at);
+      `)
+      sql.exec("INSERT INTO _sql_schema_migrations (id, applied_at) VALUES (4, ?)", Date.now())
+    })
   }
 }

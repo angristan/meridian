@@ -69,7 +69,9 @@ Synchronization is not a backup. Keep a separate backup of the plaintext vault a
 
 ## Retention and garbage collection
 
-Automatic garbage collection remains disabled until acknowledgement-aware retention is implemented and validated. Meridian shows this gate in the storage view instead of offering an unsafe delete action. When enabled, deletion work must be idempotent, retain pinned revisions, tolerate offline devices, and keep an orphan grace period for upload-before-commit failures.
+Automatic history garbage collection remains disabled until acknowledgement-aware retention is implemented and validated. Meridian shows this gate in the storage view instead of offering an unsafe history-delete action. When enabled, history deletion must be idempotent, retain pinned revisions, and tolerate offline devices.
+
+The owner can manually clean up encrypted uploads older than seven days that no retained revision references. Upload claims are recorded before R2 writes, and cleanup is serialized by the Durable Object so an interrupted or concurrent sync cannot lose a blob before commit. Cleanup aborts without deleting anything if any retained file operation cannot be indexed safely.
 
 The storage view reports the Durable Object SQLite size and enumerates the vault's encrypted R2 objects on demand. The R2 scan is read-only and may take longer for large vaults.
 

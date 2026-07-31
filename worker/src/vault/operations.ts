@@ -1,4 +1,4 @@
-import { logChainSigningBytes } from "@meridian/protocol"
+import { decodeOperation, logChainSigningBytes } from "@meridian/protocol"
 import {
   assertIdentifier,
   base64UrlDecode,
@@ -28,6 +28,10 @@ import {
 import { operationSigningMessage } from "./signing"
 
 type AppendResult = { operation: OperationRow; inserted: boolean }
+type RevisionEnvelopeRow = Pick<OperationRow, "cursor" | "envelope">
+
+const ORPHAN_GRACE_MS = 7 * 24 * 60 * 60 * 1_000
+const PRUNE_PAGE_SIZE = 1_000
 
 class RetryAppend extends Error {}
 
@@ -60,6 +64,7 @@ export class VaultOperations {
     private readonly transactionSync: TransactionSync,
     private readonly notifyCursor: (cursor: number, authorDeviceId: string) => void,
     private readonly closeRevokedDevice: (deviceId: string) => void,
+    private readonly blobs: R2Bucket,
   ) {}
 
   private async operationRequestHash(operation: Operation): Promise<string> {
@@ -304,8 +309,113 @@ export class VaultOperations {
     )
   }
 
-  async storageStats(request: Request): Promise<Response> {
+  async claimBlob(request: Request, blobId: string): Promise<Response> {
+    assertIdentifier(blobId, "blobId")
     await authenticate(this.sql, request)
+    this.sql.exec(
+      `INSERT INTO blob_claims(blob_id, claimed_at) VALUES (?, ?)
+       ON CONFLICT(blob_id) DO UPDATE SET claimed_at = excluded.claimed_at`,
+      blobId,
+      Date.now(),
+    )
+    return new Response(null, { status: 204 })
+  }
+
+  async pruneOrphanBlobs(request: Request): Promise<Response> {
+    const session = await authenticate(this.sql, request)
+    assert(
+      session.role === "owner",
+      new HttpError(403, "owner_required", "Only the owner device can prune storage"),
+    )
+
+    const referenced = this.referencedBlobIds()
+    const cutoff = Date.now() - ORPHAN_GRACE_MS
+    const prefix = `vaults/${session.vaultId}/blobs/`
+    let cursor: string | undefined
+    let deletedBytes = 0
+    let deletedCount = 0
+
+    do {
+      const page = await this.blobs.list({
+        prefix,
+        ...(cursor ? { cursor } : {}),
+        limit: PRUNE_PAGE_SIZE,
+      })
+      const candidates = page.objects.filter((object) => {
+        const blobId = object.key.slice(prefix.length)
+        if (!/^[A-Za-z0-9_-]{22}$/.test(blobId)) return false
+        const claimedAt = this.sql
+          .exec<{ claimed_at: number }>(
+            "SELECT claimed_at FROM blob_claims WHERE blob_id = ?",
+            blobId,
+          )
+          .toArray()[0]?.claimed_at
+        return isSafeOrphanCandidate(
+          object.uploaded.getTime(),
+          claimedAt,
+          cutoff,
+          referenced.has(blobId),
+        )
+      })
+      if (candidates.length > 0) {
+        await this.blobs.delete(candidates.map((object) => object.key))
+        deletedBytes += candidates.reduce((total, object) => total + object.size, 0)
+        deletedCount += candidates.length
+        for (const object of candidates) {
+          this.sql.exec(
+            "DELETE FROM blob_claims WHERE blob_id = ?",
+            object.key.slice(prefix.length),
+          )
+        }
+      }
+      cursor = page.truncated ? page.cursor : undefined
+    } while (cursor !== undefined)
+
+    return json({ deletedBytes, deletedCount, graceDays: ORPHAN_GRACE_MS / 86_400_000 })
+  }
+
+  private referencedBlobIds(): Set<string> {
+    const result = new Set<string>()
+    let after = 0
+    while (true) {
+      const rows = this.sql
+        .exec<RevisionEnvelopeRow>(
+          `SELECT cursor, envelope FROM operations
+           WHERE operation_type IN ('revision', 'merge', 'tombstone', 'restore')
+             AND cursor > ? ORDER BY cursor LIMIT ?`,
+          after,
+          PRUNE_PAGE_SIZE,
+        )
+        .toArray()
+      for (const row of rows) {
+        let operation: ReturnType<typeof decodeOperation>
+        try {
+          operation = decodeOperation(base64UrlDecode(row.envelope))
+        } catch {
+          throw new HttpError(
+            409,
+            "pruning_unavailable",
+            "Encrypted history could not be indexed safely; no blobs were deleted",
+          )
+        }
+        assert(
+          operation.body.type === "revision",
+          new HttpError(
+            409,
+            "pruning_unavailable",
+            "Encrypted history could not be indexed safely; no blobs were deleted",
+          ),
+        )
+        for (const chunk of operation.body.chunks) result.add(base64UrlEncode(chunk.blobId))
+      }
+      if (rows.length < PRUNE_PAGE_SIZE) break
+      after = rows.at(-1)?.cursor ?? after
+    }
+    return result
+  }
+
+  async storageStats(request: Request): Promise<Response> {
+    const session = await authenticate(this.sql, request)
     const operationCount = this.sql
       .exec<{ count: number }>("SELECT COUNT(*) AS count FROM operations")
       .one().count
@@ -320,6 +430,7 @@ export class VaultOperations {
       operationCount,
       checkpointCount,
       snapshotCount,
+      canPrune: session.role === "owner",
     })
   }
 
@@ -368,4 +479,13 @@ export class VaultOperations {
       hasMore: operations.length === limit,
     })
   }
+}
+
+export function isSafeOrphanCandidate(
+  uploadedAt: number,
+  claimedAt: number | undefined,
+  cutoff: number,
+  referenced: boolean,
+): boolean {
+  return !referenced && uploadedAt < cutoff && (claimedAt === undefined || claimedAt < cutoff)
 }

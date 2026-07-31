@@ -169,7 +169,7 @@ describe("Meridian Worker integration", () => {
       const migration = state.storage.sql
         .exec<{ version: number }>("SELECT MAX(id) AS version FROM _sql_schema_migrations")
         .one()
-      expect(migration.version).toBe(3)
+      expect(migration.version).toBe(4)
       const tables = state.storage.sql
         .exec<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table'")
         .toArray()
@@ -177,6 +177,7 @@ describe("Meridian Worker integration", () => {
       expect(tables).toContain("operations")
       expect(tables).toContain("devices")
       expect(tables).toContain("snapshots")
+      expect(tables).toContain("blob_claims")
       const pairingsDefinition = state.storage.sql
         .exec<{ sql: string }>(
           "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'pairings'",
@@ -200,7 +201,7 @@ describe("Meridian Worker integration", () => {
       const migration = state.storage.sql
         .exec<{ version: number }>("SELECT MAX(id) AS version FROM _sql_schema_migrations")
         .one()
-      expect(migration.version).toBe(3)
+      expect(migration.version).toBe(4)
       expect(
         state.storage.sql
           .exec<{ name: string }>(
@@ -363,16 +364,31 @@ describe("Meridian Worker integration", () => {
       operationCount: number
       checkpointCount: number
       snapshotCount: number
+      canPrune: boolean
     }
     expect(storage).toMatchObject({
       blobCount: 2,
       operationCount: 1,
       checkpointCount: 1,
       snapshotCount: 0,
+      canPrune: true,
     })
     expect(storage.blobBytes).toBe(2048)
     expect(storage.databaseBytes).toBeGreaterThan(0)
     expect(storage.totalBytes).toBe(storage.blobBytes + storage.databaseBytes)
+
+    const unsafePrune = await SELF.fetch("https://example.test/v1/storage/prune-orphans", {
+      method: "POST",
+      headers: authorization,
+    })
+    expect(unsafePrune.status).toBe(409)
+    await expect(unsafePrune.json()).resolves.toMatchObject({
+      error: { code: "pruning_unavailable" },
+    })
+    const preservedBlob = await SELF.fetch(`https://example.test/v1/blobs/${blobId}`, {
+      headers: authorization,
+    })
+    expect(preservedBlob.status).toBe(200)
 
     const pairingResponse = await SELF.fetch("https://example.test/v1/pairings", {
       method: "POST",

@@ -132,6 +132,7 @@ describe("Meridian remote client", () => {
         operationCount: 7,
         checkpointCount: 2,
         snapshotCount: 1,
+        canPrune: true,
       }),
     ])
     const client = new MeridianRemoteClient("https://example.test", transport)
@@ -145,9 +146,29 @@ describe("Meridian remote client", () => {
       operationCount: 7,
       checkpointCount: 2,
       snapshotCount: 1,
-      pruningAvailable: false,
+      pruningAvailable: true,
     })
     expect(transport.requests.at(-1)?.url).toBe("https://example.test/v1/storage")
+  })
+
+  it("requests owner-authorized orphan cleanup", async () => {
+    const transport = new QueueTransport([
+      response({ challengeId: "challenge-id", challenge: "challenge" }),
+      response({ sessionToken: "session-token", expiresAt: Number.MAX_SAFE_INTEGER }),
+      response({ deletedBytes: 2_048, deletedCount: 2, graceDays: 7 }),
+    ])
+    const client = new MeridianRemoteClient("https://example.test", transport)
+
+    await client.authenticate(TEST_DEVICE, new FakeCrypto())
+    await expect(client.pruneStorage()).resolves.toEqual({
+      deletedBytes: 2_048,
+      deletedCount: 2,
+      graceDays: 7,
+    })
+    expect(transport.requests.at(-1)).toMatchObject({
+      url: "https://example.test/v1/storage/prune-orphans",
+      method: "POST",
+    })
   })
 
   it("refreshes a session before it enters the expiry margin", async () => {
