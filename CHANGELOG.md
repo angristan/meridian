@@ -1,3 +1,10 @@
+## [1.6.5](https://github.com/angristan/meridian/compare/1.6.4...1.6.5) (2026-07-31)
+
+
+### Bug Fixes
+
+* compact sync status view ([35e72f4](https://github.com/angristan/meridian/commit/35e72f46154eea10f03b9c329ceec4479b5bede5))
+
 ## [1.6.4](https://github.com/angristan/meridian/compare/1.6.3...1.6.4) (2026-07-31)
 
 
