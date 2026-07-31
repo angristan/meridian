@@ -22,8 +22,6 @@ interface StatusElements {
   message: HTMLElement
   summary: HTMLDivElement
   progress: ProgressElements
-  cursor: HTMLElement
-  queued: HTMLElement
   liveUpdates: HTMLElement
   lastSync: HTMLElement
   error: HTMLDivElement
@@ -70,8 +68,6 @@ export class MeridianStatusView extends ItemView {
     elements.message.setText(status.message)
     elements.summary.setText(presentation.summary)
     updateProgress(elements.progress, status.progress, status.phase)
-    elements.cursor.setText(String(status.cursor))
-    elements.queued.setText(String(status.queued))
     elements.liveUpdates.setText(presentation.liveUpdates)
     elements.lastSync.setText(status.lastSyncedAt ? formatTime(status.lastSyncedAt) : "Never")
 
@@ -102,11 +98,9 @@ export class MeridianStatusView extends ItemView {
     const summary = title.createDiv({ cls: "setting-item-description" })
     const progress = createProgress(container)
 
-    const grid = container.createDiv({ cls: "meridian-metric-grid" })
-    const cursor = metric(grid, "Cursor")
-    const queued = metric(grid, "Queued")
-    const liveUpdates = metric(grid, "Live updates")
-    const lastSync = metric(grid, "Last sync")
+    const meta = container.createDiv({ cls: "meridian-status-meta" })
+    const liveUpdates = metaItem(meta, "Live updates")
+    const lastSync = metaItem(meta, "Last sync")
 
     const error = container.createDiv({ cls: "meridian-callout is-error" })
     error.hidden = true
@@ -117,10 +111,10 @@ export class MeridianStatusView extends ItemView {
     setup.hidden = true
 
     const actions = container.createDiv({ cls: "meridian-actions" })
-    const syncButton = actions.createEl("button")
+    const syncButton = actions.createEl("button", { cls: "meridian-action-wide" })
     syncButton.addEventListener("click", () => void this.runSync(syncButton))
 
-    const connectionButton = actions.createEl("button")
+    const connectionButton = actions.createEl("button", { cls: "meridian-action-wide" })
     connectionButton.addEventListener("click", () => void this.runConnectionAction())
 
     const historyButton = actions.createEl("button", { text: "History" })
@@ -137,8 +131,6 @@ export class MeridianStatusView extends ItemView {
       message,
       summary,
       progress,
-      cursor,
-      queued,
       liveUpdates,
       lastSync,
       error,
@@ -175,7 +167,7 @@ export class MeridianStatusView extends ItemView {
 }
 
 function createProgress(container: HTMLElement): ProgressElements {
-  const panel = container.createDiv({ cls: "meridian-progress is-idle" })
+  const panel = container.createDiv({ cls: "meridian-progress" })
   const header = panel.createDiv({ cls: "meridian-progress-header" })
   const label = header.createEl("strong")
   const percent = header.createSpan({ cls: "meridian-progress-percent" })
@@ -192,7 +184,9 @@ function updateProgress(
   phase: SyncPhase,
 ): void {
   const presentation = presentSyncProgressSlot(progress, phase)
-  elements.panel.toggleClass("is-idle", progress === null)
+  const visible = progress !== null || presentation.indeterminate
+  elements.panel.toggleClass("is-visible", visible)
+  elements.panel.setAttribute("aria-hidden", String(!visible))
   elements.label.setText(presentation.label)
   elements.percent.setText(presentation.percent ?? "")
   elements.detail.setText(presentation.detail)
@@ -203,8 +197,8 @@ function updateProgress(
   elements.bar.setAttribute("aria-label", presentation.label)
 }
 
-function metric(container: HTMLElement, label: string): HTMLElement {
-  const element = container.createDiv({ cls: "meridian-metric" })
-  element.createDiv({ cls: "meridian-metric-label", text: label })
+function metaItem(container: HTMLElement, label: string): HTMLElement {
+  const element = container.createDiv({ cls: "meridian-status-meta-item" })
+  element.createSpan({ cls: "meridian-status-meta-label", text: label })
   return element.createEl("strong")
 }
