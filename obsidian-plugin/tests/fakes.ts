@@ -161,6 +161,8 @@ export interface FakeEnvelope {
 }
 
 export class FakeCrypto implements CryptoPort {
+  async verifyOperationLogLink(): Promise<void> {}
+
   async createFirstDevice(vaultId: string): Promise<SetupClaim> {
     return {
       vaultId,

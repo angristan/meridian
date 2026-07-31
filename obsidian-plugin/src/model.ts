@@ -414,6 +414,7 @@ export interface PairedDeviceMaterial {
 
 export interface CryptoPort {
   createFirstDevice(setupSession: string, claimChallenge: string): Promise<SetupClaim>
+  verifyOperationLogLink(operation: RemoteOperation, previousHash: string): Promise<void>
   loadDevice(serializedKeyBundle: string): Promise<DeviceKeyMaterial>
   signChallenge(
     device: DeviceKeyMaterial,

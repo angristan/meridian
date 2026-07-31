@@ -20,6 +20,7 @@ import type {
   RevisionDraft,
   SetupClaim,
 } from "../model"
+import { assertRemoteLogLink } from "../sync/log-verifier"
 import { createDeviceRevocation, verifyDeviceRevocation } from "./device-revocation"
 import { createFirstDevice, loadDevice, recoverDevice, signChallenge } from "./device-workflows"
 import {
@@ -38,6 +39,10 @@ export function createPackageCryptoPort(): CryptoPort {
 }
 
 class PackageCryptoPort implements CryptoPort {
+  verifyOperationLogLink(operation: RemoteOperation, previousHash: string): Promise<void> {
+    return assertRemoteLogLink(operation, previousHash)
+  }
+
   createFirstDevice(setupSession: string, claimChallenge: string): Promise<SetupClaim> {
     return createFirstDevice(setupSession, claimChallenge)
   }

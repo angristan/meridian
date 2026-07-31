@@ -1,4 +1,5 @@
-import type { DeviceKeyMaterial, PullSyncProgress, RemotePort } from "../model"
+import type { DeviceKeyMaterial, PullSyncProgress, RemoteOperation, RemotePort } from "../model"
+import { toBase64Url } from "../platform/bytes"
 import type { JournalPort } from "../storage/journal"
 import type { OperationApplier } from "./operation-applier"
 
@@ -11,6 +12,10 @@ export class PullEngine {
     private readonly journal: JournalPort,
     private readonly remote: RemotePort,
     private readonly applier: OperationApplier,
+    private readonly verifyLogLink: (
+      operation: RemoteOperation,
+      previousHash: string,
+    ) => Promise<void>,
   ) {}
 
   async pull(
@@ -19,6 +24,11 @@ export class PullEngine {
     shouldStop: () => boolean = () => false,
   ): Promise<PullResult> {
     const startCursor = await this.journal.getCursor()
+    const startingCheckpoint = await this.journal.getCheckpoint()
+    if (startCursor > 0 && startingCheckpoint?.cursor !== startCursor) {
+      throw new Error("Local operation log checkpoint is missing")
+    }
+    let previousHash = startingCheckpoint?.logHash ?? toBase64Url(new Uint8Array(32))
     let cursor = startCursor
     let targetCursor = startCursor
     const trustedFloor = device.trustedCheckpoint
@@ -36,6 +46,7 @@ export class PullEngine {
         if (operation.cursor !== cursor + 1) {
           throw new Error(`Operation log is discontinuous at cursor ${operation.cursor}`)
         }
+        await this.verifyLogLink(operation, previousHash)
         if (
           operation.cursor === trustedFloor.cursor &&
           operation.logHash !== trustedFloor.logHash
@@ -52,6 +63,7 @@ export class PullEngine {
           }),
         )
         cursor = operation.cursor
+        previousHash = operation.logHash
         await this.journal.setCheckpoint({ cursor, logHash: operation.logHash })
         onProgress(pullProgress(startCursor, cursor, targetCursor))
       }
