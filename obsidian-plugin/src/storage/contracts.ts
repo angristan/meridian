@@ -9,6 +9,13 @@ import type {
   TrustedCheckpoint,
 } from "../model"
 
+export interface ReconciliationCommit {
+  entries: JournalEntry[]
+  putSnapshots: FileSnapshot[]
+  removeSnapshotPaths: string[]
+  consumeDirtyPaths: DirtyPath[]
+}
+
 export interface JournalPort {
   open(): Promise<void>
   close(): void
@@ -20,6 +27,7 @@ export interface JournalPort {
   listDirtyPaths(): Promise<DirtyPath[]>
   consumeDirtyPaths(changes: readonly DirtyPath[]): Promise<void>
   clearDirtyPaths(): Promise<void>
+  commitReconciliation(commit: ReconciliationCommit): Promise<void>
   getSnapshots(): Promise<Map<string, FileSnapshot>>
   replaceSnapshots(snapshots: FileSnapshot[]): Promise<void>
   putSnapshot(snapshot: FileSnapshot): Promise<void>

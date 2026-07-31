@@ -53,21 +53,35 @@ export class ObsidianVaultPort implements VaultPort {
     }
     for (const path of await this.listSelectedConfigFiles(categories)) paths.add(path)
 
+    return this.scanFiles([...paths], categories, selection)
+  }
+
+  async scanFiles(
+    paths: readonly string[],
+    categories: Record<ConfigCategory, boolean>,
+    selection: SelectiveSyncSettings = { excludedFolders: [], excludedExtensions: [] },
+  ): Promise<ScannedFileSnapshot[]> {
     const snapshots: ScannedFileSnapshot[] = []
     let index = 0
-    for (const path of [...paths].sort()) {
-      const stat = await this.vault.adapter.stat(normalizePath(path))
+    for (const candidate of [...new Set(paths.map(normalizeVaultPath))].sort()) {
+      if (
+        !isSyncablePath(candidate, this.configDir, categories) ||
+        !isSelectedForSync(candidate, this.configDir, selection)
+      ) {
+        continue
+      }
+      const stat = await this.vault.adapter.stat(normalizePath(candidate))
       if (stat?.type !== "file") continue
       if (stat.size > this.maxFileBytes()) {
-        throw new Error(`${path} exceeds the configured mobile-safe file size limit`)
+        throw new Error(`${candidate} exceeds the configured mobile-safe file size limit`)
       }
-      const bytes = await this.read(path)
+      const bytes = await this.read(candidate)
       snapshots.push({
-        path,
+        path: candidate,
         fingerprint: await fingerprint(bytes),
         size: stat.size,
         mtime: stat.mtime,
-        kind: isConfigPath(path, this.configDir) ? "config" : "vault",
+        kind: isConfigPath(candidate, this.configDir) ? "config" : "vault",
       })
       index += 1
       if (index % 25 === 0) await yieldToEventLoop()

@@ -8,6 +8,8 @@ const SCHEDULER_TICK_MS = 15_000
 
 export class PluginScheduling {
   private eventTimer: number | null = null
+  private eventWrites: Promise<void> = Promise.resolve()
+  private eventWriteFailed = false
   private lastPollAt = 0
   private lastScanAt = 0
 
@@ -38,9 +40,16 @@ export class PluginScheduling {
   private registerVaultEvents(): void {
     const schedule = (path: string) => {
       const settings = this.settings()
-      if (isSyncablePath(path, this.plugin.app.vault.configDir, settings.configCategories)) {
-        this.scheduleFileSync()
+      if (!isSyncablePath(path, this.plugin.app.vault.configDir, settings.configCategories)) return
+      const controller = this.controller()
+      if (controller) {
+        this.eventWrites = this.eventWrites
+          .then(() => controller.recordVaultChange(path))
+          .catch(() => {
+            this.eventWriteFailed = true
+          })
       }
+      this.scheduleFileSync()
     }
     this.plugin.registerEvent(
       this.plugin.app.vault.on("create", (file) => {
@@ -79,8 +88,17 @@ export class PluginScheduling {
     if (this.eventTimer !== null) window.clearTimeout(this.eventTimer)
     this.eventTimer = window.setTimeout(() => {
       this.eventTimer = null
-      void this.controller()?.sync("file-event")
+      void this.flushFileEvents()
     }, FILE_EVENT_DEBOUNCE_MS)
+  }
+
+  private async flushFileEvents(): Promise<void> {
+    await this.eventWrites
+    const controller = this.controller()
+    if (!controller) return
+    const reason = this.eventWriteFailed ? "manual" : "file-event"
+    this.eventWriteFailed = false
+    await controller.sync(reason)
   }
 
   private async runScheduledWork(): Promise<void> {

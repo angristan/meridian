@@ -8,7 +8,7 @@ import type {
   LocalRevision,
   TrustedCheckpoint,
 } from "../model"
-import type { JournalPort } from "./contracts"
+import type { JournalPort, ReconciliationCommit } from "./contracts"
 import { requestResult, transactionDone } from "./idb-helpers"
 import { DATABASE_VERSION, migrateStableFileIds, upgradeJournalSchema } from "./migration"
 import { type MetadataRecord, sortRevisions } from "./types"
@@ -99,6 +99,23 @@ export class IndexedDbJournal implements JournalPort {
     const transaction = database.transaction("dirty-paths", "readwrite")
     transaction.objectStore("dirty-paths").clear()
     await transactionDone(transaction)
+  }
+
+  async commitReconciliation(commit: ReconciliationCommit): Promise<void> {
+    const database = this.requireDatabase()
+    const transaction = database.transaction(["entries", "files", "dirty-paths"], "readwrite")
+    const done = transactionDone(transaction)
+    const entries = transaction.objectStore("entries")
+    const files = transaction.objectStore("files")
+    const dirtyPaths = transaction.objectStore("dirty-paths")
+    for (const entry of commit.entries) entries.put(entry)
+    for (const snapshot of commit.putSnapshots) files.put(snapshot)
+    for (const path of commit.removeSnapshotPaths) files.delete(path)
+    for (const change of commit.consumeDirtyPaths) {
+      const current = await requestResult<DirtyPath | undefined>(dirtyPaths.get(change.path))
+      if (current?.token === change.token) dirtyPaths.delete(change.path)
+    }
+    await done
   }
 
   async getSnapshots(): Promise<Map<string, FileSnapshot>> {

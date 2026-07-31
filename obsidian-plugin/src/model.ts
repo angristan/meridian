@@ -624,6 +624,11 @@ export interface VaultPort {
     categories: Record<ConfigCategory, boolean>,
     selection?: SelectiveSyncSettings,
   ): Promise<ScannedFileSnapshot[]>
+  scanFiles(
+    paths: readonly string[],
+    categories: Record<ConfigCategory, boolean>,
+    selection?: SelectiveSyncSettings,
+  ): Promise<ScannedFileSnapshot[]>
   read(path: string): Promise<ArrayBuffer>
   write(path: string, bytes: ArrayBuffer): Promise<void>
   replaceIfUnchanged(

@@ -63,8 +63,18 @@ export class FakeVault implements VaultPort {
     categories: Record<ConfigCategory, boolean>,
     selection: SelectiveSyncSettings = { excludedFolders: [], excludedExtensions: [] },
   ): Promise<ScannedFileSnapshot[]> {
+    return this.scanFiles([...this.files.keys()], categories, selection)
+  }
+
+  async scanFiles(
+    paths: readonly string[],
+    categories: Record<ConfigCategory, boolean>,
+    selection: SelectiveSyncSettings = { excludedFolders: [], excludedExtensions: [] },
+  ): Promise<ScannedFileSnapshot[]> {
     const snapshots: ScannedFileSnapshot[] = []
-    for (const [path, bytes] of this.files) {
+    for (const path of new Set(paths)) {
+      const bytes = this.files.get(path)
+      if (!bytes) continue
       if (
         !isSyncablePath(path, this.configDir, categories) ||
         !isSelectedForSync(path, this.configDir, selection)

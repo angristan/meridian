@@ -1,5 +1,6 @@
 import type {
   ConfigCategory,
+  DirtyPath,
   FileSnapshot,
   JournalEntry,
   ScannedFileSnapshot,
@@ -27,27 +28,72 @@ export class Reconciler {
     categories: Record<ConfigCategory, boolean>,
     selection: SelectiveSyncSettings = { excludedFolders: [], excludedExtensions: [] },
   ): Promise<ReconcileResult> {
+    const dirtyPaths = await this.journal.listDirtyPaths()
     const current = await this.vault.listFiles(categories, selection)
     await assertNoCaseCollisions(current)
+    return this.reconcileScanned(
+      current,
+      await this.journal.getSnapshots(),
+      categories,
+      selection,
+      null,
+      dirtyPaths,
+    )
+  }
 
-    const previous = await this.journal.getSnapshots()
+  async reconcileDirty(
+    categories: Record<ConfigCategory, boolean>,
+    selection: SelectiveSyncSettings = { excludedFolders: [], excludedExtensions: [] },
+  ): Promise<ReconcileResult> {
+    const dirtyPaths = await this.journal.listDirtyPaths()
+    if (dirtyPaths.length === 0) return { queued: 0, files: 0 }
+
+    const scope = new Set(dirtyPaths.map((change) => change.path))
+    const [current, previous] = await Promise.all([
+      this.vault.scanFiles([...scope], categories, selection),
+      this.journal.getSnapshots(),
+    ])
+    const collisionCandidates = [
+      ...[...previous.values()].filter(
+        (snapshot) =>
+          !scope.has(snapshot.path) &&
+          snapshotEnabled(snapshot, categories, selection, this.vault.configDir),
+      ),
+      ...current,
+    ]
+    await assertNoCaseCollisions(collisionCandidates)
+    return this.reconcileScanned(current, previous, categories, selection, scope, dirtyPaths)
+  }
+
+  private async reconcileScanned(
+    current: ScannedFileSnapshot[],
+    previous: Map<string, FileSnapshot>,
+    categories: Record<ConfigCategory, boolean>,
+    selection: SelectiveSyncSettings,
+    scope: ReadonlySet<string> | null,
+    dirtyPaths: DirtyPath[],
+  ): Promise<ReconcileResult> {
     const pendingEntries = await this.journal.listPending()
     const pendingBefore = new Set(pendingEntries.map((entry) => entry.path))
     const pendingPaths = new Set(pendingBefore)
     const pendingByPath = new Map(pendingEntries.map((entry) => [entry.path, entry]))
     const currentByPath = new Map(current.map((snapshot) => [snapshot.path, snapshot]))
+    const inScope = (path: string) => scope === null || scope.has(path)
     const ignoredPrevious = [...previous.values()].filter(
-      (snapshot) => !snapshotEnabled(snapshot, categories, selection, this.vault.configDir),
+      (snapshot) =>
+        !inScope(snapshot.path) ||
+        !snapshotEnabled(snapshot, categories, selection, this.vault.configDir),
     )
     const removed = [...previous.values()].filter(
       (snapshot) =>
+        inScope(snapshot.path) &&
         snapshotEnabled(snapshot, categories, selection, this.vault.configDir) &&
         !currentByPath.has(snapshot.path),
     )
     const removedByFingerprint = groupByFingerprint(removed)
     const consumedRemovals = new Set<string>()
     const identifiedCurrent = new Map<string, FileSnapshot>()
-    let queued = 0
+    const entries: JournalEntry[] = []
     let processed = 0
 
     for (const scanned of current) {
@@ -76,9 +122,8 @@ export class Reconciler {
       if (prior?.fingerprint === snapshot.fingerprint) continue
       if (pendingPaths.has(snapshot.path)) continue
 
-      await this.queueUpsert(snapshot, renameSource?.path ?? null)
+      entries.push(await this.createUpsert(snapshot, renameSource?.path ?? null))
       pendingPaths.add(snapshot.path)
-      queued += 1
     }
 
     for (const snapshot of removed) {
@@ -87,7 +132,7 @@ export class Reconciler {
       if (consumedRemovals.has(snapshot.path)) continue
       if (pendingPaths.has(snapshot.path)) continue
       const { baseRevisionId, parentRevisionIds } = await this.revisionAncestry(snapshot.fileId)
-      const entry: JournalEntry = {
+      entries.push({
         id: randomId(),
         action: "delete",
         fileId: snapshot.fileId,
@@ -103,10 +148,8 @@ export class Reconciler {
         state: "queued",
         error: null,
         preparedRevision: null,
-      }
-      await this.journal.putEntry(entry)
+      })
       pendingPaths.add(snapshot.path)
-      queued += 1
     }
 
     const nextSnapshots = new Map(
@@ -121,13 +164,24 @@ export class Reconciler {
     for (const snapshot of removed) {
       if (pendingPaths.has(snapshot.path)) nextSnapshots.set(snapshot.path, snapshot)
     }
-    await this.journal.replaceSnapshots([...nextSnapshots.values()])
-    return { queued, files: current.length }
+
+    await this.journal.commitReconciliation({
+      entries,
+      putSnapshots: [...nextSnapshots.values()].filter(
+        (snapshot) => !sameSnapshot(previous.get(snapshot.path), snapshot),
+      ),
+      removeSnapshotPaths: [...previous.keys()].filter((path) => !nextSnapshots.has(path)),
+      consumeDirtyPaths: dirtyPaths,
+    })
+    return { queued: entries.length, files: scope?.size ?? current.length }
   }
 
-  private async queueUpsert(snapshot: FileSnapshot, previousPath: string | null): Promise<void> {
+  private async createUpsert(
+    snapshot: FileSnapshot,
+    previousPath: string | null,
+  ): Promise<JournalEntry> {
     const { baseRevisionId, parentRevisionIds } = await this.revisionAncestry(snapshot.fileId)
-    const entry: JournalEntry = {
+    return {
       id: randomId(),
       action: "upsert",
       fileId: snapshot.fileId,
@@ -144,7 +198,6 @@ export class Reconciler {
       error: null,
       preparedRevision: null,
     }
-    await this.journal.putEntry(entry)
   }
 
   private async revisionAncestry(
@@ -156,6 +209,17 @@ export class Reconciler {
       parentRevisionIds: heads.map((revision) => revision.revisionId),
     }
   }
+}
+
+function sameSnapshot(left: FileSnapshot | undefined, right: FileSnapshot): boolean {
+  return (
+    left !== undefined &&
+    left.fileId === right.fileId &&
+    left.fingerprint === right.fingerprint &&
+    left.size === right.size &&
+    left.mtime === right.mtime &&
+    left.kind === right.kind
+  )
 }
 
 function snapshotEnabled(

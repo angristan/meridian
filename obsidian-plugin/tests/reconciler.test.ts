@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest"
+import type { ConfigCategory, ScannedFileSnapshot, SelectiveSyncSettings } from "../src/model"
 import { fingerprint, randomId } from "../src/platform/bytes"
+import type { ReconciliationCommit } from "../src/storage/contracts"
 import { MemoryJournal } from "../src/storage/journal"
 import { Reconciler } from "../src/sync/reconciler"
 import { ALL_CATEGORIES, FakeVault } from "./fakes"
@@ -240,6 +242,135 @@ describe("Reconciler", () => {
         path: "Archive/private/note.md",
         fileId: identity,
       }),
+    ])
+  })
+
+  it("reconciles only durable dirty paths during routine sync", async () => {
+    class IncrementalOnlyVault extends FakeVault {
+      readonly scannedPaths: string[][] = []
+
+      override listFiles(): Promise<ScannedFileSnapshot[]> {
+        throw new Error("Incremental reconciliation must not scan the full vault")
+      }
+
+      override scanFiles(
+        paths: readonly string[],
+        categories: Record<ConfigCategory, boolean>,
+        selection?: SelectiveSyncSettings,
+      ): Promise<ScannedFileSnapshot[]> {
+        this.scannedPaths.push([...paths])
+        return super.scanFiles(paths, categories, selection)
+      }
+    }
+
+    const oldBytes = new TextEncoder().encode("old").buffer
+    const vault = new IncrementalOnlyVault({ "changed.md": "new", "untouched.md": "same" })
+    const journal = new MemoryJournal()
+    await journal.replaceSnapshots([
+      {
+        path: "changed.md",
+        fileId: "changed-id",
+        fingerprint: await fingerprint(oldBytes),
+        size: oldBytes.byteLength,
+        mtime: 1,
+        kind: "vault",
+      },
+      {
+        path: "untouched.md",
+        fileId: "untouched-id",
+        fingerprint: await fingerprint(new TextEncoder().encode("same").buffer),
+        size: 4,
+        mtime: 1,
+        kind: "vault",
+      },
+    ])
+    await journal.putDirtyPath({ path: "changed.md", token: "event", observedAt: 1 })
+
+    const result = await new Reconciler(vault, journal).reconcileDirty(ALL_CATEGORIES)
+
+    expect(result).toEqual({ queued: 1, files: 1 })
+    expect(vault.scannedPaths).toEqual([["changed.md"]])
+    expect(await journal.listPending()).toEqual([
+      expect.objectContaining({ action: "upsert", path: "changed.md", fileId: "changed-id" }),
+    ])
+    expect(await journal.listDirtyPaths()).toEqual([])
+    expect((await journal.getSnapshots()).get("untouched.md")?.fileId).toBe("untouched-id")
+  })
+
+  it("preserves stable identity for an incrementally observed rename", async () => {
+    const bytes = new TextEncoder().encode("same content").buffer
+    const vault = new FakeVault({ "new/name.md": "same content" })
+    const journal = new MemoryJournal()
+    await journal.replaceSnapshots([
+      {
+        path: "old/name.md",
+        fileId: "stable-id",
+        fingerprint: await fingerprint(bytes),
+        size: bytes.byteLength,
+        mtime: 1,
+        kind: "vault",
+      },
+    ])
+    await journal.putDirtyPath({ path: "old/name.md", token: "old", observedAt: 1 })
+    await journal.putDirtyPath({ path: "new/name.md", token: "new", observedAt: 2 })
+
+    await new Reconciler(vault, journal).reconcileDirty(ALL_CATEGORIES)
+
+    expect(await journal.listPending()).toEqual([
+      expect.objectContaining({
+        action: "upsert",
+        path: "new/name.md",
+        previousPath: "old/name.md",
+        fileId: "stable-id",
+      }),
+    ])
+    const snapshots = await journal.getSnapshots()
+    expect(snapshots.has("old/name.md")).toBe(false)
+    expect(snapshots.get("new/name.md")?.fileId).toBe("stable-id")
+  })
+
+  it("does not tombstone an incrementally observed excluded path", async () => {
+    const bytes = new TextEncoder().encode("private").buffer
+    const vault = new FakeVault()
+    const journal = new MemoryJournal()
+    await journal.replaceSnapshots([
+      {
+        path: "Archive/private.md",
+        fileId: "private-id",
+        fingerprint: await fingerprint(bytes),
+        size: bytes.byteLength,
+        mtime: 1,
+        kind: "vault",
+      },
+    ])
+    await journal.putDirtyPath({ path: "Archive/private.md", token: "deleted", observedAt: 1 })
+
+    await new Reconciler(vault, journal).reconcileDirty(ALL_CATEGORIES, {
+      excludedFolders: ["Archive"],
+      excludedExtensions: [],
+    })
+
+    expect(await journal.listPending()).toEqual([])
+    expect((await journal.getSnapshots()).get("Archive/private.md")?.fileId).toBe("private-id")
+    expect(await journal.listDirtyPaths()).toEqual([])
+  })
+
+  it("retains a newer event that arrives while reconciliation commits", async () => {
+    class RacingJournal extends MemoryJournal {
+      override async commitReconciliation(commit: ReconciliationCommit): Promise<void> {
+        await this.putDirtyPath({ path: "note.md", token: "newer", observedAt: 2 })
+        await super.commitReconciliation(commit)
+      }
+    }
+
+    const vault = new FakeVault({ "note.md": "content" })
+    const journal = new RacingJournal()
+    await journal.putDirtyPath({ path: "note.md", token: "observed", observedAt: 1 })
+
+    await new Reconciler(vault, journal).reconcileDirty(ALL_CATEGORIES)
+
+    expect(await journal.listDirtyPaths()).toEqual([
+      { path: "note.md", token: "newer", observedAt: 2 },
     ])
   })
 

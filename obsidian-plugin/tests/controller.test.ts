@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest"
 import type {
+  ConfigCategory,
   DeviceKeyMaterial,
   EncryptedBlob,
   EncryptedRevision,
   JournalEntry,
   RevisionDraft,
+  ScannedFileSnapshot,
+  SelectiveSyncSettings,
   SyncStatus,
 } from "../src/model"
 import { fingerprint, randomId } from "../src/platform/bytes"
@@ -92,6 +95,92 @@ describe("SyncController", () => {
     controller.stop()
   })
 
+  it("uses targeted scans for durable file events", async () => {
+    class CountingVault extends FakeVault {
+      fullScans = 0
+      readonly targetedScans: string[][] = []
+
+      override listFiles(
+        categories: Record<ConfigCategory, boolean>,
+        selection?: SelectiveSyncSettings,
+      ): Promise<ScannedFileSnapshot[]> {
+        this.fullScans += 1
+        return super.listFiles(categories, selection)
+      }
+
+      override scanFiles(
+        paths: readonly string[],
+        categories: Record<ConfigCategory, boolean>,
+        selection?: SelectiveSyncSettings,
+      ): Promise<ScannedFileSnapshot[]> {
+        this.targetedScans.push([...paths])
+        return super.scanFiles(paths, categories, selection)
+      }
+    }
+
+    const vault = new CountingVault({ "note.md": "initial", "other.md": "untouched" })
+    const journal = new MemoryJournal()
+    const remote = new FakeRemote()
+    const controller = new SyncController(
+      vault,
+      journal,
+      remote,
+      new FakeCrypto(),
+      () => ALL_CATEGORIES,
+      () => {},
+    )
+    await controller.start(TEST_DEVICE)
+    vault.targetedScans.length = 0
+
+    vault.files.set("note.md", new TextEncoder().encode("edited").buffer)
+    await controller.recordVaultChange("note.md")
+    await controller.sync("file-event")
+
+    expect(vault.fullScans).toBe(1)
+    expect(vault.targetedScans).toEqual([["note.md"]])
+    expect(remote.operations.at(-1)?.envelope).toMatchObject({ path: "note.md" })
+    expect(await journal.listDirtyPaths()).toEqual([])
+    controller.stop()
+  })
+
+  it("recovers missed file events with a resume scan", async () => {
+    class CountingVault extends FakeVault {
+      fullScans = 0
+
+      override listFiles(
+        categories: Record<ConfigCategory, boolean>,
+        selection?: SelectiveSyncSettings,
+      ): Promise<ScannedFileSnapshot[]> {
+        this.fullScans += 1
+        return super.listFiles(categories, selection)
+      }
+    }
+
+    const vault = new CountingVault({ "note.md": "initial" })
+    const journal = new MemoryJournal()
+    const remote = new FakeRemote()
+    const controller = new SyncController(
+      vault,
+      journal,
+      remote,
+      new FakeCrypto(),
+      () => ALL_CATEGORIES,
+      () => {},
+    )
+    await controller.start(TEST_DEVICE)
+
+    vault.files.set("note.md", new TextEncoder().encode("missed event").buffer)
+    await controller.sync("notification")
+    expect(vault.fullScans).toBe(1)
+    expect(remote.operations).toHaveLength(1)
+
+    await controller.sync("resume")
+    expect(vault.fullScans).toBe(2)
+    expect(remote.operations).toHaveLength(2)
+    expect(remote.operations.at(-1)?.envelope).toMatchObject({ path: "note.md" })
+    controller.stop()
+  })
+
   it("preserves pending tombstones while repairing the local index", async () => {
     const identity = randomId()
     const vault = new FakeVault()
@@ -155,6 +244,7 @@ describe("SyncController", () => {
     if (!base) throw new Error("Expected the initial revision")
 
     vault.files.set("note.bin", new TextEncoder().encode("unsynced local edit").buffer)
+    await controller.recordVaultChange("note.bin")
     remote.addRemoteRevision(
       {
         operationId: "remote-operation",
@@ -724,10 +814,12 @@ describe("SyncController", () => {
     expect(vault.text("remote.md")).toBe("remote content")
     expect(remote.getChangesCount).toBe(2)
 
+    await controller.recordVaultChange("remote.md")
     await controller.sync("file-event")
 
     expect(remote.getChangesCount).toBe(2)
     expect(remote.operations).toHaveLength(1)
+    expect(await journal.listDirtyPaths()).toEqual([])
     expect(controller.getStatus()).toMatchObject({ phase: "idle", message: "Up to date" })
     controller.stop()
   })

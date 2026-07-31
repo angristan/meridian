@@ -8,7 +8,7 @@ import type {
   LocalRevision,
   TrustedCheckpoint,
 } from "../model"
-import type { JournalPort } from "./contracts"
+import type { JournalPort, ReconciliationCommit } from "./contracts"
 import { sortRevisions } from "./types"
 
 export class MemoryJournal implements JournalPort {
@@ -75,6 +75,15 @@ export class MemoryJournal implements JournalPort {
 
   async clearDirtyPaths(): Promise<void> {
     this.dirtyPaths.clear()
+  }
+
+  async commitReconciliation(commit: ReconciliationCommit): Promise<void> {
+    for (const entry of commit.entries) this.entries.set(entry.id, structuredClone(entry))
+    for (const snapshot of commit.putSnapshots) {
+      this.snapshots.set(snapshot.path, structuredClone(snapshot))
+    }
+    for (const path of commit.removeSnapshotPaths) this.snapshots.delete(path)
+    await this.consumeDirtyPaths(commit.consumeDirtyPaths)
   }
 
   async getSnapshots(): Promise<Map<string, FileSnapshot>> {

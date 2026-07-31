@@ -15,7 +15,9 @@ import type {
   VaultPort,
 } from "../model"
 import { INITIAL_STATUS } from "../model"
+import { randomId } from "../platform/bytes"
 import type { JournalPort } from "../storage/journal"
+import { normalizeVaultPath } from "../vault/path-policy"
 import { ConflictService } from "./conflict-service"
 import { HistoryBackfillService } from "./history-backfill-service"
 import { HistoryService } from "./history-service"
@@ -156,6 +158,14 @@ export class SyncController {
 
   getStatus(): SyncStatus {
     return { ...this.status }
+  }
+
+  async recordVaultChange(path: string): Promise<void> {
+    await this.journal.putDirtyPath({
+      path: normalizeVaultPath(path),
+      token: randomId(),
+      observedAt: this.now(),
+    })
   }
 
   async history(path?: string): Promise<LocalRevision[]> {
@@ -372,7 +382,9 @@ export class SyncController {
       error: null,
       progress: null,
     })
-    const result = await this.reconciler.reconcile(this.categories(), this.selection())
+    const result = requiresFullScan(reason)
+      ? await this.reconciler.reconcile(this.categories(), this.selection())
+      : await this.reconciler.reconcileDirty(this.categories(), this.selection())
     const pending = await this.journal.listPending()
     this.updateStatus({ queued: pending.length, message: `${result.files} files checked` })
     if (reason === "file-event" && result.queued === 0 && pending.length === 0) {
@@ -498,10 +510,13 @@ export class SyncController {
 
 function mergeSyncReasons(current: SyncReason | null, incoming: SyncReason): SyncReason {
   if (!current) return incoming
-  const requiresScan = current !== "notification" || incoming !== "notification"
-  const requiresNetwork = current !== "file-event" || incoming !== "file-event"
-  if (requiresScan && requiresNetwork) return "manual"
-  return requiresScan ? "file-event" : "notification"
+  if (requiresFullScan(current) || requiresFullScan(incoming)) return "manual"
+  if (current === "file-event" && incoming === "file-event") return "file-event"
+  return "notification"
+}
+
+function requiresFullScan(reason: SyncReason): boolean {
+  return reason === "startup" || reason === "resume" || reason === "interval" || reason === "manual"
 }
 
 function networkAvailable(): boolean {
