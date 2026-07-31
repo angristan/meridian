@@ -37,7 +37,22 @@
   background: var(--interactive-accent);
 }
 
+.meridian-status-copy {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.meridian-status-copy > strong,
+.meridian-status-copy > .setting-item-description {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .meridian-progress {
+  box-sizing: border-box;
+  min-block-size: 88px;
   margin-bottom: var(--size-4-5);
   padding: var(--size-4-3);
   border: 1px solid var(--background-modifier-border);
@@ -50,13 +65,22 @@
   display: flex;
   justify-content: space-between;
   gap: var(--size-4-3);
+  min-block-size: 1.4em;
   margin-bottom: var(--size-2-2);
 }
 
+.meridian-progress-header > strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .meridian-progress-percent {
-  flex: 0 0 auto;
+  flex: 0 0 4ch;
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
+  text-align: end;
 }
 
 .meridian-progress-bar {
@@ -65,6 +89,17 @@
   height: var(--size-4-2);
   margin-bottom: var(--size-2-2);
   accent-color: var(--interactive-accent);
+}
+
+.meridian-progress.is-idle .meridian-progress-bar {
+  opacity: 0.45;
+}
+
+.meridian-progress-detail {
+  min-block-size: 1.4em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .meridian-metric-grid {

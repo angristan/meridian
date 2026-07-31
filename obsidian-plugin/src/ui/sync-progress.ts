@@ -1,10 +1,52 @@
-import type { SyncProgress } from "../model"
+import type { SyncPhase, SyncProgress } from "../model"
 
 export interface SyncProgressPresentation {
   label: string
   detail: string
   value: number
   max: number
+}
+
+export interface SyncProgressSlotPresentation extends SyncProgressPresentation {
+  percent: string | null
+  indeterminate: boolean
+}
+
+export function presentSyncProgressSlot(
+  progress: SyncProgress | null,
+  phase: SyncPhase,
+): SyncProgressSlotPresentation {
+  if (!progress) {
+    const activeLabel =
+      phase === "scanning"
+        ? "Checking local files"
+        : phase === "pulling"
+          ? "Preparing downloads"
+          : phase === "pushing"
+            ? "Preparing uploads"
+            : phase === "pausing"
+              ? "Finishing current operation"
+              : null
+    return {
+      label: activeLabel ?? "No sync in progress",
+      detail: activeLabel
+        ? "Transfer details will appear when available."
+        : "Meridian is ready for the next synchronization.",
+      value: 0,
+      max: 1,
+      percent: null,
+      indeterminate: activeLabel !== null,
+    }
+  }
+
+  const presentation = presentSyncProgress(progress)
+  return {
+    ...presentation,
+    max: Math.max(1, presentation.max),
+    percent:
+      presentation.max > 0 ? `${Math.floor((presentation.value / presentation.max) * 100)}%` : null,
+    indeterminate: false,
+  }
 }
 
 export function presentSyncProgress(progress: SyncProgress): SyncProgressPresentation {

@@ -1,7 +1,26 @@
 import { describe, expect, it } from "vitest"
-import { presentSyncProgress } from "../src/ui/sync-progress"
+import { presentSyncProgress, presentSyncProgressSlot } from "../src/ui/sync-progress"
 
 describe("sync progress presentation", () => {
+  it("keeps a stable progress slot before and between transfers", () => {
+    expect(presentSyncProgressSlot(null, "idle")).toEqual({
+      label: "No sync in progress",
+      detail: "Meridian is ready for the next synchronization.",
+      value: 0,
+      max: 1,
+      percent: null,
+      indeterminate: false,
+    })
+    expect(presentSyncProgressSlot(null, "scanning")).toEqual({
+      label: "Checking local files",
+      detail: "Transfer details will appear when available.",
+      value: 0,
+      max: 1,
+      percent: null,
+      indeterminate: true,
+    })
+  })
+
   it("shows durable cursor and current download chunk progress", () => {
     expect(
       presentSyncProgress({
