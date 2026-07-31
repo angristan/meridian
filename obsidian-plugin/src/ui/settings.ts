@@ -264,7 +264,10 @@ export function renderSettings(container: HTMLElement, host: MeridianUiHost): vo
     .setName("Storage usage")
     .setDesc("Review encrypted blob, operation, checkpoint, and snapshot storage.")
     .addButton((button) =>
-      button.setButtonText("View usage").onClick(() => new StorageModal(host).open()),
+      button
+        .setButtonText("View usage")
+        .setDisabled(!configured)
+        .onClick(() => new StorageModal(host).open()),
     )
   new Setting(container)
     .setName("Automatic pruning")
@@ -432,6 +435,7 @@ export function getMeridianSettingDefinitions(
           name: "Storage usage",
           desc: "Review encrypted blob, operation, checkpoint, and snapshot storage.",
           aliases: ["quota", "space", "R2", "database"],
+          visible: () => configured,
           action: () => new StorageModal(host).open(),
         },
         {
