@@ -79,9 +79,7 @@ export class SyncController {
     )
     this.reconciler = new Reconciler(vault, journal)
     this.historyService = new HistoryService(vault, journal, revisionLoader)
-    this.historyBackfill = new HistoryBackfillService(journal, remote, crypto, () =>
-      vault.maxFileBytes(),
-    )
+    this.historyBackfill = new HistoryBackfillService(journal, remote, crypto)
     this.conflictService = new ConflictService(vault, journal)
     this.pullEngine = new PullEngine(journal, remote, applier, (operation, previousHash) =>
       crypto.verifyOperationLogLink(operation, previousHash),

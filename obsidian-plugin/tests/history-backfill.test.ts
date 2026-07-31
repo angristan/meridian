@@ -49,7 +49,7 @@ describe("HistoryBackfillService", () => {
     addHistory(remote)
     const journal = new MemoryJournal()
     await journal.setCheckpoint({ cursor: 7, logHash: "live-sync-hash" })
-    const service = new HistoryBackfillService(journal, remote, new FakeCrypto(), () => 1024)
+    const service = new HistoryBackfillService(journal, remote, new FakeCrypto())
 
     await expect(service.backfill(TEST_DEVICE)).resolves.toEqual({ added: 2, throughCursor: 2 })
 
@@ -77,7 +77,7 @@ describe("HistoryBackfillService", () => {
     addHistory(remote)
     const journal = new MemoryJournal()
     const crypto = new InterruptingCrypto()
-    const service = new HistoryBackfillService(journal, remote, crypto, () => 1024)
+    const service = new HistoryBackfillService(journal, remote, crypto)
 
     await expect(service.backfill(TEST_DEVICE)).rejects.toThrow("suspended")
     expect(await journal.getHistoryCheckpoint()).toEqual({ cursor: 1, logHash: "hash-1" })
@@ -90,7 +90,7 @@ describe("HistoryBackfillService", () => {
     const remote = new FakeRemote()
     addHistory(remote)
     const journal = new MemoryJournal()
-    const service = new HistoryBackfillService(journal, remote, new FakeCrypto(), () => 1024)
+    const service = new HistoryBackfillService(journal, remote, new FakeCrypto())
 
     await expect(
       service.backfill({ ...TEST_DEVICE, trustedCheckpointAuthorized: false }),

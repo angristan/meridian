@@ -19,7 +19,6 @@ export class HistoryBackfillService {
     private readonly journal: JournalPort,
     private readonly remote: RemotePort,
     private readonly crypto: CryptoPort,
-    private readonly maximumPlaintextBytes: () => number,
   ) {}
 
   async backfill(device: DeviceKeyMaterial): Promise<HistoryBackfillResult> {
@@ -80,11 +79,7 @@ export class HistoryBackfillService {
     if (type !== "revision" && type !== "restore" && type !== "tombstone") {
       throw new Error("Complete history contains an unknown operation type")
     }
-    const metadata = await this.crypto.inspectRevision(
-      device,
-      operation,
-      this.maximumPlaintextBytes(),
-    )
+    const metadata = await this.crypto.inspectRevision(device, operation, Number.MAX_SAFE_INTEGER)
     return {
       revisionId: metadata.revisionId,
       fileId: metadata.fileId,
