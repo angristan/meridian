@@ -1,3 +1,10 @@
+## [1.6.4](https://github.com/angristan/meridian/compare/1.6.3...1.6.4) (2026-07-31)
+
+
+### Bug Fixes
+
+* keep sync progress layout stable ([4919705](https://github.com/angristan/meridian/commit/4919705ea7a11c013f235686b747695a92ac5af9))
+
 ## [1.6.3](https://github.com/angristan/meridian/compare/1.6.2...1.6.3) (2026-07-31)
 
 
