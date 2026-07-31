@@ -358,6 +358,20 @@ export interface DeviceRevocationMaterial {
   envelope: unknown
 }
 
+export interface HistoryRevisionMetadata {
+  revisionId: string
+  operationId: string
+  fileId: string
+  action: JournalAction
+  path: string
+  previousPath: string | null
+  parents: string[]
+  authorDeviceId: string
+  createdAt: number
+  byteLength: number
+  isText: boolean
+}
+
 export interface DecryptedRevision {
   revisionId: string
   operationId: string
@@ -416,6 +430,15 @@ export interface PairedDeviceMaterial {
 export interface CryptoPort {
   createFirstDevice(setupSession: string, claimChallenge: string): Promise<SetupClaim>
   verifyOperationLogLink(operation: RemoteOperation, previousHash: string): Promise<void>
+  inspectRevision(
+    device: DeviceKeyMaterial,
+    operation: RemoteOperation,
+    maximumPlaintextBytes: number,
+  ): Promise<HistoryRevisionMetadata>
+  refreshTrustedCheckpoint(
+    device: DeviceKeyMaterial,
+    checkpoint: TrustedCheckpoint,
+  ): Promise<DeviceKeyMaterial>
   loadDevice(serializedKeyBundle: string): Promise<DeviceKeyMaterial>
   signChallenge(
     device: DeviceKeyMaterial,

@@ -33,6 +33,13 @@ describe("shared crypto adapter", () => {
       chunkSize: 4 * 1024 * 1024,
     })
     const blobs = new Map(encrypted.blobs.map((blob) => [blob.blobId, blob.bytes]))
+    await expect(
+      crypto.inspectRevision(
+        device,
+        { cursor: 1, logHash: randomId(32), envelope: encrypted.envelope },
+        Number.MAX_SAFE_INTEGER,
+      ),
+    ).resolves.toMatchObject({ path: "note.md", byteLength: 12, isText: true })
     const transferProgress: Array<{
       completedChunks: number
       totalChunks: number
@@ -248,7 +255,13 @@ describe("shared crypto adapter", () => {
       record(ownerClaim.publicClaim).initialDevice,
       "certificate",
     )
-    const approval = await crypto.approvePairing(owner, joining.candidatePackage, [
+    const trustedHead = { cursor: 5, logHash: randomId(32) }
+    const refreshedOwner = await crypto.refreshTrustedCheckpoint(owner, trustedHead)
+    expect(refreshedOwner).toMatchObject({
+      trustedCheckpoint: trustedHead,
+      trustedCheckpointAuthorized: true,
+    })
+    const approval = await crypto.approvePairing(refreshedOwner, joining.candidatePackage, [
       ownerCertificate,
     ])
     const approvalPayload = record(approval.payload)
@@ -281,6 +294,7 @@ describe("shared crypto adapter", () => {
     )
     const member = await crypto.loadDevice(paired.keyBundle)
     expect(member.trustedCheckpointAuthorized).toBe(true)
+    expect(member.trustedCheckpoint).toEqual(trustedHead)
     const tamperedSecret = JSON.parse(paired.keyBundle) as Record<string, unknown>
     tamperedSecret.checkpointAuthorizationChain = []
     await expect(crypto.loadDevice(JSON.stringify(tamperedSecret))).resolves.toMatchObject({
@@ -301,7 +315,7 @@ describe("shared crypto adapter", () => {
     const decrypted = await crypto.decryptRevision(
       owner,
       {
-        cursor: 1,
+        cursor: 6,
         logHash: randomId(32),
         envelope: encrypted.envelope,
         authorCertificate: stringField(approvalPayload, "certificate"),

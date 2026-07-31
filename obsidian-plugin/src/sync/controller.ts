@@ -17,6 +17,7 @@ import type {
 import { INITIAL_STATUS } from "../model"
 import type { JournalPort } from "../storage/journal"
 import { ConflictService } from "./conflict-service"
+import { HistoryBackfillService } from "./history-backfill-service"
 import { HistoryService } from "./history-service"
 import { OperationApplier } from "./operation-applier"
 import { PullEngine } from "./pull-engine"
@@ -33,6 +34,7 @@ export interface SyncControllerOptions {
 export class SyncController {
   private readonly reconciler: Reconciler
   private readonly historyService: HistoryService
+  private readonly historyBackfill: HistoryBackfillService
   private readonly conflictService: ConflictService
   private readonly pullEngine: PullEngine
   private readonly pushEngine: PushEngine
@@ -77,6 +79,9 @@ export class SyncController {
     )
     this.reconciler = new Reconciler(vault, journal)
     this.historyService = new HistoryService(vault, journal, revisionLoader)
+    this.historyBackfill = new HistoryBackfillService(journal, remote, crypto, () =>
+      vault.maxFileBytes(),
+    )
     this.conflictService = new ConflictService(vault, journal)
     this.pullEngine = new PullEngine(journal, remote, applier, (operation, previousHash) =>
       crypto.verifyOperationLogLink(operation, previousHash),
@@ -155,15 +160,19 @@ export class SyncController {
     return { ...this.status }
   }
 
-  history(path?: string): Promise<LocalRevision[]> {
+  async history(path?: string): Promise<LocalRevision[]> {
+    await this.ensureCompleteHistory()
     return this.historyService.history(path)
   }
 
-  activity(limit = 200) {
-    return this.historyService.activity(this.requireDevice().deviceId, limit)
+  async activity(limit = 200) {
+    const device = this.requireDevice()
+    await this.ensureCompleteHistory()
+    return this.historyService.activity(device.deviceId, limit)
   }
 
-  deletedFiles() {
+  async deletedFiles() {
+    await this.ensureCompleteHistory()
     return this.historyService.deletedFiles()
   }
 
@@ -239,21 +248,41 @@ export class SyncController {
     return this.remote.getPairingStatus(pairingId)
   }
 
-  async preparePairingApproval(
-    pairingId: string,
-  ): Promise<{ approval: PairingApprovalMaterial; candidatePackage: string }> {
-    const device = this.requireDevice()
-    const pairing = await this.remote.getPairingStatus(pairingId)
-    if (!pairing.candidatePackage) {
-      throw new Error("The joining device has not provided a relayed pairing request")
-    }
-    const devices = await this.remote.listDevices()
-    const approval = await this.crypto.approvePairing(
-      device,
-      pairing.candidatePackage,
-      devices.map((entry) => entry.certificate),
-    )
-    return { approval, candidatePackage: pairing.candidatePackage }
+  async preparePairingApproval(pairingId: string): Promise<{
+    approval: PairingApprovalMaterial
+    candidatePackage: string
+    deviceKeyBundle: string
+  }> {
+    let prepared:
+      | {
+          approval: PairingApprovalMaterial
+          candidatePackage: string
+          deviceKeyBundle: string
+        }
+      | undefined
+    await this.runMaintenance(async () => {
+      const current = this.requireDevice()
+      const localCheckpoint = (await this.journal.getCheckpoint()) ?? current.trustedCheckpoint
+      const device = await this.crypto.refreshTrustedCheckpoint(current, localCheckpoint)
+      this.device = device
+      const pairing = await this.remote.getPairingStatus(pairingId)
+      if (!pairing.candidatePackage) {
+        throw new Error("The joining device has not provided a relayed pairing request")
+      }
+      const devices = await this.remote.listDevices()
+      const approval = await this.crypto.approvePairing(
+        device,
+        pairing.candidatePackage,
+        devices.map((entry) => entry.certificate),
+      )
+      prepared = {
+        approval,
+        candidatePackage: pairing.candidatePackage,
+        deviceKeyBundle: device.serialized,
+      }
+    })
+    if (!prepared) throw new Error("Pairing approval did not complete")
+    return prepared
   }
 
   async submitPairingApproval(pairingId: string, payload: unknown): Promise<void> {
@@ -275,6 +304,13 @@ export class SyncController {
   async repairLocalIndex(): Promise<void> {
     await this.journal.clearSnapshots()
     await this.sync("manual")
+  }
+
+  private async ensureCompleteHistory(): Promise<void> {
+    const device = this.requireDevice()
+    if (!device.trustedCheckpointAuthorized || !networkAvailable()) return
+    await this.authenticate(device)
+    await this.historyBackfill.backfill(device)
   }
 
   private runMaintenance(operation: () => Promise<void>): Promise<void> {

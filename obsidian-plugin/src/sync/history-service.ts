@@ -31,21 +31,22 @@ export class HistoryService {
   ) {}
 
   async history(path?: string): Promise<LocalRevision[]> {
-    if (path === undefined) return this.journal.listRevisions()
+    const revisions = await this.allRevisions()
+    if (path === undefined) return revisions
     const snapshots = await this.journal.getSnapshots()
     const fileId =
-      snapshots.get(path)?.fileId ?? (await this.journal.listRevisions(path))[0]?.fileId
-    return fileId ? this.journal.listFileRevisions(fileId) : []
+      snapshots.get(path)?.fileId ?? revisions.find((item) => item.path === path)?.fileId
+    return fileId ? revisions.filter((revision) => revision.fileId === fileId) : []
   }
 
   async activity(localDeviceId: string, limit = 200): Promise<SyncActivity[]> {
-    return revisionActivity(await this.journal.listRevisions(), localDeviceId, limit)
+    return revisionActivity(await this.allRevisions(), localDeviceId, limit)
   }
 
   async deletedFiles(): Promise<DeletedFileRecord[]> {
     const pendingFileIds = new Set((await this.journal.listPending()).map((entry) => entry.fileId))
     const byFile = new Map<string, LocalRevision[]>()
-    for (const revision of await this.journal.listRevisions()) {
+    for (const revision of await this.allRevisions()) {
       const revisions = byFile.get(revision.fileId) ?? []
       revisions.push(revision)
       byFile.set(revision.fileId, revisions)
@@ -76,7 +77,7 @@ export class HistoryService {
   async recoverDeleted(device: DeviceKeyMaterial, revisionId: string): Promise<RestoreResult> {
     const deletion = await this.requireRevision(revisionId)
     if (!deletion.tombstone) throw new Error("The selected revision is not a deletion")
-    const revisions = await this.journal.listFileRevisions(deletion.fileId)
+    const revisions = await this.fileRevisions(deletion.fileId)
     const heads = revisionHeads(revisions)
     if (heads.length === 0 || heads.some((revision) => !revision.tombstone)) {
       throw new Error("This file is no longer deleted")
@@ -184,7 +185,7 @@ export class HistoryService {
 
     const decrypted = await this.revisions.load(device, source)
     if (!decrypted.bytes) throw new Error("The selected revision has no content")
-    const heads = revisionHeads(await this.journal.listFileRevisions(source.fileId))
+    const heads = revisionHeads(await this.fileRevisions(source.fileId))
     const snapshots = await this.journal.getSnapshots()
     const currentSnapshot = [...snapshots.values()].find(
       (snapshot) => snapshot.fileId === source.fileId,
@@ -239,15 +240,38 @@ export class HistoryService {
       (snapshot) => snapshot.fileId === source.fileId,
     )
     if (currentSnapshot) return currentSnapshot.path
-    return (await this.journal.listFileRevisions(source.fileId))[0]?.path ?? source.path
+    return (await this.fileRevisions(source.fileId))[0]?.path ?? source.path
   }
 
   private async readOptional(path: string): Promise<ArrayBuffer | null> {
     return (await this.vault.exists(path)) ? this.vault.read(path) : null
   }
 
+  private async allRevisions(): Promise<LocalRevision[]> {
+    const live = await this.journal.listRevisions()
+    const byId = new Map(
+      (await this.journal.listHistoryRevisions()).map((revision) => [
+        revision.revisionId,
+        revision,
+      ]),
+    )
+    for (const revision of live) byId.set(revision.revisionId, revision)
+    return [...byId.values()].sort(
+      (left, right) =>
+        right.createdAt - left.createdAt ||
+        (right.cursor ?? -1) - (left.cursor ?? -1) ||
+        right.revisionId.localeCompare(left.revisionId),
+    )
+  }
+
+  private async fileRevisions(fileId: string): Promise<LocalRevision[]> {
+    return (await this.allRevisions()).filter((revision) => revision.fileId === fileId)
+  }
+
   private async requireRevision(revisionId: string): Promise<LocalRevision> {
-    const revision = await this.journal.getRevision(revisionId)
+    const revision =
+      (await this.journal.getRevision(revisionId)) ??
+      (await this.journal.getHistoryRevision(revisionId))
     if (!revision) throw new Error("The selected revision is no longer in local history")
     return revision
   }

@@ -163,6 +163,36 @@ export class IndexedDbJournal implements JournalPort {
     )
   }
 
+  async getHistoryCheckpoint(): Promise<TrustedCheckpoint | null> {
+    return (await this.getMetadata<TrustedCheckpoint>("history-checkpoint")) ?? null
+  }
+
+  async setHistoryCheckpoint(checkpoint: TrustedCheckpoint): Promise<void> {
+    await this.put("meta", {
+      key: "history-checkpoint",
+      value: checkpoint,
+    } satisfies MetadataRecord)
+  }
+
+  async putHistoryRevision(revision: LocalRevision): Promise<void> {
+    await this.put("history-revisions", revision)
+  }
+
+  async getHistoryRevision(revisionId: string): Promise<LocalRevision | null> {
+    const database = this.requireDatabase()
+    const transaction = database.transaction("history-revisions", "readonly")
+    const done = transactionDone(transaction)
+    const revision = await requestResult<LocalRevision | undefined>(
+      transaction.objectStore("history-revisions").get(revisionId),
+    )
+    await done
+    return revision ?? null
+  }
+
+  async listHistoryRevisions(): Promise<LocalRevision[]> {
+    return sortRevisions(await this.getAll<LocalRevision>("history-revisions"))
+  }
+
   async putConflict(conflict: ConflictRecord): Promise<void> {
     await this.put("conflicts", conflict)
   }

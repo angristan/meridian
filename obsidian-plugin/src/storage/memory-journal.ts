@@ -17,6 +17,8 @@ export class MemoryJournal implements JournalPort {
   private checkpoint: TrustedCheckpoint | null = null
   private readonly revocations = new Map<string, DeviceRevocationRecord>()
   private readonly revisions = new Map<string, LocalRevision>()
+  private readonly historyRevisions = new Map<string, LocalRevision>()
+  private historyCheckpoint: TrustedCheckpoint | null = null
   private readonly conflicts = new Map<string, ConflictRecord>()
 
   async open(): Promise<void> {}
@@ -114,6 +116,29 @@ export class MemoryJournal implements JournalPort {
     return sortRevisions(
       [...this.revisions.values()].filter((revision) => revision.fileId === fileId),
     ).map((revision) => structuredClone(revision))
+  }
+
+  async getHistoryCheckpoint(): Promise<TrustedCheckpoint | null> {
+    return this.historyCheckpoint ? structuredClone(this.historyCheckpoint) : null
+  }
+
+  async setHistoryCheckpoint(checkpoint: TrustedCheckpoint): Promise<void> {
+    this.historyCheckpoint = structuredClone(checkpoint)
+  }
+
+  async putHistoryRevision(revision: LocalRevision): Promise<void> {
+    this.historyRevisions.set(revision.revisionId, structuredClone(revision))
+  }
+
+  async getHistoryRevision(revisionId: string): Promise<LocalRevision | null> {
+    const revision = this.historyRevisions.get(revisionId)
+    return revision ? structuredClone(revision) : null
+  }
+
+  async listHistoryRevisions(): Promise<LocalRevision[]> {
+    return sortRevisions([...this.historyRevisions.values()]).map((revision) =>
+      structuredClone(revision),
+    )
   }
 
   async putConflict(conflict: ConflictRecord): Promise<void> {

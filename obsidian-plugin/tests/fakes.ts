@@ -9,6 +9,7 @@ import type {
   DeviceRevocationRecord,
   EncryptedBlob,
   EncryptedRevision,
+  HistoryRevisionMetadata,
   PairedDeviceMaterial,
   PairingApprovalMaterial,
   PairingCapability,
@@ -163,6 +164,35 @@ export interface FakeEnvelope {
 
 export class FakeCrypto implements CryptoPort {
   async verifyOperationLogLink(): Promise<void> {}
+
+  async inspectRevision(
+    _device: DeviceKeyMaterial,
+    operation: RemoteOperation,
+  ): Promise<HistoryRevisionMetadata> {
+    const envelope = operation.envelope as FakeEnvelope
+    return {
+      revisionId: envelope.revisionId,
+      operationId: envelope.operationId,
+      fileId: envelope.fileId ?? envelope.path,
+      action: envelope.action,
+      path: envelope.path,
+      previousPath: envelope.previousPath,
+      parents: envelope.parents,
+      authorDeviceId: envelope.authorDeviceId,
+      createdAt: envelope.createdAt ?? operation.cursor,
+      byteLength: envelope.blobId ? (this.historyBlobSizes.get(envelope.blobId) ?? 0) : 0,
+      isText: envelope.isText,
+    }
+  }
+
+  readonly historyBlobSizes = new Map<string, number>()
+
+  async refreshTrustedCheckpoint(
+    device: DeviceKeyMaterial,
+    checkpoint: TrustedCheckpoint,
+  ): Promise<DeviceKeyMaterial> {
+    return { ...device, trustedCheckpoint: checkpoint, trustedCheckpointAuthorized: true }
+  }
 
   async createFirstDevice(vaultId: string): Promise<SetupClaim> {
     return {
@@ -382,7 +412,11 @@ export class FakeRemote implements RemotePort {
 
   async commit(envelope: unknown): Promise<{ cursor: number; logHash: string }> {
     this.cursor += 1
-    const operation = { cursor: this.cursor, logHash: `hash-${this.cursor}`, envelope }
+    const operation = {
+      cursor: this.cursor,
+      logHash: `hash-${this.cursor}`,
+      envelope: fakeWorkerEnvelope(envelope),
+    }
     this.operations.push(operation)
     return { cursor: operation.cursor, logHash: operation.logHash }
   }
@@ -467,9 +501,18 @@ export class FakeRemote implements RemotePort {
     this.operations.push({
       cursor: this.cursor,
       logHash: `hash-${this.cursor}`,
-      envelope,
+      envelope: fakeWorkerEnvelope(envelope),
     })
   }
+}
+
+function fakeWorkerEnvelope(envelope: unknown): unknown {
+  if (typeof envelope !== "object" || envelope === null || Array.isArray(envelope)) return envelope
+  const value = envelope as Record<string, unknown>
+  if (typeof value.type === "string" || typeof value.action !== "string") return envelope
+  const type =
+    value.action === "delete" ? "tombstone" : value.action === "restore" ? "restore" : "revision"
+  return { ...value, type }
 }
 
 export const ALL_CATEGORIES: Record<ConfigCategory, boolean> = {

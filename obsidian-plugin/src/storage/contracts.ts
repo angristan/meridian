@@ -28,6 +28,11 @@ export interface JournalPort {
   getRevision(revisionId: string): Promise<LocalRevision | null>
   listRevisions(path?: string): Promise<LocalRevision[]>
   listFileRevisions(fileId: string): Promise<LocalRevision[]>
+  getHistoryCheckpoint(): Promise<TrustedCheckpoint | null>
+  setHistoryCheckpoint(checkpoint: TrustedCheckpoint): Promise<void>
+  putHistoryRevision(revision: LocalRevision): Promise<void>
+  getHistoryRevision(revisionId: string): Promise<LocalRevision | null>
+  listHistoryRevisions(): Promise<LocalRevision[]>
   putConflict(conflict: ConflictRecord): Promise<void>
   listConflicts(unresolvedOnly?: boolean): Promise<ConflictRecord[]>
   resolveConflict(id: string): Promise<void>

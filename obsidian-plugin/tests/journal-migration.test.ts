@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest"
-import { migrateJournalRecords } from "../src/storage/journal"
+import { DATABASE_VERSION, migrateJournalRecords } from "../src/storage/journal"
 
 describe("journal record migration", () => {
+  it("uses an additive schema version for the isolated history cache", () => {
+    expect(DATABASE_VERSION).toBe(4)
+  })
+
   it("assigns one stable file identity across rename-linked legacy records", () => {
     const migrated = migrateJournalRecords(
       [

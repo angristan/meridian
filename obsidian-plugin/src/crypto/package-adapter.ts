@@ -7,6 +7,7 @@ import type {
   DeviceRevocationMaterial,
   DeviceRevocationRecord,
   EncryptedRevision,
+  HistoryRevisionMetadata,
   PairedDeviceMaterial,
   PairingApprovalMaterial,
   PairingCapability,
@@ -22,7 +23,13 @@ import type {
 } from "../model"
 import { assertRemoteLogLink } from "../sync/log-verifier"
 import { createDeviceRevocation, verifyDeviceRevocation } from "./device-revocation"
-import { createFirstDevice, loadDevice, recoverDevice, signChallenge } from "./device-workflows"
+import {
+  createFirstDevice,
+  loadDevice,
+  recoverDevice,
+  refreshTrustedCheckpoint,
+  signChallenge,
+} from "./device-workflows"
 import {
   approvePairing,
   consumePairingResult,
@@ -31,7 +38,7 @@ import {
   inspectPairingVerification,
   verifyPairingConfirmation,
 } from "./pairing-workflows"
-import { decryptRevision, encryptRevision } from "./revision-workflows"
+import { decryptRevision, encryptRevision, inspectRevision } from "./revision-workflows"
 
 /** Browser-only bridge from plugin workflows to the reviewed shared crypto package. */
 export function createPackageCryptoPort(): CryptoPort {
@@ -41,6 +48,21 @@ export function createPackageCryptoPort(): CryptoPort {
 class PackageCryptoPort implements CryptoPort {
   verifyOperationLogLink(operation: RemoteOperation, previousHash: string): Promise<void> {
     return assertRemoteLogLink(operation, previousHash)
+  }
+
+  inspectRevision(
+    device: DeviceKeyMaterial,
+    operation: RemoteOperation,
+    maximumPlaintextBytes: number,
+  ): Promise<HistoryRevisionMetadata> {
+    return inspectRevision(device, operation, maximumPlaintextBytes)
+  }
+
+  refreshTrustedCheckpoint(
+    device: DeviceKeyMaterial,
+    checkpoint: DeviceKeyMaterial["trustedCheckpoint"],
+  ): Promise<DeviceKeyMaterial> {
+    return refreshTrustedCheckpoint(device, checkpoint)
   }
 
   createFirstDevice(setupSession: string, claimChallenge: string): Promise<SetupClaim> {

@@ -514,6 +514,7 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
     }
 
     const prepared = await this.controller.preparePairingApproval(pairingId)
+    this.secrets.setDeviceKeyBundle(this.settings.deviceId, prepared.deviceKeyBundle)
     this.secrets.setPendingPairingRelease(
       pairingId,
       JSON.stringify({

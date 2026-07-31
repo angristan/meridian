@@ -155,23 +155,77 @@ export async function encryptFileRevision(
   return { operation, operationBytes: encodeOperation(operation), blobs }
 }
 
-export interface DecryptFileRevisionInput {
+export interface InspectFileRevisionInput {
   readonly operation: SignedOperation | Uint8Array
   readonly epochKey: DeviceKeyBundle["vaultEpochKey"]
   readonly authorCertificate: DeviceCertificate
   readonly maximumPlaintextBytes?: number
+}
+
+export interface DecryptFileRevisionInput extends InspectFileRevisionInput {
   readonly loadBlob: (blobId: BlobId) => Promise<Uint8Array>
 }
 
-export interface DecryptedFileRevision {
+export interface InspectedFileRevision {
   readonly operation: RevisionOperation
   readonly metadata: RevisionMetadata
+  readonly plaintextBytes: number
+}
+
+export interface DecryptedFileRevision extends InspectedFileRevision {
   readonly content: Uint8Array | null
+}
+
+export async function inspectFileRevision(
+  input: InspectFileRevisionInput,
+): Promise<InspectedFileRevision> {
+  const prepared = await prepareFileRevision(input)
+  return {
+    operation: prepared.operation,
+    metadata: prepared.metadata,
+    plaintextBytes: prepared.plaintextBytes,
+  }
 }
 
 export async function decryptFileRevision(
   input: DecryptFileRevisionInput,
 ): Promise<DecryptedFileRevision> {
+  const prepared = await prepareFileRevision(input)
+  const plaintextChunks = await Promise.all(
+    prepared.operation.chunks.map(async (chunk, index) => {
+      const ciphertext = await input.loadBlob(chunk.blobId)
+      const plaintext = await aesGcmDecrypt(
+        prepared.key,
+        ciphertext,
+        encodeAssociatedData({
+          ...prepared.aadBase,
+          objectKind: "content-chunk",
+          chunkIndex: index,
+        }),
+        chunk.nonce,
+      )
+      if (plaintext.byteLength !== chunk.plaintextLength) {
+        throw new AuthenticationError("Decrypted chunk length does not match its signed descriptor")
+      }
+      return plaintext
+    }),
+  )
+  const total = plaintextChunks.reduce((sum, chunk) => sum + chunk.byteLength, 0)
+  if (total !== prepared.plaintextBytes) {
+    throw new AuthenticationError("Revision plaintext length does not match encrypted metadata")
+  }
+  if (prepared.metadata.tombstone) return { ...preparedResult(prepared), content: null }
+
+  const content = new Uint8Array(total)
+  let offset = 0
+  for (const chunk of plaintextChunks) {
+    content.set(chunk, offset)
+    offset += chunk.byteLength
+  }
+  return { ...preparedResult(prepared), content }
+}
+
+async function prepareFileRevision(input: InspectFileRevisionInput) {
   const signed =
     input.operation instanceof Uint8Array ? decodeOperation(input.operation) : input.operation
   if (signed.body.type !== OperationType.Revision) {
@@ -191,12 +245,12 @@ export async function decryptFileRevision(
   if (!Number.isSafeInteger(maximumPlaintextBytes) || maximumPlaintextBytes < 0) {
     throw new RangeError("Maximum revision plaintext size must be a non-negative safe integer")
   }
-  let signedPlaintextBytes = 0
+  let plaintextBytes = 0
   for (const chunk of signed.body.chunks) {
-    if (chunk.plaintextLength > maximumPlaintextBytes - signedPlaintextBytes) {
+    if (chunk.plaintextLength > maximumPlaintextBytes - plaintextBytes) {
       throw new RangeError("Revision plaintext exceeds the configured size limit")
     }
-    signedPlaintextBytes += chunk.plaintextLength
+    plaintextBytes += chunk.plaintextLength
   }
 
   const key = await unwrapRevisionKey(
@@ -206,7 +260,6 @@ export async function decryptFileRevision(
     signed.body.revisionId,
     signed.body.wrappedRevisionKey,
   )
-  const chunkCountForAad = Math.max(signed.body.chunks.length, 1)
   const aadBase = {
     protocolGeneration: CIPHER_SUITE.protocolGeneration,
     suite: CIPHER_SUITE,
@@ -215,7 +268,7 @@ export async function decryptFileRevision(
     fileId: signed.body.fileId,
     revisionId: signed.body.revisionId,
     operationType: OperationType.Revision,
-    chunkCount: chunkCountForAad,
+    chunkCount: Math.max(signed.body.chunks.length, 1),
   } as const
   const metadataBytes = await aesGcmDecrypt(
     key,
@@ -227,33 +280,16 @@ export async function decryptFileRevision(
   if (metadata.tombstone && signed.body.chunks.length !== 0) {
     throw new AuthenticationError("Tombstone revision references content chunks")
   }
-
-  const plaintextChunks = await Promise.all(
-    signed.body.chunks.map(async (chunk, index) => {
-      const ciphertext = await input.loadBlob(chunk.blobId)
-      const plaintext = await aesGcmDecrypt(
-        key,
-        ciphertext,
-        encodeAssociatedData({ ...aadBase, objectKind: "content-chunk", chunkIndex: index }),
-        chunk.nonce,
-      )
-      if (plaintext.byteLength !== chunk.plaintextLength) {
-        throw new AuthenticationError("Decrypted chunk length does not match its signed descriptor")
-      }
-      return plaintext
-    }),
-  )
-  const total = plaintextChunks.reduce((sum, chunk) => sum + chunk.byteLength, 0)
-  if (total !== signedPlaintextBytes || total !== metadata.totalPlaintextLength) {
+  if (metadata.totalPlaintextLength !== plaintextBytes) {
     throw new AuthenticationError("Revision plaintext length does not match encrypted metadata")
   }
-  if (metadata.tombstone) return { operation: signed.body, metadata, content: null }
+  return { operation: signed.body, metadata, plaintextBytes, key, aadBase }
+}
 
-  const content = new Uint8Array(total)
-  let offset = 0
-  for (const chunk of plaintextChunks) {
-    content.set(chunk, offset)
-    offset += chunk.byteLength
+function preparedResult(prepared: Awaited<ReturnType<typeof prepareFileRevision>>) {
+  return {
+    operation: prepared.operation,
+    metadata: prepared.metadata,
+    plaintextBytes: prepared.plaintextBytes,
   }
-  return { operation: signed.body, metadata, content }
 }

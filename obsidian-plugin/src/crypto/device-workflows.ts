@@ -4,11 +4,14 @@ import {
   recoverDeviceFromPackage,
   serializeEncryptedRecoveryPackage,
   sign,
+  signCheckpoint,
   signRecoveryClaim,
 } from "@meridian/crypto"
 import {
+  decodeDeviceCertificate,
   deviceAuthSigningBytes,
   encodeDeviceCertificate,
+  hashBytes,
   setupClaimSigningBytes,
 } from "@meridian/protocol"
 import type {
@@ -16,6 +19,7 @@ import type {
   DeviceKeyMaterial,
   RecoveryDeviceMaterial,
   SetupClaim,
+  TrustedCheckpoint,
 } from "../model"
 import { fromBase64Url, toBase64Url } from "../platform/bytes"
 import {
@@ -82,6 +86,46 @@ export async function loadDevice(serializedKeyBundle: string): Promise<DeviceKey
     },
     trustedCheckpointAuthorized: hasAuthorizedCheckpoint(secret),
   }
+}
+
+export async function refreshTrustedCheckpoint(
+  device: DeviceKeyMaterial,
+  checkpoint: TrustedCheckpoint,
+): Promise<DeviceKeyMaterial> {
+  const secret = parseStoredSecret(device.serialized)
+  const bundle = deviceBundle(device)
+  if (checkpoint.cursor < bundle.checkpoint.body.cursor) {
+    throw new Error("Cannot replace a trusted checkpoint with an older cursor")
+  }
+  if (
+    checkpoint.cursor === bundle.checkpoint.body.cursor &&
+    checkpoint.logHash !== toBase64Url(bundle.checkpoint.body.logHash)
+  ) {
+    throw new Error("Trusted checkpoint hash conflicts at the same cursor")
+  }
+  const signed = signCheckpoint(
+    {
+      vaultId: bundle.vaultId,
+      epochId: bundle.epoch.body.epochId,
+      cursor: checkpoint.cursor,
+      logHash: hashBytes(fromBase64Url(checkpoint.logHash, 32)),
+      signerDeviceId: bundle.deviceId,
+      protocolGeneration: bundle.checkpoint.body.protocolGeneration,
+    },
+    bundle.signingPrivateKey,
+  )
+  const chain =
+    secret.checkpointAuthorizationChain.length > 0
+      ? secret.checkpointAuthorizationChain.map((encoded) =>
+          decodeDeviceCertificate(fromBase64Url(encoded)),
+        )
+      : [bundle.certificate]
+  const serialized = serializeStoredDeviceSecret(
+    { ...bundle, checkpoint: signed },
+    fromBase64Url(secret.recoveryPublicKey, 32),
+    chain,
+  )
+  return loadDevice(serialized)
 }
 
 export async function signChallenge(

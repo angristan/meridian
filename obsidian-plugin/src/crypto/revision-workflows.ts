@@ -2,6 +2,7 @@ import {
   decryptFileRevision,
   deviceEpochKey,
   encryptFileRevision,
+  inspectFileRevision,
   sign,
   verify,
 } from "@meridian/crypto"
@@ -11,6 +12,7 @@ import type {
   DecryptedRevision,
   DeviceKeyMaterial,
   EncryptedRevision,
+  HistoryRevisionMetadata,
   RemoteOperation,
   RevisionDraft,
 } from "../model"
@@ -58,6 +60,21 @@ export async function encryptRevision(
   }
 }
 
+export async function inspectRevision(
+  device: DeviceKeyMaterial,
+  operation: RemoteOperation,
+  maximumPlaintextBytes: number,
+): Promise<HistoryRevisionMetadata> {
+  const verified = verifiedRevision(device, operation)
+  const inspected = await inspectFileRevision({
+    operation: verified.signedOperation,
+    epochKey: deviceEpochKey(verified.bundle, verified.revisionBody.epochId),
+    authorCertificate: verified.authorCertificate,
+    maximumPlaintextBytes,
+  })
+  return revisionMetadata(verified.wire, inspected)
+}
+
 export async function decryptRevision(
   device: DeviceKeyMaterial,
   operation: RemoteOperation,
@@ -65,40 +82,8 @@ export async function decryptRevision(
   loadBlob: (blobId: string) => Promise<ArrayBuffer>,
   onBlobProgress?: (progress: BlobTransferProgress) => void,
 ): Promise<DecryptedRevision> {
-  const bundle = deviceBundle(device)
-  const wire = parseFileWorkerOperation(operation.envelope)
-  const authorCertificate =
-    wire.authorDeviceId === device.deviceId
-      ? bundle.certificate
-      : trustedAuthorCertificate(device, operation)
-  const unsigned: Omit<WorkerOperation, "signature"> = {
-    operationId: wire.operationId,
-    authorDeviceId: wire.authorDeviceId,
-    epochId: wire.epochId,
-    type: wire.type,
-    envelope: wire.envelope,
-  }
-  if (
-    !verify(
-      workerOperationSigningBytes(unsigned),
-      ed25519Signature(fromBase64Url(wire.signature)),
-      authorCertificate.body.signingPublicKey,
-    )
-  ) {
-    throw new Error("Worker file operation signature is invalid")
-  }
-
-  const signedOperation = decodeOperation(fromBase64Url(wire.envelope))
-  if (signedOperation.body.type !== "revision") {
-    throw new Error("Worker file operation does not contain an encrypted revision")
-  }
-  const revisionBody = signedOperation.body
-  if (
-    toBase64Url(revisionBody.authorDeviceId) !== wire.authorDeviceId ||
-    toBase64Url(revisionBody.epochId) !== wire.epochId
-  ) {
-    throw new Error("Worker file operation does not match its signed revision")
-  }
+  const verified = verifiedRevision(device, operation)
+  const { bundle, wire, authorCertificate, signedOperation, revisionBody } = verified
   const chunkLengths = new Map(
     revisionBody.chunks.map((chunk) => [toBase64Url(chunk.blobId), chunk.plaintextLength]),
   )
@@ -134,17 +119,69 @@ export async function decryptRevision(
     throw new Error("Worker file operation type does not match its signed revision")
   }
   return {
-    revisionId: toBase64Url(decrypted.operation.revisionId),
-    operationId: wire.operationId,
-    fileId: toBase64Url(decrypted.operation.fileId),
-    action: wire.type === "tombstone" ? "delete" : wire.type === "restore" ? "restore" : "upsert",
-    path: decrypted.metadata.normalizedPath,
-    previousPath: null,
-    parents: decrypted.metadata.parents.map(toBase64Url),
-    authorDeviceId: wire.authorDeviceId,
-    createdAt: decrypted.metadata.createdAt,
+    ...revisionMetadata(wire, decrypted),
     bytes: decrypted.content ? copyBuffer(decrypted.content) : null,
-    isText: decrypted.metadata.contentType === "utf8-text",
+  }
+}
+
+function verifiedRevision(device: DeviceKeyMaterial, operation: RemoteOperation) {
+  const bundle = deviceBundle(device)
+  const wire = parseFileWorkerOperation(operation.envelope)
+  const authorCertificate =
+    wire.authorDeviceId === device.deviceId
+      ? bundle.certificate
+      : trustedAuthorCertificate(device, operation)
+  const unsigned: Omit<WorkerOperation, "signature"> = {
+    operationId: wire.operationId,
+    authorDeviceId: wire.authorDeviceId,
+    epochId: wire.epochId,
+    type: wire.type,
+    envelope: wire.envelope,
+  }
+  if (
+    !verify(
+      workerOperationSigningBytes(unsigned),
+      ed25519Signature(fromBase64Url(wire.signature)),
+      authorCertificate.body.signingPublicKey,
+    )
+  ) {
+    throw new Error("Worker file operation signature is invalid")
+  }
+  const signedOperation = decodeOperation(fromBase64Url(wire.envelope))
+  if (signedOperation.body.type !== "revision") {
+    throw new Error("Worker file operation does not contain an encrypted revision")
+  }
+  if (
+    toBase64Url(signedOperation.body.authorDeviceId) !== wire.authorDeviceId ||
+    toBase64Url(signedOperation.body.epochId) !== wire.epochId
+  ) {
+    throw new Error("Worker file operation does not match its signed revision")
+  }
+  return {
+    bundle,
+    wire,
+    authorCertificate,
+    signedOperation,
+    revisionBody: signedOperation.body,
+  }
+}
+
+function revisionMetadata(
+  wire: WorkerOperation,
+  revision: Awaited<ReturnType<typeof inspectFileRevision>>,
+): HistoryRevisionMetadata {
+  return {
+    revisionId: toBase64Url(revision.operation.revisionId),
+    operationId: wire.operationId,
+    fileId: toBase64Url(revision.operation.fileId),
+    action: wire.type === "tombstone" ? "delete" : wire.type === "restore" ? "restore" : "upsert",
+    path: revision.metadata.normalizedPath,
+    previousPath: null,
+    parents: revision.metadata.parents.map(toBase64Url),
+    authorDeviceId: wire.authorDeviceId,
+    createdAt: revision.metadata.createdAt,
+    byteLength: revision.plaintextBytes,
+    isText: revision.metadata.contentType === "utf8-text",
   }
 }
 
