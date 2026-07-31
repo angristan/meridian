@@ -30,6 +30,7 @@ import type {
   StorageUsage,
   TrustedCheckpoint,
   VaultPort,
+  VaultScanOptions,
 } from "../src/model"
 import { fingerprint } from "../src/platform/bytes"
 import { isConfigPath, isSelectedForSync, isSyncablePath } from "../src/vault/path-policy"
@@ -62,23 +63,44 @@ export class FakeVault implements VaultPort {
   async listFiles(
     categories: Record<ConfigCategory, boolean>,
     selection: SelectiveSyncSettings = { excludedFolders: [], excludedExtensions: [] },
+    options: VaultScanOptions = {},
   ): Promise<ScannedFileSnapshot[]> {
-    return this.scanFiles([...this.files.keys()], categories, selection)
+    return this.scanFiles([...this.files.keys()], categories, selection, options)
   }
 
   async scanFiles(
     paths: readonly string[],
     categories: Record<ConfigCategory, boolean>,
     selection: SelectiveSyncSettings = { excludedFolders: [], excludedExtensions: [] },
+    options: VaultScanOptions = {},
   ): Promise<ScannedFileSnapshot[]> {
     const snapshots: ScannedFileSnapshot[] = []
-    for (const path of new Set(paths)) {
+    const candidates = [...new Set(paths)]
+    let processed = 0
+    for (const path of candidates) {
+      if (options.shouldStop?.()) throw new Error("Vault scan canceled")
       const bytes = this.files.get(path)
-      if (!bytes) continue
+      if (!bytes) {
+        processed += 1
+        options.onProgress?.({
+          kind: "scan",
+          processed,
+          total: candidates.length,
+          currentPath: path,
+        })
+        continue
+      }
       if (
         !isSyncablePath(path, this.configDir, categories) ||
         !isSelectedForSync(path, this.configDir, selection)
       ) {
+        processed += 1
+        options.onProgress?.({
+          kind: "scan",
+          processed,
+          total: candidates.length,
+          currentPath: path,
+        })
         continue
       }
       snapshots.push({
@@ -87,6 +109,13 @@ export class FakeVault implements VaultPort {
         size: bytes.byteLength,
         mtime: 1,
         kind: isConfigPath(path, this.configDir) ? "config" : "vault",
+      })
+      processed += 1
+      options.onProgress?.({
+        kind: "scan",
+        processed,
+        total: candidates.length,
+        currentPath: path,
       })
     }
     return snapshots.sort((left, right) => left.path.localeCompare(right.path))

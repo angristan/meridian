@@ -52,8 +52,8 @@ export interface SyncWorkerHandle {
 export type SyncWorkerFactory = () => SyncWorkerHandle | null
 
 export interface SyncComputePort {
-  fingerprint(bytes: ArrayBuffer): Promise<string>
-  planIndex(input: IndexPlanningInput): Promise<IndexPlan>
+  fingerprint(bytes: ArrayBuffer, shouldStop?: () => boolean): Promise<string>
+  planIndex(input: IndexPlanningInput, shouldStop?: () => boolean): Promise<IndexPlan>
   close(): void
 }
 
@@ -81,17 +81,25 @@ export class BackgroundSyncCompute implements SyncComputePort {
     ) => Promise<string> = fingerprintOnMainThread,
     private readonly planFallback: (
       input: IndexPlanningInput,
+      shouldStop?: () => boolean,
     ) => Promise<IndexPlan> = planIndexCooperatively,
   ) {}
 
-  fingerprint(bytes: ArrayBuffer): Promise<string> {
+  fingerprint(bytes: ArrayBuffer, shouldStop?: () => boolean): Promise<string> {
     if (this.closed) return Promise.reject(new Error("Background sync service is closed"))
+    if (shouldStop?.()) return Promise.reject(new Error("Background sync work canceled"))
     const handle = this.workerHandle()
-    if (!handle) return this.fingerprintFallback(bytes)
+    if (!handle) {
+      return this.fingerprintFallback(bytes).then((value) => {
+        if (shouldStop?.()) throw new Error("Background sync work canceled")
+        return value
+      })
+    }
     return this.request(
       { id: this.nextRequestId(), kind: "fingerprint", bytes },
       [bytes],
       (response) => {
+        if (shouldStop?.()) throw new Error("Background sync work canceled")
         if (response.kind !== "fingerprint") {
           throw new Error("Background sync worker returned the wrong response")
         }
@@ -100,11 +108,13 @@ export class BackgroundSyncCompute implements SyncComputePort {
     )
   }
 
-  planIndex(input: IndexPlanningInput): Promise<IndexPlan> {
+  planIndex(input: IndexPlanningInput, shouldStop?: () => boolean): Promise<IndexPlan> {
     if (this.closed) return Promise.reject(new Error("Background sync service is closed"))
+    if (shouldStop?.()) return Promise.reject(new Error("Background sync work canceled"))
     const handle = this.workerHandle()
-    if (!handle) return this.planFallback(input)
+    if (!handle) return this.planFallback(input, shouldStop)
     return this.request({ id: this.nextRequestId(), kind: "plan-index", input }, [], (response) => {
+      if (shouldStop?.()) throw new Error("Background sync work canceled")
       if (response.kind !== "plan-index") {
         throw new Error("Background sync worker returned the wrong response")
       }
@@ -209,10 +219,14 @@ export class BackgroundSyncCompute implements SyncComputePort {
   }
 }
 
-export async function planIndexCooperatively(input: IndexPlanningInput): Promise<IndexPlan> {
+export async function planIndexCooperatively(
+  input: IndexPlanningInput,
+  shouldStop: () => boolean = () => false,
+): Promise<IndexPlan> {
   const pathByCollisionKey = new Map<string, string>()
   let processed = 0
   for (const path of input.collisionPaths) {
+    if (shouldStop()) throw new Error("Background sync work canceled")
     processed += 1
     if (processed % 100 === 0) await yieldToEventLoop()
     const collisionKey = path.toLocaleLowerCase("en-US")
@@ -225,6 +239,7 @@ export async function planIndexCooperatively(input: IndexPlanningInput): Promise
 
   const currentPaths = new Set<string>()
   for (const snapshot of input.current) {
+    if (shouldStop()) throw new Error("Background sync work canceled")
     processed += 1
     if (processed % 100 === 0) await yieldToEventLoop()
     currentPaths.add(snapshot.path)
@@ -233,6 +248,7 @@ export async function planIndexCooperatively(input: IndexPlanningInput): Promise
   const removed: IndexPlanningSnapshot[] = []
   const removedByFingerprint = new Map<string, IndexPlanningSnapshot[]>()
   for (const snapshot of input.previous) {
+    if (shouldStop()) throw new Error("Background sync work canceled")
     processed += 1
     if (processed % 100 === 0) await yieldToEventLoop()
     previousPaths.add(snapshot.path)
@@ -246,6 +262,7 @@ export async function planIndexCooperatively(input: IndexPlanningInput): Promise
   const consumedRemovals = new Set<string>()
   const renameSources: IndexPlan["renameSources"] = []
   for (const snapshot of input.current) {
+    if (shouldStop()) throw new Error("Background sync work canceled")
     processed += 1
     if (processed % 100 === 0) await yieldToEventLoop()
     if (previousPaths.has(snapshot.path)) continue

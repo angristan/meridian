@@ -10,6 +10,12 @@ import type {
   SelectiveSyncSettings,
   SyncStatus,
 } from "../src/model"
+import type {
+  IndexPlan,
+  IndexPlanningInput,
+  SyncComputePort,
+} from "../src/platform/background-sync"
+import { planIndexCooperatively } from "../src/platform/background-sync"
 import { fingerprint, randomId } from "../src/platform/bytes"
 import { MemoryJournal } from "../src/storage/journal"
 import { SyncController } from "../src/sync/controller"
@@ -141,6 +147,85 @@ describe("SyncController", () => {
     expect(remote.operations.at(-1)?.envelope).toMatchObject({ path: "note.md" })
     expect(await journal.listDirtyPaths()).toEqual([])
     controller.stop()
+  })
+
+  it("reports bounded progress while scanning local files", async () => {
+    const statuses: SyncStatus[] = []
+    const controller = new SyncController(
+      new FakeVault({ "a.md": "a", "b.md": "b" }),
+      new MemoryJournal(),
+      new FakeRemote(),
+      new FakeCrypto(),
+      () => ALL_CATEGORIES,
+      (status) => statuses.push(status),
+      undefined,
+      { progressThrottleMs: 0 },
+    )
+
+    await controller.start(TEST_DEVICE)
+
+    const scanProgress = statuses.flatMap((status) =>
+      status.progress?.kind === "scan" ? [status.progress] : [],
+    )
+    expect(new Set(scanProgress.map((progress) => progress.processed))).toEqual(new Set([1, 2]))
+    expect(scanProgress.every((progress) => progress.total === 2)).toBe(true)
+    expect(controller.getStatus().progress).toBeNull()
+    controller.stop()
+  })
+
+  it("cancels background planning without consuming dirty paths", async () => {
+    class BlockingCompute implements SyncComputePort {
+      private calls = 0
+      private reject: ((error: Error) => void) | null = null
+      private markStarted = () => {}
+      readonly started = new Promise<void>((resolve) => {
+        this.markStarted = resolve
+      })
+
+      fingerprint(bytes: ArrayBuffer): Promise<string> {
+        return fingerprint(bytes)
+      }
+
+      planIndex(input: IndexPlanningInput): Promise<IndexPlan> {
+        this.calls += 1
+        if (this.calls === 1) return planIndexCooperatively(input)
+        this.markStarted()
+        return new Promise<IndexPlan>((_resolve, reject) => {
+          this.reject = reject
+        })
+      }
+
+      close(): void {
+        this.reject?.(new Error("Background sync service stopped"))
+        this.reject = null
+      }
+    }
+
+    const compute = new BlockingCompute()
+    const vault = new FakeVault({ "note.md": "initial" })
+    const journal = new MemoryJournal()
+    const remote = new FakeRemote()
+    const controller = new SyncController(
+      vault,
+      journal,
+      remote,
+      new FakeCrypto(),
+      () => ALL_CATEGORIES,
+      () => {},
+      undefined,
+      { compute },
+    )
+    await controller.start(TEST_DEVICE)
+    vault.files.set("note.md", new TextEncoder().encode("edited").buffer)
+    await controller.recordVaultChange("note.md")
+
+    const syncing = controller.sync("file-event")
+    await compute.started
+    const pausing = controller.quiesce()
+    await Promise.all([syncing, pausing])
+
+    expect(await journal.listDirtyPaths()).toHaveLength(1)
+    expect(remote.operations).toHaveLength(1)
   })
 
   it("recovers missed file events with a resume scan", async () => {

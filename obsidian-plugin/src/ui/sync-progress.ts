@@ -50,6 +50,14 @@ export function presentSyncProgressSlot(
 }
 
 export function presentSyncProgress(progress: SyncProgress): SyncProgressPresentation {
+  if (progress.kind === "scan") {
+    return {
+      label: `Checking local files · ${progress.processed} / ${progress.total}`,
+      detail: progress.currentPath ?? `${progress.processed} files checked`,
+      value: progress.processed,
+      max: progress.total,
+    }
+  }
   if (progress.kind === "pull") {
     const max = Math.max(0, progress.targetCursor - progress.startCursor)
     const value = clamp(progress.currentCursor - progress.startCursor, 0, max)

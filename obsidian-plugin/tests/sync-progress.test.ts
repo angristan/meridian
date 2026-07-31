@@ -21,6 +21,22 @@ describe("sync progress presentation", () => {
     })
   })
 
+  it("shows bounded local scan progress", () => {
+    expect(
+      presentSyncProgress({
+        kind: "scan",
+        processed: 25,
+        total: 100,
+        currentPath: "Notes/current.md",
+      }),
+    ).toEqual({
+      label: "Checking local files · 25 / 100",
+      detail: "Notes/current.md",
+      value: 25,
+      max: 100,
+    })
+  })
+
   it("shows durable cursor and current download chunk progress", () => {
     expect(
       presentSyncProgress({

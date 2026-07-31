@@ -9,6 +9,7 @@ import type {
   PairingStatus,
   RemoteDevice,
   RemotePort,
+  ScanSyncProgress,
   SelectiveSyncSettings,
   SyncReason,
   SyncStatus,
@@ -371,6 +372,7 @@ export class SyncController {
             : "Offline — changes are safely queued",
           error: message,
           queued: (await this.journal.listPending()).length,
+          progress: null,
         })
       }
       reason = this.stopRequested ? null : this.rerunReason
@@ -386,11 +388,27 @@ export class SyncController {
       error: null,
       progress: null,
     })
+    const reconcileOptions = {
+      shouldStop: () => this.stopRequested,
+      onProgress: (progress: ScanSyncProgress) =>
+        this.updateProgress({
+          phase: this.stopRequested ? "pausing" : "scanning",
+          message: this.stopRequested
+            ? "Pausing after the current safe boundary"
+            : "Checking local changes",
+          progress,
+        }),
+    }
     const result = requiresFullScan(reason)
-      ? await this.reconciler.reconcile(this.categories(), this.selection())
-      : await this.reconciler.reconcileDirty(this.categories(), this.selection())
+      ? await this.reconciler.reconcile(this.categories(), this.selection(), reconcileOptions)
+      : await this.reconciler.reconcileDirty(this.categories(), this.selection(), reconcileOptions)
+    if (this.stopRequested) return
     const pending = await this.journal.listPending()
-    this.updateStatus({ queued: pending.length, message: `${result.files} files checked` })
+    this.updateStatus({
+      queued: pending.length,
+      message: `${result.files} files checked`,
+      progress: null,
+    })
     if (reason === "file-event" && result.queued === 0 && pending.length === 0) {
       this.updateStatus({
         phase: "idle",
@@ -485,6 +503,7 @@ export class SyncController {
 
   private requestStop(): void {
     this.stopRequested = true
+    this.compute.close()
     this.rerunReason = null
     this.stopNotifications?.()
     this.stopNotifications = null

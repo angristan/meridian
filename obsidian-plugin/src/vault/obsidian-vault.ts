@@ -4,6 +4,7 @@ import type {
   ScannedFileSnapshot,
   SelectiveSyncSettings,
   VaultPort,
+  VaultScanOptions,
 } from "../model"
 import { BackgroundSyncCompute, type SyncComputePort } from "../platform/background-sync"
 import { yieldToEventLoop } from "../platform/scheduling"
@@ -46,49 +47,72 @@ export class ObsidianVaultPort implements VaultPort {
   async listFiles(
     categories: Record<ConfigCategory, boolean>,
     selection: SelectiveSyncSettings = { excludedFolders: [], excludedExtensions: [] },
+    options: VaultScanOptions = {},
   ): Promise<ScannedFileSnapshot[]> {
     const paths = new Set<string>()
+    let discovered = 0
     for (const file of this.vault.getFiles()) {
+      if (options.shouldStop?.()) throw new Error("Vault scan canceled")
       if (
         isSyncablePath(file.path, this.configDir, categories) &&
         isSelectedForSync(file.path, this.configDir, selection)
       ) {
         paths.add(normalizeVaultPath(file.path))
       }
+      discovered += 1
+      if (discovered % 500 === 0) await yieldToEventLoop()
     }
     for (const path of await this.listSelectedConfigFiles(categories)) paths.add(path)
 
-    return this.scanFiles([...paths], categories, selection)
+    return this.scanFiles([...paths], categories, selection, options)
   }
 
   async scanFiles(
     paths: readonly string[],
     categories: Record<ConfigCategory, boolean>,
     selection: SelectiveSyncSettings = { excludedFolders: [], excludedExtensions: [] },
+    options: VaultScanOptions = {},
   ): Promise<ScannedFileSnapshot[]> {
     const snapshots: ScannedFileSnapshot[] = []
+    const candidates = [...new Set(paths.map(normalizeVaultPath))].sort()
     let index = 0
-    for (const candidate of [...new Set(paths.map(normalizeVaultPath))].sort()) {
+    const reportProgress = (path: string) => {
+      index += 1
+      options.onProgress?.({
+        kind: "scan",
+        processed: index,
+        total: candidates.length,
+        currentPath: path,
+      })
+    }
+    for (const candidate of candidates) {
+      if (options.shouldStop?.()) throw new Error("Vault scan canceled")
       if (
         !isSyncablePath(candidate, this.configDir, categories) ||
         !isSelectedForSync(candidate, this.configDir, selection)
       ) {
+        reportProgress(candidate)
         continue
       }
       const stat = await this.vault.adapter.stat(normalizePath(candidate))
-      if (stat?.type !== "file") continue
+      if (stat?.type !== "file") {
+        reportProgress(candidate)
+        continue
+      }
       if (stat.size > this.maxFileBytes()) {
         throw new Error(`${candidate} exceeds the configured mobile-safe file size limit`)
       }
       const bytes = await this.read(candidate)
+      const fileFingerprint = await this.compute.fingerprint(bytes, options.shouldStop)
+      if (options.shouldStop?.()) throw new Error("Vault scan canceled")
       snapshots.push({
         path: candidate,
-        fingerprint: await this.compute.fingerprint(bytes),
+        fingerprint: fileFingerprint,
         size: stat.size,
         mtime: stat.mtime,
         kind: isConfigPath(candidate, this.configDir) ? "config" : "vault",
       })
-      index += 1
+      reportProgress(candidate)
       if (index % 25 === 0) await yieldToEventLoop()
     }
     return snapshots

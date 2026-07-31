@@ -99,6 +99,13 @@ export interface PullSyncProgress {
   totalBytes: number | null
 }
 
+export interface ScanSyncProgress {
+  kind: "scan"
+  processed: number
+  total: number
+  currentPath: string | null
+}
+
 export interface PushSyncProgress {
   kind: "push"
   processed: number
@@ -114,7 +121,7 @@ export interface PushSyncProgress {
   currentCursor: number
 }
 
-export type SyncProgress = PullSyncProgress | PushSyncProgress
+export type SyncProgress = ScanSyncProgress | PullSyncProgress | PushSyncProgress
 
 export interface SyncStatus {
   phase: SyncPhase
@@ -617,6 +624,11 @@ export interface RemotePort {
   ): () => void
 }
 
+export interface VaultScanOptions {
+  shouldStop?: () => boolean
+  onProgress?: (progress: ScanSyncProgress) => void
+}
+
 export interface VaultPort {
   configDir: string
   maxFileBytes(): number
@@ -624,11 +636,13 @@ export interface VaultPort {
   listFiles(
     categories: Record<ConfigCategory, boolean>,
     selection?: SelectiveSyncSettings,
+    options?: VaultScanOptions,
   ): Promise<ScannedFileSnapshot[]>
   scanFiles(
     paths: readonly string[],
     categories: Record<ConfigCategory, boolean>,
     selection?: SelectiveSyncSettings,
+    options?: VaultScanOptions,
   ): Promise<ScannedFileSnapshot[]>
   read(path: string): Promise<ArrayBuffer>
   write(path: string, bytes: ArrayBuffer): Promise<void>

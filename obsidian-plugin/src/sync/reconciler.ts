@@ -4,6 +4,7 @@ import type {
   FileSnapshot,
   JournalEntry,
   ScannedFileSnapshot,
+  ScanSyncProgress,
   SelectiveSyncSettings,
   VaultPort,
 } from "../model"
@@ -19,6 +20,11 @@ export interface ReconcileResult {
   files: number
 }
 
+export interface ReconcileOptions {
+  shouldStop?: () => boolean
+  onProgress?: (progress: ScanSyncProgress) => void
+}
+
 export class Reconciler {
   constructor(
     private readonly vault: VaultPort,
@@ -29,9 +35,10 @@ export class Reconciler {
   async reconcile(
     categories: Record<ConfigCategory, boolean>,
     selection: SelectiveSyncSettings = { excludedFolders: [], excludedExtensions: [] },
+    options: ReconcileOptions = {},
   ): Promise<ReconcileResult> {
     const dirtyPaths = await this.journal.listDirtyPaths()
-    const current = await this.vault.listFiles(categories, selection)
+    const current = await this.vault.listFiles(categories, selection, options)
     return this.reconcileScanned(
       current,
       await this.journal.getSnapshots(),
@@ -39,22 +46,32 @@ export class Reconciler {
       selection,
       null,
       dirtyPaths,
+      options,
     )
   }
 
   async reconcileDirty(
     categories: Record<ConfigCategory, boolean>,
     selection: SelectiveSyncSettings = { excludedFolders: [], excludedExtensions: [] },
+    options: ReconcileOptions = {},
   ): Promise<ReconcileResult> {
     const dirtyPaths = await this.journal.listDirtyPaths()
     if (dirtyPaths.length === 0) return { queued: 0, files: 0 }
 
     const scope = new Set(dirtyPaths.map((change) => change.path))
     const [current, previous] = await Promise.all([
-      this.vault.scanFiles([...scope], categories, selection),
+      this.vault.scanFiles([...scope], categories, selection, options),
       this.journal.getSnapshots(),
     ])
-    return this.reconcileScanned(current, previous, categories, selection, scope, dirtyPaths)
+    return this.reconcileScanned(
+      current,
+      previous,
+      categories,
+      selection,
+      scope,
+      dirtyPaths,
+      options,
+    )
   }
 
   private async reconcileScanned(
@@ -64,7 +81,9 @@ export class Reconciler {
     selection: SelectiveSyncSettings,
     scope: ReadonlySet<string> | null,
     dirtyPaths: DirtyPath[],
+    options: ReconcileOptions,
   ): Promise<ReconcileResult> {
+    if (options.shouldStop?.()) throw new Error("Vault reconciliation canceled")
     const pendingEntries = await this.journal.listPending()
     const pendingBefore = new Set(pendingEntries.map((entry) => entry.path))
     const pendingPaths = new Set(pendingBefore)
@@ -75,20 +94,23 @@ export class Reconciler {
         inScope(snapshot.path) &&
         snapshotEnabled(snapshot, categories, selection, this.vault.configDir),
     )
-    const indexPlan = await this.compute.planIndex({
-      current: current.map(({ path, fingerprint }) => ({ path, fingerprint })),
-      previous: enabledScopedPrevious.map(({ path, fingerprint }) => ({ path, fingerprint })),
-      collisionPaths: [
-        ...[...previous.values()]
-          .filter(
-            (snapshot) =>
-              !inScope(snapshot.path) &&
-              snapshotEnabled(snapshot, categories, selection, this.vault.configDir),
-          )
-          .map((snapshot) => snapshot.path),
-        ...current.map((snapshot) => snapshot.path),
-      ],
-    })
+    const indexPlan = await this.compute.planIndex(
+      {
+        current: current.map(({ path, fingerprint }) => ({ path, fingerprint })),
+        previous: enabledScopedPrevious.map(({ path, fingerprint }) => ({ path, fingerprint })),
+        collisionPaths: [
+          ...[...previous.values()]
+            .filter(
+              (snapshot) =>
+                !inScope(snapshot.path) &&
+                snapshotEnabled(snapshot, categories, selection, this.vault.configDir),
+            )
+            .map((snapshot) => snapshot.path),
+          ...current.map((snapshot) => snapshot.path),
+        ],
+      },
+      options.shouldStop,
+    )
     const renameSourceByPath = new Map(
       indexPlan.renameSources.map((rename) => [rename.path, rename.previousPath]),
     )
@@ -106,6 +128,7 @@ export class Reconciler {
     let processed = 0
 
     for (const scanned of current) {
+      if (options.shouldStop?.()) throw new Error("Vault reconciliation canceled")
       processed += 1
       if (processed % 100 === 0) await yieldToEventLoop()
       const prior = previous.get(scanned.path)
@@ -134,6 +157,7 @@ export class Reconciler {
     }
 
     for (const snapshot of removed) {
+      if (options.shouldStop?.()) throw new Error("Vault reconciliation canceled")
       processed += 1
       if (processed % 100 === 0) await yieldToEventLoop()
       if (consumedRemovals.has(snapshot.path)) continue
@@ -172,6 +196,7 @@ export class Reconciler {
       if (pendingPaths.has(snapshot.path)) nextSnapshots.set(snapshot.path, snapshot)
     }
 
+    if (options.shouldStop?.()) throw new Error("Vault reconciliation canceled")
     await this.journal.commitReconciliation({
       entries,
       putSnapshots: [...nextSnapshots.values()].filter(
