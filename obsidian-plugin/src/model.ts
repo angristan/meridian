@@ -620,6 +620,7 @@ export interface RemotePort {
 export interface VaultPort {
   configDir: string
   maxFileBytes(): number
+  close?(): void
   listFiles(
     categories: Record<ConfigCategory, boolean>,
     selection?: SelectiveSyncSettings,

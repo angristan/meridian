@@ -23,6 +23,7 @@ import {
 import { ObsidianHttpTransport } from "./network/obsidian-transport"
 import { MeridianRemoteClient, normalizeEndpoint } from "./network/remote-client"
 import { MeridianHttpError } from "./network/response-parsers"
+import { BackgroundSyncCompute } from "./platform/background-sync"
 import { connectionControlState } from "./plugin/connection-control"
 import { createSanitizedDebugReport, SyncDiagnostics } from "./plugin/diagnostics"
 import { confirmRemotePairingCompletion } from "./plugin/pairing-completion"
@@ -1042,9 +1043,11 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
       if (device.deviceId !== this.settings.deviceId || device.vaultId !== this.settings.vaultId) {
         throw new Error("Stored device keys do not match this vault")
       }
+      const compute = new BackgroundSyncCompute()
       const vault = new ObsidianVaultPort(
         this.app.vault,
         () => this.settings.maxFileSizeMiB * 1024 * 1024,
+        compute,
       )
       const journal = new IndexedDbJournal(`meridian-${this.settings.vaultId}`)
       const remote = new MeridianRemoteClient(this.settings.endpoint, new ObsidianHttpTransport())
@@ -1059,7 +1062,7 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
           deviceName: this.settings.deviceName || defaultDeviceName(),
           platform: defaultDevicePlatform(),
         }),
-        { selection: () => structuredClone(this.settings.selectiveSync) },
+        { selection: () => structuredClone(this.settings.selectiveSync), compute },
       )
       await nextController.start(device)
       if (!this.pluginLoaded || this.connectionInitializationKey() !== expectedKey) {

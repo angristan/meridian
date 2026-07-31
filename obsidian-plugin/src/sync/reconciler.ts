@@ -7,10 +7,11 @@ import type {
   SelectiveSyncSettings,
   VaultPort,
 } from "../model"
+import { BackgroundSyncCompute, type SyncComputePort } from "../platform/background-sync"
 import { randomId } from "../platform/bytes"
 import { yieldToEventLoop } from "../platform/scheduling"
 import type { JournalPort } from "../storage/journal"
-import { configCategoryForPath, isSelectedForSync, normalizeVaultPath } from "../vault/path-policy"
+import { configCategoryForPath, isSelectedForSync } from "../vault/path-policy"
 import { revisionHeads } from "./revision-heads"
 
 export interface ReconcileResult {
@@ -22,6 +23,7 @@ export class Reconciler {
   constructor(
     private readonly vault: VaultPort,
     private readonly journal: JournalPort,
+    private readonly compute: SyncComputePort = new BackgroundSyncCompute(),
   ) {}
 
   async reconcile(
@@ -30,7 +32,6 @@ export class Reconciler {
   ): Promise<ReconcileResult> {
     const dirtyPaths = await this.journal.listDirtyPaths()
     const current = await this.vault.listFiles(categories, selection)
-    await assertNoCaseCollisions(current)
     return this.reconcileScanned(
       current,
       await this.journal.getSnapshots(),
@@ -53,15 +54,6 @@ export class Reconciler {
       this.vault.scanFiles([...scope], categories, selection),
       this.journal.getSnapshots(),
     ])
-    const collisionCandidates = [
-      ...[...previous.values()].filter(
-        (snapshot) =>
-          !scope.has(snapshot.path) &&
-          snapshotEnabled(snapshot, categories, selection, this.vault.configDir),
-      ),
-      ...current,
-    ]
-    await assertNoCaseCollisions(collisionCandidates)
     return this.reconcileScanned(current, previous, categories, selection, scope, dirtyPaths)
   }
 
@@ -77,21 +69,38 @@ export class Reconciler {
     const pendingBefore = new Set(pendingEntries.map((entry) => entry.path))
     const pendingPaths = new Set(pendingBefore)
     const pendingByPath = new Map(pendingEntries.map((entry) => [entry.path, entry]))
-    const currentByPath = new Map(current.map((snapshot) => [snapshot.path, snapshot]))
     const inScope = (path: string) => scope === null || scope.has(path)
+    const enabledScopedPrevious = [...previous.values()].filter(
+      (snapshot) =>
+        inScope(snapshot.path) &&
+        snapshotEnabled(snapshot, categories, selection, this.vault.configDir),
+    )
+    const indexPlan = await this.compute.planIndex({
+      current: current.map(({ path, fingerprint }) => ({ path, fingerprint })),
+      previous: enabledScopedPrevious.map(({ path, fingerprint }) => ({ path, fingerprint })),
+      collisionPaths: [
+        ...[...previous.values()]
+          .filter(
+            (snapshot) =>
+              !inScope(snapshot.path) &&
+              snapshotEnabled(snapshot, categories, selection, this.vault.configDir),
+          )
+          .map((snapshot) => snapshot.path),
+        ...current.map((snapshot) => snapshot.path),
+      ],
+    })
+    const renameSourceByPath = new Map(
+      indexPlan.renameSources.map((rename) => [rename.path, rename.previousPath]),
+    )
+    const consumedRemovals = new Set(indexPlan.renameSources.map((rename) => rename.previousPath))
     const ignoredPrevious = [...previous.values()].filter(
       (snapshot) =>
         !inScope(snapshot.path) ||
         !snapshotEnabled(snapshot, categories, selection, this.vault.configDir),
     )
-    const removed = [...previous.values()].filter(
-      (snapshot) =>
-        inScope(snapshot.path) &&
-        snapshotEnabled(snapshot, categories, selection, this.vault.configDir) &&
-        !currentByPath.has(snapshot.path),
-    )
-    const removedByFingerprint = groupByFingerprint(removed)
-    const consumedRemovals = new Set<string>()
+    const removed = indexPlan.removedPaths
+      .map((path) => previous.get(path))
+      .filter((snapshot): snapshot is FileSnapshot => snapshot !== undefined)
     const identifiedCurrent = new Map<string, FileSnapshot>()
     const entries: JournalEntry[] = []
     let processed = 0
@@ -100,9 +109,9 @@ export class Reconciler {
       processed += 1
       if (processed % 100 === 0) await yieldToEventLoop()
       const prior = previous.get(scanned.path)
-      const renameSource = !prior
-        ? uniqueUnconsumedMatch(removedByFingerprint.get(scanned.fingerprint), consumedRemovals)
-        : null
+      const renameSourcePath = renameSourceByPath.get(scanned.path)
+      const renameSource =
+        !prior && renameSourcePath ? (previous.get(renameSourcePath) ?? null) : null
       const exactPathRevision =
         !prior && !renameSource ? (await this.journal.listRevisions(scanned.path))[0] : undefined
       const snapshot: FileSnapshot = {
@@ -115,10 +124,8 @@ export class Reconciler {
           randomId(),
       }
       identifiedCurrent.set(snapshot.path, snapshot)
-      // Reserve a unique rename source even when an earlier run already queued the destination.
-      // Otherwise a crash between journaling and snapshot replacement could queue a tombstone for
-      // the old path and silently split one file identity into two operations.
-      if (renameSource) consumedRemovals.add(renameSource.path)
+      // The planner reserves each unique rename source once. This remains true when an earlier
+      // run already queued the destination, preventing a crash retry from splitting file identity.
       if (prior?.fingerprint === snapshot.fingerprint) continue
       if (pendingPaths.has(snapshot.path)) continue
 
@@ -231,38 +238,4 @@ function snapshotEnabled(
   if (snapshot.kind === "vault") return isSelectedForSync(snapshot.path, configDir, selection)
   const category = configCategoryForPath(snapshot.path, configDir)
   return category !== null && categories[category]
-}
-
-function groupByFingerprint(snapshots: FileSnapshot[]): Map<string, FileSnapshot[]> {
-  const groups = new Map<string, FileSnapshot[]>()
-  for (const snapshot of snapshots) {
-    const group = groups.get(snapshot.fingerprint) ?? []
-    group.push(snapshot)
-    groups.set(snapshot.fingerprint, group)
-  }
-  return groups
-}
-
-function uniqueUnconsumedMatch(
-  matches: FileSnapshot[] | undefined,
-  consumed: ReadonlySet<string>,
-): FileSnapshot | null {
-  if (!matches) return null
-  const available = matches.filter((snapshot) => !consumed.has(snapshot.path))
-  return available.length === 1 ? (available[0] ?? null) : null
-}
-
-async function assertNoCaseCollisions(snapshots: ScannedFileSnapshot[]): Promise<void> {
-  const pathByCollisionKey = new Map<string, string>()
-  let processed = 0
-  for (const snapshot of snapshots) {
-    processed += 1
-    if (processed % 100 === 0) await yieldToEventLoop()
-    const collisionKey = normalizeVaultPath(snapshot.path).toLocaleLowerCase("en-US")
-    const existing = pathByCollisionKey.get(collisionKey)
-    if (existing !== undefined && existing !== snapshot.path) {
-      throw new Error(`Case or Unicode path collision: ${existing} and ${snapshot.path}`)
-    }
-    pathByCollisionKey.set(collisionKey, snapshot.path)
-  }
 }

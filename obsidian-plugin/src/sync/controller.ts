@@ -15,6 +15,7 @@ import type {
   VaultPort,
 } from "../model"
 import { INITIAL_STATUS } from "../model"
+import { BackgroundSyncCompute, type SyncComputePort } from "../platform/background-sync"
 import { randomId } from "../platform/bytes"
 import type { JournalPort } from "../storage/journal"
 import { normalizeVaultPath } from "../vault/path-policy"
@@ -31,6 +32,7 @@ export interface SyncControllerOptions {
   progressThrottleMs?: number
   now?: () => number
   selection?: () => SelectiveSyncSettings
+  compute?: SyncComputePort
 }
 
 export class SyncController {
@@ -50,11 +52,12 @@ export class SyncController {
   private lastProgressEmission = 0
   private readonly progressThrottleMs: number
   private readonly now: () => number
+  private readonly compute: SyncComputePort
   private readonly selection: () => SelectiveSyncSettings
   private status: SyncStatus = { ...INITIAL_STATUS }
 
   constructor(
-    vault: VaultPort,
+    private readonly vault: VaultPort,
     private readonly journal: JournalPort,
     private readonly remote: RemotePort,
     private readonly crypto: CryptoPort,
@@ -69,6 +72,7 @@ export class SyncController {
     this.progressThrottleMs = options.progressThrottleMs ?? 200
     this.now = options.now ?? Date.now
     this.selection = options.selection ?? (() => ({ excludedFolders: [], excludedExtensions: [] }))
+    this.compute = options.compute ?? new BackgroundSyncCompute()
     const revisionLoader = new RevisionLoader(remote, crypto, () => vault.maxFileBytes())
     const applier = new OperationApplier(
       vault,
@@ -79,7 +83,7 @@ export class SyncController {
       categories,
       this.selection,
     )
-    this.reconciler = new Reconciler(vault, journal)
+    this.reconciler = new Reconciler(vault, journal, this.compute)
     this.historyService = new HistoryService(vault, journal, revisionLoader)
     this.historyBackfill = new HistoryBackfillService(journal, remote, crypto)
     this.conflictService = new ConflictService(vault, journal)
@@ -487,6 +491,8 @@ export class SyncController {
   }
 
   private finishStop(): void {
+    this.compute.close()
+    this.vault.close?.()
     this.journal.close()
     this.device = null
     this.authenticated = false

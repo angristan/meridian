@@ -5,7 +5,7 @@ import type {
   SelectiveSyncSettings,
   VaultPort,
 } from "../model"
-import { fingerprint } from "../platform/bytes"
+import { BackgroundSyncCompute, type SyncComputePort } from "../platform/background-sync"
 import { yieldToEventLoop } from "../platform/scheduling"
 import {
   configCategoryForPath,
@@ -30,12 +30,17 @@ export class ObsidianVaultPort implements VaultPort {
   constructor(
     private readonly vault: Vault,
     private readonly fileSizeLimit: () => number,
+    private readonly compute: SyncComputePort = new BackgroundSyncCompute(),
   ) {
     this.configDir = normalizeVaultPath(vault.configDir)
   }
 
   maxFileBytes(): number {
     return this.fileSizeLimit()
+  }
+
+  close(): void {
+    this.compute.close()
   }
 
   async listFiles(
@@ -78,7 +83,7 @@ export class ObsidianVaultPort implements VaultPort {
       const bytes = await this.read(candidate)
       snapshots.push({
         path: candidate,
-        fingerprint: await fingerprint(bytes),
+        fingerprint: await this.compute.fingerprint(bytes),
         size: stat.size,
         mtime: stat.mtime,
         kind: isConfigPath(candidate, this.configDir) ? "config" : "vault",
