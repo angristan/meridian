@@ -139,6 +139,18 @@ export class SyncController {
     return this.historyService.activity(this.requireDevice().deviceId, limit)
   }
 
+  async previewRevision(revisionId: string) {
+    const device = this.requireDevice()
+    await this.authenticate(device)
+    return this.historyService.preview(device, revisionId)
+  }
+
+  async compareRevisionToCurrent(revisionId: string) {
+    const device = this.requireDevice()
+    await this.authenticate(device)
+    return this.historyService.compareToCurrent(device, revisionId)
+  }
+
   async restoreRevision(revisionId: string): Promise<void> {
     const device = this.requireDevice()
     await this.authenticate(device)

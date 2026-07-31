@@ -208,6 +208,121 @@
   color: var(--text-normal);
 }
 
+.meridian-history-layout {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.4fr) minmax(0, 1fr);
+  min-height: 360px;
+  max-height: min(68vh, 680px);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  overflow: hidden;
+}
+
+.meridian-history-list {
+  overflow-y: auto;
+  border-inline-end: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+}
+
+.meridian-history-item {
+  display: block;
+  width: 100%;
+  padding: var(--size-4-3);
+  border: 0;
+  border-bottom: 1px solid var(--background-modifier-border);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  text-align: start;
+}
+
+.meridian-history-item:hover,
+.meridian-history-item.is-selected {
+  background: var(--background-modifier-hover);
+}
+
+.meridian-history-item.is-selected {
+  box-shadow: inset 3px 0 0 var(--interactive-accent);
+}
+
+.meridian-history-path {
+  margin-block: var(--size-2-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.meridian-history-detail {
+  min-width: 0;
+  overflow-y: auto;
+  background: var(--background-primary);
+}
+
+.meridian-history-detail-header {
+  position: sticky;
+  z-index: 1;
+  top: 0;
+  display: flex;
+  gap: var(--size-4-3);
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--size-4-3);
+  border-bottom: 1px solid var(--background-modifier-border);
+  background: var(--background-primary);
+}
+
+.meridian-history-detail-header > div:first-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.meridian-history-detail-actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  gap: var(--size-4-2);
+}
+
+.meridian-history-content,
+.meridian-history-placeholder {
+  padding: var(--size-4-3);
+}
+
+.meridian-history-preview {
+  max-height: 50vh;
+  margin: 0;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.meridian-history-diff {
+  overflow: auto;
+  font-family: var(--font-monospace);
+  font-size: var(--font-ui-smaller);
+  white-space: pre;
+}
+
+.meridian-history-diff-line {
+  display: flex;
+  min-width: max-content;
+}
+
+.meridian-history-diff-line.is-added {
+  background: color-mix(in srgb, var(--color-green) 14%, transparent);
+}
+
+.meridian-history-diff-line.is-removed {
+  background: color-mix(in srgb, var(--color-red) 14%, transparent);
+}
+
+.meridian-history-diff-prefix {
+  flex: 0 0 2ch;
+  color: var(--text-muted);
+  text-align: center;
+  user-select: none;
+}
+
 .meridian-activity-list {
   max-height: min(60vh, 560px);
   overflow-y: auto;
@@ -354,7 +469,24 @@
   --meridian-view-padding: var(--size-4-3);
 }
 
+.is-mobile .meridian-history-layout {
+  grid-template-columns: 1fr;
+  max-height: none;
+}
+
+.is-mobile .meridian-history-list {
+  max-height: 30vh;
+  border-inline-end: 0;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.is-mobile .meridian-history-detail-header {
+  align-items: flex-start;
+  flex-direction: column;
+}
+
 .is-mobile .meridian-action-grid > button,
+.is-mobile .meridian-history-detail-actions button,
 .is-mobile .meridian-connection-control,
 .is-mobile .meridian-activity-actions button,
 .is-mobile .meridian-recovery-actions button {

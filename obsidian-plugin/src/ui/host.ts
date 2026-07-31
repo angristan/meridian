@@ -6,6 +6,8 @@ import type {
   PairingInvitation,
   PairingStatus,
   RemoteDevice,
+  RevisionComparison,
+  RevisionPreview,
   SyncActivity,
   SyncDiagnostic,
   SyncStatus,
@@ -27,6 +29,8 @@ export interface MeridianUiHost {
   getActivity(limit?: number): Promise<SyncActivity[]>
   getDiagnostics(): SyncDiagnostic[]
   getDebugReport(): string
+  previewRevision(revisionId: string): Promise<RevisionPreview>
+  compareRevisionToCurrent(revisionId: string): Promise<RevisionComparison>
   restoreRevision(revisionId: string): Promise<void>
   getConflicts(): Promise<ConflictRecord[]>
   resolveConflict(id: string): Promise<void>

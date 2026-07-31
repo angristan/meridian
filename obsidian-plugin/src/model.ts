@@ -188,6 +188,26 @@ export type SyncActivityKind =
   | "restored"
   | "conflict"
 
+export interface RevisionPreview {
+  revision: LocalRevision
+  kind: "deleted" | "text" | "binary"
+  byteLength: number
+  text: string | null
+  truncated: boolean
+}
+
+export interface RevisionDiffLine {
+  kind: "context" | "added" | "removed"
+  text: string
+}
+
+export interface RevisionComparison {
+  path: string
+  lines: RevisionDiffLine[]
+  truncated: boolean
+  unavailableReason: string | null
+}
+
 export interface SyncDiagnostic {
   timestamp: number
   phase: SyncPhase

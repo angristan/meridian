@@ -67,6 +67,71 @@ describe("HistoryService", () => {
     ).toEqual(["renamed", "old"])
   })
 
+  it("previews text history and compares it with current content", async () => {
+    const vault = new FakeVault({ "note.md": "one\ncurrent\nthree" })
+    const journal = new MemoryJournal()
+    const remote = new FakeRemote()
+    const sourceBytes = new TextEncoder().encode("one\nold\nthree").buffer
+    remote.blobs.set("source-blob", sourceBytes)
+    await journal.replaceSnapshots([
+      {
+        path: "note.md",
+        fileId: "file-id",
+        fingerprint: "current",
+        size: 17,
+        mtime: 2,
+        kind: "vault",
+      },
+    ])
+    await journal.putRevision({
+      revisionId: "source-revision",
+      fileId: "file-id",
+      path: "note.md",
+      action: "upsert",
+      previousPath: null,
+      parents: [],
+      deviceId: TEST_DEVICE.deviceId,
+      createdAt: 1,
+      cursor: 1,
+      tombstone: false,
+      isConflict: false,
+      operation: {
+        cursor: 1,
+        logHash: "hash-1",
+        envelope: {
+          operationId: "source-operation",
+          revisionId: "source-revision",
+          fileId: "file-id",
+          action: "upsert",
+          path: "note.md",
+          previousPath: null,
+          parents: [],
+          authorDeviceId: TEST_DEVICE.deviceId,
+          blobId: "source-blob",
+          isText: true,
+        },
+      },
+    })
+    const history = service(vault, journal, remote)
+
+    await expect(history.preview(TEST_DEVICE, "source-revision")).resolves.toMatchObject({
+      kind: "text",
+      byteLength: sourceBytes.byteLength,
+      text: "one\nold\nthree",
+      truncated: false,
+    })
+    await expect(history.compareToCurrent(TEST_DEVICE, "source-revision")).resolves.toMatchObject({
+      path: "note.md",
+      unavailableReason: null,
+      lines: [
+        { kind: "context", text: "one" },
+        { kind: "removed", text: "old" },
+        { kind: "added", text: "current" },
+        { kind: "context", text: "three" },
+      ],
+    })
+  })
+
   it("never restores over an untracked occupied path", async () => {
     const vault = new FakeVault({ "shared.md": "untracked content" })
     const journal = new MemoryJournal()

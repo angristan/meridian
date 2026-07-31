@@ -1,4 +1,4 @@
-import { apiVersion, Notice, Platform, Plugin } from "obsidian"
+import { apiVersion, Notice, Platform, Plugin, TFile } from "obsidian"
 import { createPackageCryptoPort } from "./crypto/package-adapter"
 import {
   type ConflictRecord,
@@ -9,6 +9,8 @@ import {
   type PairingInvitation,
   type PairingStatus,
   type RemoteDevice,
+  type RevisionComparison,
+  type RevisionPreview,
   type SyncActivity,
   type SyncDiagnostic,
   type SyncStatus,
@@ -131,6 +133,18 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
         return true
       },
     })
+    this.registerEvent(
+      this.app.workspace.on("file-menu", (menu, file) => {
+        if (!(file instanceof TFile) || !this.settings.endpoint) return
+        menu.addItem((item) =>
+          item
+            .setTitle("View Meridian history")
+            .setIcon("history")
+            .setSection("meridian")
+            .onClick(() => new HistoryModal(this, file.path).open()),
+        )
+      }),
+    )
 
     registerProtocolHandlers(this, this)
     this.scheduling.register()
@@ -328,6 +342,16 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
       this.status,
       this.diagnostics.entries(),
     )
+  }
+
+  async previewRevision(revisionId: string): Promise<RevisionPreview> {
+    if (!this.controller) throw new Error("Connect Meridian before viewing revision content")
+    return this.controller.previewRevision(revisionId)
+  }
+
+  async compareRevisionToCurrent(revisionId: string): Promise<RevisionComparison> {
+    if (!this.controller) throw new Error("Connect Meridian before comparing revision content")
+    return this.controller.compareRevisionToCurrent(revisionId)
   }
 
   async restoreRevision(revisionId: string): Promise<void> {
