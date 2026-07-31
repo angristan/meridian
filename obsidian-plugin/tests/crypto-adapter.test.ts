@@ -57,6 +57,14 @@ describe("shared crypto adapter", () => {
     expect(claim.recoveryCode).toMatch(/^mdn1[.-]/)
     expect(claim.publicClaim).toMatchObject({ setupSession: "setup-session" })
     expect(device.deviceId).toBe(claim.deviceId)
+    expect(device.trustedCheckpointAuthorized).toBe(true)
+    const legacySecret = JSON.parse(claim.keyBundle) as Record<string, unknown>
+    legacySecret.version = 1
+    delete legacySecret.checkpointAuthorizationChain
+    await expect(crypto.loadDevice(JSON.stringify(legacySecret))).resolves.toMatchObject({
+      deviceId: claim.deviceId,
+      trustedCheckpointAuthorized: false,
+    })
     if (!decrypted.bytes) throw new Error("Expected decrypted revision content")
     expect(new TextDecoder().decode(decrypted.bytes)).toBe("private note")
     expect(decrypted.path).toBe("note.md")
@@ -99,6 +107,7 @@ describe("shared crypto adapter", () => {
     expect(recovered.vaultId).toBe(claim.vaultId)
     expect(recovered.deviceId).not.toBe(claim.deviceId)
     expect(recoveredDevice.deviceId).toBe(recovered.deviceId)
+    expect(recoveredDevice.trustedCheckpointAuthorized).toBe(true)
     expect(record(recovered.publicClaim)).toMatchObject({
       challengeId: "recovery-challenge",
     })
@@ -271,6 +280,12 @@ describe("shared crypto adapter", () => {
       verification.transferHash,
     )
     const member = await crypto.loadDevice(paired.keyBundle)
+    expect(member.trustedCheckpointAuthorized).toBe(true)
+    const tamperedSecret = JSON.parse(paired.keyBundle) as Record<string, unknown>
+    tamperedSecret.checkpointAuthorizationChain = []
+    await expect(crypto.loadDevice(JSON.stringify(tamperedSecret))).resolves.toMatchObject({
+      trustedCheckpointAuthorized: false,
+    })
     const encrypted = await crypto.encryptRevision(member, {
       operationId: randomId(),
       revisionId: randomId(),

@@ -36,6 +36,7 @@ export const TEST_DEVICE: DeviceKeyMaterial = {
   deviceId: "device-local",
   serialized: "secret",
   trustedCheckpoint: { cursor: 0, logHash: "hash-0" },
+  trustedCheckpointAuthorized: true,
 }
 
 export class FakeVault implements VaultPort {

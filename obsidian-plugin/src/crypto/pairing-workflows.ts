@@ -14,8 +14,8 @@ import {
 } from "@meridian/crypto"
 import {
   bytesToHex,
-  decodeDeviceCertificate,
   type DeviceCertificate,
+  decodeDeviceCertificate,
   deviceId,
   ed25519PrivateKey,
   ed25519PublicKey,
@@ -300,7 +300,11 @@ export async function consumePairingResult(
   return {
     vaultId: toBase64Url(bundle.vaultId),
     deviceId: toBase64Url(bundle.deviceId),
-    keyBundle: serializeStoredDeviceSecret(bundle, packageValue.context.recoveryPublicKey),
+    keyBundle: serializeStoredDeviceSecret(
+      bundle,
+      packageValue.context.recoveryPublicKey,
+      packageValue.context.authorizationChain,
+    ),
     completion,
   }
 }

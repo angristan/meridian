@@ -3,26 +3,44 @@ import {
   deserializeDeviceKeyBundle,
   serializeDeviceKeyBundle,
   validateDeviceCertificate,
+  verifyCheckpoint,
 } from "@meridian/crypto"
-import { bytesToHex, decodeDeviceCertificate, ed25519PublicKey } from "@meridian/protocol"
+import {
+  bytesEqual,
+  bytesToHex,
+  decodeDeviceCertificate,
+  ed25519PublicKey,
+  encodeDeviceCertificate,
+} from "@meridian/protocol"
 import type { DeviceKeyMaterial, RemoteOperation } from "../model"
 import { fromBase64Url, toBase64Url } from "../platform/bytes"
 
 export interface StoredDeviceSecret {
-  readonly version: 1
+  readonly version: 1 | 2
   readonly deviceBundle: string
   readonly recoveryPublicKey: string
+  readonly checkpointAuthorizationChain: string[]
 }
 
 export function serializeStoredDeviceSecret(
   device: DeviceKeyBundle,
   recoveryPublicKey: Uint8Array,
+  checkpointAuthorizationChain: readonly ReturnType<typeof decodeDeviceCertificate>[] = [
+    device.certificate,
+  ],
 ): string {
-  return JSON.stringify({
-    version: 1,
+  const stored = {
+    version: 2,
     deviceBundle: toBase64Url(serializeDeviceKeyBundle(device)),
     recoveryPublicKey: toBase64Url(recoveryPublicKey),
-  } satisfies StoredDeviceSecret)
+    checkpointAuthorizationChain: checkpointAuthorizationChain.map((certificate) =>
+      toBase64Url(encodeDeviceCertificate(certificate)),
+    ),
+  } satisfies StoredDeviceSecret
+  if (!hasAuthorizedCheckpoint(stored)) {
+    throw new Error("Device checkpoint authorization chain is invalid")
+  }
+  return JSON.stringify(stored)
 }
 
 export function deviceBundle(device: DeviceKeyMaterial): DeviceKeyBundle {
@@ -45,16 +63,68 @@ export function parseStoredSecret(serialized: string): StoredDeviceSecret {
     const value: unknown = JSON.parse(serialized)
     if (
       isRecord(value) &&
-      value.version === 1 &&
+      (value.version === 1 || value.version === 2) &&
       typeof value.deviceBundle === "string" &&
-      typeof value.recoveryPublicKey === "string"
+      typeof value.recoveryPublicKey === "string" &&
+      (value.version === 1 || stringArray(value.checkpointAuthorizationChain))
     ) {
-      return value as unknown as StoredDeviceSecret
+      return {
+        version: value.version,
+        deviceBundle: value.deviceBundle,
+        recoveryPublicKey: value.recoveryPublicKey,
+        checkpointAuthorizationChain:
+          value.version === 2 && stringArray(value.checkpointAuthorizationChain)
+            ? value.checkpointAuthorizationChain
+            : [],
+      }
     }
   } catch {
     // Legacy development bundles contained only canonical device bytes.
   }
-  return { version: 1, deviceBundle: serialized, recoveryPublicKey: "" }
+  return {
+    version: 1,
+    deviceBundle: serialized,
+    recoveryPublicKey: "",
+    checkpointAuthorizationChain: [],
+  }
+}
+
+export function hasAuthorizedCheckpoint(secret: StoredDeviceSecret): boolean {
+  try {
+    if (
+      !secret.recoveryPublicKey ||
+      secret.checkpointAuthorizationChain.length === 0 ||
+      secret.checkpointAuthorizationChain.length > 32
+    ) {
+      return false
+    }
+    const bundle = deserializeDeviceKeyBundle(fromBase64Url(secret.deviceBundle))
+    const certificates = secret.checkpointAuthorizationChain.map((encoded) =>
+      decodeDeviceCertificate(fromBase64Url(encoded)),
+    )
+    const byId = new Map(
+      certificates.map((certificate) => [bytesToHex(certificate.body.certificateId), certificate]),
+    )
+    const signer = certificates.find((certificate) =>
+      bytesEqual(certificate.body.deviceId, bundle.checkpoint.body.signerDeviceId),
+    )
+    if (
+      !signer ||
+      !bytesEqual(signer.body.epochId, bundle.checkpoint.body.epochId) ||
+      !bytesEqual(signer.body.vaultId, bundle.checkpoint.body.vaultId)
+    ) {
+      return false
+    }
+    validateDeviceCertificate(signer, {
+      recoveryPublicKey: ed25519PublicKey(fromBase64Url(secret.recoveryPublicKey)),
+      lookup: (certificateId) => byId.get(bytesToHex(certificateId)),
+      atCursor: bundle.checkpoint.body.cursor,
+      atTime: Date.now(),
+    })
+    return verifyCheckpoint(bundle.checkpoint, signer)
+  } catch {
+    return false
+  }
 }
 
 export function trustedAuthorCertificate(
@@ -82,6 +152,10 @@ export function trustedAuthorCertificate(
     atTime: Date.now(),
   })
   return author
+}
+
+function stringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === "string")
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

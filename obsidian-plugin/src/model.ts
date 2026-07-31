@@ -292,6 +292,7 @@ export interface DeviceKeyMaterial {
   deviceId: string
   serialized: string
   trustedCheckpoint: TrustedCheckpoint
+  trustedCheckpointAuthorized: boolean
 }
 
 export interface RecoveryDeviceMaterial {

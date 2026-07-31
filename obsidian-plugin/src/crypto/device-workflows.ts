@@ -18,7 +18,13 @@ import type {
   SetupClaim,
 } from "../model"
 import { fromBase64Url, toBase64Url } from "../platform/bytes"
-import { deviceBundle, deviceBundleFromSecret, serializeStoredDeviceSecret } from "./device-secret"
+import {
+  deviceBundle,
+  deviceBundleFromSecret,
+  hasAuthorizedCheckpoint,
+  parseStoredSecret,
+  serializeStoredDeviceSecret,
+} from "./device-secret"
 
 export async function createFirstDevice(
   setupSession: string,
@@ -64,6 +70,7 @@ export async function createFirstDevice(
 }
 
 export async function loadDevice(serializedKeyBundle: string): Promise<DeviceKeyMaterial> {
+  const secret = parseStoredSecret(serializedKeyBundle)
   const bundle = deviceBundleFromSecret(serializedKeyBundle)
   return {
     vaultId: toBase64Url(bundle.vaultId),
@@ -73,6 +80,7 @@ export async function loadDevice(serializedKeyBundle: string): Promise<DeviceKey
       cursor: bundle.checkpoint.body.cursor,
       logHash: toBase64Url(bundle.checkpoint.body.logHash),
     },
+    trustedCheckpointAuthorized: hasAuthorizedCheckpoint(secret),
   }
 }
 
