@@ -1,6 +1,7 @@
 import { ItemView, Notice, type WorkspaceLeaf } from "obsidian"
 import type { SyncPhase, SyncProgress } from "../model"
 import { connectionControlState, statusPresentation } from "../plugin/connection-control"
+import { ActivityModal } from "./activity-modal"
 import { DevicesModal } from "./devices-pairing"
 import { formatRelativeTime, formatTime } from "./format-time"
 import { ConflictsModal, HistoryModal } from "./history-conflicts"
@@ -145,6 +146,9 @@ export class MeridianStatusView extends ItemView {
     const syncButton = actionGrid.createEl("button")
     syncButton.addEventListener("click", () => void this.runSync(syncButton))
 
+    const activityButton = actionGrid.createEl("button", { text: "Activity" })
+    activityButton.addEventListener("click", () => new ActivityModal(this.host).open())
+
     const historyButton = actionGrid.createEl("button", { text: "History" })
     historyButton.addEventListener("click", () => new HistoryModal(this.host).open())
 
@@ -158,10 +162,7 @@ export class MeridianStatusView extends ItemView {
 
     const devicesButton = actionGrid.createEl("button", { text: "Devices" })
     devicesButton.addEventListener("click", () => new DevicesModal(this.host).open())
-    const settingsButton = actionGrid.createEl("button", {
-      cls: "meridian-action-wide",
-      text: "Settings",
-    })
+    const settingsButton = actionGrid.createEl("button", { text: "Settings" })
     settingsButton.addEventListener("click", () => this.host.openSettings())
 
     const connectionButton = actions.createEl("button", { cls: "meridian-connection-control" })

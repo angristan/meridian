@@ -135,6 +135,10 @@ export class SyncController {
     return this.historyService.history(path)
   }
 
+  activity(limit = 200) {
+    return this.historyService.activity(this.requireDevice().deviceId, limit)
+  }
+
   async restoreRevision(revisionId: string): Promise<void> {
     const device = this.requireDevice()
     await this.authenticate(device)

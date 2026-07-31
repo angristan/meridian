@@ -1,4 +1,5 @@
 import { Menu, Notice } from "obsidian"
+import { ActivityModal } from "./activity-modal"
 import { DevicesModal } from "./devices-pairing"
 import { ConflictsModal, HistoryModal } from "./history-conflicts"
 import type { MeridianUiHost } from "./host"
@@ -68,6 +69,9 @@ function runAction(
       return
     case "resume":
       void runSafely(() => host.resumeConnection())
+      return
+    case "activity":
+      new ActivityModal(host).open()
       return
     case "history":
       if (activePath) new HistoryModal(host, activePath).open()

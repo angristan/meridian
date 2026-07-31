@@ -6,6 +6,7 @@ import type {
   PairingInvitation,
   PairingStatus,
   RemoteDevice,
+  SyncActivity,
   SyncStatus,
 } from "../model"
 
@@ -22,6 +23,7 @@ export interface MeridianUiHost {
   resumeConnection(): Promise<void>
   getStatus(): SyncStatus
   getHistory(path?: string): Promise<LocalRevision[]>
+  getActivity(limit?: number): Promise<SyncActivity[]>
   restoreRevision(revisionId: string): Promise<void>
   getConflicts(): Promise<ConflictRecord[]>
   resolveConflict(id: string): Promise<void>

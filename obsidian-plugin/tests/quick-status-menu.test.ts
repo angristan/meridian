@@ -25,6 +25,7 @@ describe("quick status menu presentation", () => {
     expect(presentation.actions.map((action) => action.id)).toEqual([
       "sync",
       "pause",
+      "activity",
       "history",
       "conflicts",
       "devices",
@@ -43,12 +44,14 @@ describe("quick status menu presentation", () => {
 
     expect(presentation.actions.find((action) => action.id === "sync")?.disabled).toBe(true)
     expect(presentation.actions.some((action) => action.id === "history")).toBe(false)
+    expect(presentation.actions.find((action) => action.id === "activity")?.disabled).toBe(false)
   })
 
   it("reduces an unconfigured vault to setup and inspection entry points", () => {
     const presentation = presentQuickStatus(DEFAULT_SETTINGS, INITIAL_STATUS, false)
 
     expect(presentation.actions.map((action) => [action.id, action.disabled])).toEqual([
+      ["activity", true],
       ["conflicts", true],
       ["devices", true],
       ["status", false],

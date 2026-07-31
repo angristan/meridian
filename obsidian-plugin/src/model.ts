@@ -180,6 +180,26 @@ export interface LocalRevision {
   operation: RemoteOperation | null
 }
 
+export type SyncActivityKind =
+  | "created"
+  | "modified"
+  | "renamed"
+  | "deleted"
+  | "restored"
+  | "conflict"
+
+export interface SyncActivity {
+  revisionId: string
+  fileId: string
+  kind: SyncActivityKind
+  path: string
+  previousPath: string | null
+  deviceId: string
+  createdAt: number
+  cursor: number | null
+  local: boolean
+}
+
 export interface ConflictRecord {
   id: string
   sourcePath: string

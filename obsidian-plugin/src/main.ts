@@ -9,6 +9,7 @@ import {
   type PairingInvitation,
   type PairingStatus,
   type RemoteDevice,
+  type SyncActivity,
   type SyncStatus,
 } from "./model"
 import { ObsidianHttpTransport } from "./network/obsidian-transport"
@@ -303,6 +304,10 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
 
   async getHistory(path?: string): Promise<LocalRevision[]> {
     return this.controller?.history(path) ?? []
+  }
+
+  async getActivity(limit = 200): Promise<SyncActivity[]> {
+    return this.controller?.activity(limit) ?? []
   }
 
   async restoreRevision(revisionId: string): Promise<void> {

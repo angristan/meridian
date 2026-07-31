@@ -1,6 +1,13 @@
-import type { DeviceKeyMaterial, JournalEntry, LocalRevision, VaultPort } from "../model"
+import type {
+  DeviceKeyMaterial,
+  JournalEntry,
+  LocalRevision,
+  SyncActivity,
+  VaultPort,
+} from "../model"
 import { fingerprint, randomId } from "../platform/bytes"
 import type { JournalPort } from "../storage/journal"
+import { revisionActivity } from "./activity"
 import { revisionHeads } from "./revision-heads"
 import type { RevisionLoader } from "./revision-loader"
 import { snapshotFor } from "./snapshots"
@@ -19,6 +26,10 @@ export class HistoryService {
 
   history(path?: string): Promise<LocalRevision[]> {
     return this.journal.listRevisions(path)
+  }
+
+  async activity(localDeviceId: string, limit = 200): Promise<SyncActivity[]> {
+    return revisionActivity(await this.journal.listRevisions(), localDeviceId, limit)
   }
 
   async restore(device: DeviceKeyMaterial, revisionId: string): Promise<RestoreResult> {

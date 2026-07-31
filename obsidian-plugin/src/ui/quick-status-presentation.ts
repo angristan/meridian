@@ -5,6 +5,7 @@ export type QuickStatusActionId =
   | "sync"
   | "pause"
   | "resume"
+  | "activity"
   | "history"
   | "conflicts"
   | "devices"
@@ -54,6 +55,13 @@ export function presentQuickStatus(
       section: "sync",
     })
   }
+  actions.push({
+    id: "activity",
+    title: "Synchronized changes",
+    icon: "list-tree",
+    disabled: connection.kind === "unconfigured",
+    section: "inspect",
+  })
   if (hasActiveFile) {
     actions.push({
       id: "history",
