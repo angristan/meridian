@@ -49,7 +49,10 @@ export class HistoryModal extends Modal {
 }
 
 export class ConflictsModal extends Modal {
-  constructor(private readonly host: MeridianUiHost) {
+  constructor(
+    private readonly host: MeridianUiHost,
+    private readonly onConflictsChanged?: () => void,
+  ) {
     super(host.app)
   }
 
@@ -77,6 +80,7 @@ export class ConflictsModal extends Modal {
         .addButton((button) =>
           button.setButtonText("Mark resolved").onClick(async () => {
             await this.host.resolveConflict(conflict.id)
+            this.onConflictsChanged?.()
             await this.render()
           }),
         )

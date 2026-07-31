@@ -2,7 +2,7 @@ import { ItemView, Notice, type WorkspaceLeaf } from "obsidian"
 import type { SyncPhase, SyncProgress } from "../model"
 import { connectionControlState, statusPresentation } from "../plugin/connection-control"
 import { DevicesModal } from "./devices-pairing"
-import { formatTime } from "./format-time"
+import { formatRelativeTime, formatTime } from "./format-time"
 import { ConflictsModal, HistoryModal } from "./history-conflicts"
 import type { MeridianUiHost } from "./host"
 import { presentSyncProgressSlot } from "./sync-progress"
@@ -28,10 +28,15 @@ interface StatusElements {
   setup: HTMLDivElement
   syncButton: HTMLButtonElement
   connectionButton: HTMLButtonElement
+  conflictsButton: HTMLButtonElement
+  conflictBadge: HTMLSpanElement
 }
 
 export class MeridianStatusView extends ItemView {
   private elements: StatusElements | null = null
+  private relativeTimeInterval: number | null = null
+  private conflictRefresh: Promise<void> | null = null
+  private lastPhase: SyncPhase | null = null
 
   constructor(
     leaf: WorkspaceLeaf,
@@ -53,8 +58,17 @@ export class MeridianStatusView extends ItemView {
   }
 
   override async onOpen(): Promise<void> {
+    if (this.relativeTimeInterval !== null) window.clearInterval(this.relativeTimeInterval)
     this.elements = this.build()
     this.render()
+    this.relativeTimeInterval = window.setInterval(() => this.updateLastSync(), 30_000)
+  }
+
+  override async onClose(): Promise<void> {
+    if (this.relativeTimeInterval !== null) window.clearInterval(this.relativeTimeInterval)
+    this.relativeTimeInterval = null
+    this.elements = null
+    this.lastPhase = null
   }
 
   render(): void {
@@ -69,7 +83,7 @@ export class MeridianStatusView extends ItemView {
     elements.summary.setText(presentation.summary)
     updateProgress(elements.progress, status.progress, status.phase)
     elements.liveUpdates.setText(presentation.liveUpdates)
-    elements.lastSync.setText(status.lastSyncedAt ? formatTime(status.lastSyncedAt) : "Never")
+    this.updateLastSync()
 
     elements.error.hidden = status.error === null
     elements.error.setText(status.error ?? "")
@@ -78,12 +92,24 @@ export class MeridianStatusView extends ItemView {
     const busy = ["scanning", "pulling", "pushing", "pausing"].includes(status.phase)
     elements.syncButton.setText(presentation.syncLabel)
     elements.syncButton.disabled = !connection.canSync || busy
-    elements.syncButton.toggleClass("mod-cta", connection.canSync && !busy)
+    elements.syncButton.toggleClass(
+      "mod-cta",
+      presentation.syncLabel === "Retry" && connection.canSync && !busy,
+    )
 
     elements.connectionButton.hidden = connection.kind === "unconfigured"
-    elements.connectionButton.setText(connection.label)
+    elements.connectionButton.setText(
+      connection.action === "pause" ? "Pause automatic sync" : connection.label,
+    )
     elements.connectionButton.disabled = connection.disabled
     elements.connectionButton.toggleClass("mod-cta", connection.action === "resume")
+    elements.connectionButton.toggleClass("meridian-connection-link", connection.action === "pause")
+
+    const phaseChanged = this.lastPhase !== status.phase
+    this.lastPhase = status.phase
+    if (phaseChanged && ["idle", "offline", "error"].includes(status.phase)) {
+      void this.refreshConflictCount()
+    }
   }
 
   private build(): StatusElements {
@@ -99,8 +125,9 @@ export class MeridianStatusView extends ItemView {
     const progress = createProgress(container)
 
     const meta = container.createDiv({ cls: "meridian-status-meta" })
-    const liveUpdates = metaItem(meta, "Live updates")
-    const lastSync = metaItem(meta, "Last sync")
+    const liveUpdates = meta.createEl("strong")
+    meta.createSpan({ cls: "meridian-status-meta-separator", text: "·" })
+    const lastSync = meta.createSpan()
 
     const error = container.createDiv({ cls: "meridian-callout is-error" })
     error.hidden = true
@@ -111,20 +138,31 @@ export class MeridianStatusView extends ItemView {
     setup.hidden = true
 
     const actions = container.createDiv({ cls: "meridian-actions" })
-    const syncButton = actions.createEl("button", { cls: "meridian-action-wide" })
+    const actionGrid = actions.createDiv({ cls: "meridian-action-grid" })
+    const syncButton = actionGrid.createEl("button")
     syncButton.addEventListener("click", () => void this.runSync(syncButton))
 
-    const connectionButton = actions.createEl("button", { cls: "meridian-action-wide" })
-    connectionButton.addEventListener("click", () => void this.runConnectionAction())
-
-    const historyButton = actions.createEl("button", { text: "History" })
+    const historyButton = actionGrid.createEl("button", { text: "History" })
     historyButton.addEventListener("click", () => new HistoryModal(this.host).open())
-    const conflictsButton = actions.createEl("button", { text: "Conflicts" })
-    conflictsButton.addEventListener("click", () => new ConflictsModal(this.host).open())
-    const devicesButton = actions.createEl("button", { text: "Devices" })
+
+    const conflictsButton = actionGrid.createEl("button")
+    conflictsButton.createSpan({ text: "Conflicts" })
+    const conflictBadge = conflictsButton.createSpan({ cls: "meridian-conflict-badge" })
+    conflictBadge.hidden = true
+    conflictsButton.addEventListener("click", () => {
+      new ConflictsModal(this.host, () => void this.refreshConflictCount()).open()
+    })
+
+    const devicesButton = actionGrid.createEl("button", { text: "Devices" })
     devicesButton.addEventListener("click", () => new DevicesModal(this.host).open())
-    const settingsButton = actions.createEl("button", { text: "Settings" })
+    const settingsButton = actionGrid.createEl("button", {
+      cls: "meridian-action-wide",
+      text: "Settings",
+    })
     settingsButton.addEventListener("click", () => this.host.openSettings())
+
+    const connectionButton = actions.createEl("button", { cls: "meridian-connection-control" })
+    connectionButton.addEventListener("click", () => void this.runConnectionAction())
 
     return {
       dot,
@@ -137,7 +175,38 @@ export class MeridianStatusView extends ItemView {
       setup,
       syncButton,
       connectionButton,
+      conflictsButton,
+      conflictBadge,
     }
+  }
+
+  private updateLastSync(): void {
+    if (!this.elements) return
+    const lastSyncedAt = this.host.getStatus().lastSyncedAt
+    this.elements.lastSync.setText(
+      lastSyncedAt ? `Synced ${formatRelativeTime(lastSyncedAt)}` : "Never synced",
+    )
+    this.elements.lastSync.title = lastSyncedAt ? `Last synced ${formatTime(lastSyncedAt)}` : ""
+  }
+
+  private async refreshConflictCount(): Promise<void> {
+    if (this.conflictRefresh) return this.conflictRefresh
+    this.conflictRefresh = this.host
+      .getConflicts()
+      .then((conflicts) => {
+        if (!this.elements) return
+        const count = conflicts.length
+        this.elements.conflictBadge.hidden = count === 0
+        this.elements.conflictBadge.setText(count > 99 ? "99+" : String(count))
+        const label = count === 0 ? "Conflicts" : `Conflicts, ${count} unresolved`
+        this.elements.conflictsButton.setAttribute("aria-label", label)
+        this.elements.conflictsButton.title = count === 0 ? "" : `${count} unresolved conflicts`
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        this.conflictRefresh = null
+      })
+    return this.conflictRefresh
   }
 
   private async runSync(button: HTMLButtonElement): Promise<void> {
@@ -168,6 +237,9 @@ export class MeridianStatusView extends ItemView {
 
 function createProgress(container: HTMLElement): ProgressElements {
   const panel = container.createDiv({ cls: "meridian-progress" })
+  panel.setAttribute("role", "status")
+  panel.setAttribute("aria-live", "polite")
+  panel.setAttribute("aria-atomic", "true")
   const header = panel.createDiv({ cls: "meridian-progress-header" })
   const label = header.createEl("strong")
   const percent = header.createSpan({ cls: "meridian-progress-percent" })
@@ -195,10 +267,4 @@ function updateProgress(
   if (presentation.indeterminate) elements.bar.removeAttribute("value")
   else elements.bar.value = presentation.value
   elements.bar.setAttribute("aria-label", presentation.label)
-}
-
-function metaItem(container: HTMLElement, label: string): HTMLElement {
-  const element = container.createDiv({ cls: "meridian-status-meta-item" })
-  element.createSpan({ cls: "meridian-status-meta-label", text: label })
-  return element.createEl("strong")
 }

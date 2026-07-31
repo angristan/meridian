@@ -110,13 +110,15 @@ describe("Meridian connection controls", () => {
         connection,
       ),
     ).toEqual({
-      summary: "Network unavailable",
+      summary: "",
       liveUpdates: "Polling",
       syncLabel: "Retry",
     })
     expect(
-      statusPresentation({ ...INITIAL_STATUS, phase: "idle", socketConnected: true }, connection)
-        .liveUpdates,
-    ).toBe("Connected")
+      statusPresentation({ ...INITIAL_STATUS, phase: "idle", socketConnected: true }, connection),
+    ).toMatchObject({ summary: "", liveUpdates: "Connected" })
+    expect(statusPresentation({ ...INITIAL_STATUS, queued: 2 }, connection).summary).toBe(
+      "2 changes queued locally",
+    )
   })
 })

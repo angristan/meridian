@@ -125,9 +125,9 @@ export function statusPresentation(
     case "active":
       return {
         summary:
-          status.phase === "offline"
-            ? `${status.queued} changes queued locally`
-            : (status.error ?? `${status.queued} queued · cursor ${status.cursor}`),
+          status.queued > 0
+            ? `${status.queued} change${status.queued === 1 ? "" : "s"} queued locally`
+            : "",
         liveUpdates: status.socketConnected ? "Connected" : "Polling",
         syncLabel,
       }
