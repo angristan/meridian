@@ -1,3 +1,32 @@
+# [1.7.0](https://github.com/angristan/meridian/compare/1.6.6...1.7.0) (2026-07-31)
+
+
+### Bug Fixes
+
+* disable storage usage before setup ([081c7e3](https://github.com/angristan/meridian/commit/081c7e3cf00b46b765b56246f0d357d9beac4e56))
+* expose sync actions accessibly ([94546e0](https://github.com/angristan/meridian/commit/94546e04b56fc1e95dd70ed18d954f6e5a3bffc7))
+* inspect large history without blob limits ([068ef95](https://github.com/angristan/meridian/commit/068ef95b46f43c4bd3c860a2b9fbfd7cda3ba388))
+* preserve path ownership during history restore ([86a6934](https://github.com/angristan/meridian/commit/86a69342aeed0c02318324bd3559d116e4c4af74))
+* restore pause button affordance ([3161b3e](https://github.com/angristan/meridian/commit/3161b3eef221a6db41dcf920f945c36663f910c9))
+* retain checkpoint signer authorization ([285bcbe](https://github.com/angristan/meridian/commit/285bcbe052af1481341bbca971e1fd65793ab2bb))
+* verify remote operation log chains ([b8fc1b1](https://github.com/angristan/meridian/commit/b8fc1b1b7b1887a23b673f99b9fabb70d8d8377a))
+
+
+### Features
+
+* add native sync status menu ([1176672](https://github.com/angristan/meridian/commit/11766721c751e4895504dcd56bf519ab50678f14))
+* add privacy-safe sync diagnostics ([5ed6e44](https://github.com/angristan/meridian/commit/5ed6e44617986b47f277cf0294392fdbce52bc3f))
+* add searchable Obsidian settings ([726a1f1](https://github.com/angristan/meridian/commit/726a1f1888ba61c4192894728a684b10ee2555f8))
+* add tombstone-safe selective sync ([d018b77](https://github.com/angristan/meridian/commit/d018b7785bc368846812ca72a533b09f641df41e))
+* backfill complete authorized history ([2c20db8](https://github.com/angristan/meridian/commit/2c20db87c9422e5096b100b170718b2479cc94bd))
+* guide safe conflict resolution ([76cd374](https://github.com/angristan/meridian/commit/76cd374651bb6825061453d33bdcf2796341d09a))
+* preview and compare revision history ([843f486](https://github.com/angristan/meridian/commit/843f4868028183abd542d7969a490cc418941522))
+* recover synchronized deleted files ([1e84d28](https://github.com/angristan/meridian/commit/1e84d28262f00fe785d97771198f3777c1e34891))
+* retain revision activity metadata ([d545455](https://github.com/angristan/meridian/commit/d5454554ea973256a710d448a9a73a4234c34ddf))
+* safely prune unreferenced uploads ([a3c9e30](https://github.com/angristan/meridian/commit/a3c9e30a43369bf35270fe07d36dd3dc6f8da11c))
+* show safe storage retention status ([97f812b](https://github.com/angristan/meridian/commit/97f812bf28839b8e7f1aca225574cbb8c3c9a3ea))
+* show synchronized activity ([0a4c061](https://github.com/angristan/meridian/commit/0a4c061e442d65653488fa06303d7fa44699e5e9))
+
 ## [1.6.6](https://github.com/angristan/meridian/compare/1.6.5...1.6.6) (2026-07-31)
 
 
