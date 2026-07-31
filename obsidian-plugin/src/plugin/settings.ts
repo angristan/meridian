@@ -1,6 +1,13 @@
-import { type App, Platform, type Plugin, PluginSettingTab } from "obsidian"
+import {
+  type App,
+  Platform,
+  type Plugin,
+  PluginSettingTab,
+  type SettingDefinitionItem,
+} from "obsidian"
 import type { MeridianUiHost } from "../ui/views"
-import { renderSettings } from "../ui/views"
+import { getMeridianSettingDefinitions, renderSettings } from "../ui/views"
+import { getMeridianControlValue, setMeridianControlValue } from "./settings-controls"
 
 export { normalizeSettings, withoutMeridianIdentity } from "./settings-state"
 
@@ -28,6 +35,18 @@ export class MeridianSettingsTab extends PluginSettingTab {
     private readonly host: Plugin & MeridianUiHost,
   ) {
     super(app, host)
+  }
+
+  override getSettingDefinitions(): SettingDefinitionItem[] {
+    return getMeridianSettingDefinitions(this.host, () => this.update())
+  }
+
+  override getControlValue(key: string): unknown {
+    return getMeridianControlValue(this.host, key)
+  }
+
+  override setControlValue(key: string, value: unknown): Promise<void> {
+    return setMeridianControlValue(this.host, key, value)
   }
 
   override display(): void {

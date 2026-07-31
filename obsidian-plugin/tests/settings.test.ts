@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { DEFAULT_SETTINGS } from "../src/model"
+import { getMeridianControlValue, setMeridianControlValue } from "../src/plugin/settings-controls"
 import { normalizeSettings, withoutMeridianIdentity } from "../src/plugin/settings-state"
 
 describe("Meridian settings lifecycle", () => {
@@ -52,6 +53,31 @@ describe("Meridian settings lifecycle", () => {
       excludedFolders: [],
       excludedExtensions: [],
     })
+  })
+
+  it("binds declarative settings to normalized storage and safe rescans", async () => {
+    let saves = 0
+    let syncs = 0
+    const host = {
+      settings: structuredClone(DEFAULT_SETTINGS),
+      async saveSettings() {
+        saves += 1
+      },
+      async syncNow() {
+        syncs += 1
+      },
+    }
+
+    await setMeridianControlValue(host, "excludedFolders", "Archive\\private\n../unsafe")
+    await setMeridianControlValue(host, "excludedExtensions", ".MOV, tar.gz, bad/path")
+    expect(getMeridianControlValue(host, "excludedFolders")).toBe("Archive/private")
+    expect(getMeridianControlValue(host, "excludedExtensions")).toBe("mov, tar.gz")
+    expect(syncs).toBe(0)
+
+    await setMeridianControlValue(host, "config.themes", false)
+    expect(host.settings.configCategories.themes).toBe(false)
+    expect(syncs).toBe(1)
+    expect(saves).toBe(3)
   })
 
   it("forgets identity while preserving local preferences", () => {

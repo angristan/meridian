@@ -1,5 +1,12 @@
-import { Modal, Notice, Setting } from "obsidian"
+import {
+  Modal,
+  Notice,
+  Setting,
+  type SettingDefinition,
+  type SettingDefinitionItem,
+} from "obsidian"
 import { connectionControlState } from "../plugin/connection-control"
+import type { MeridianSettingKey } from "../plugin/settings-controls"
 import { normalizeExcludedExtension, normalizeExcludedFolder } from "../vault/path-policy"
 import { ConnectionModal, RecoveryConnectModal } from "./connection-modals"
 import type { MeridianUiHost } from "./host"
@@ -275,6 +282,273 @@ export function renderSettings(container: HTMLElement, host: MeridianUiHost): vo
           new Notice("Meridian local index rebuilt")
         }),
     )
+}
+
+export function getMeridianSettingDefinitions(
+  host: MeridianUiHost,
+  refresh: () => void,
+): SettingDefinitionItem<MeridianSettingKey>[] {
+  const connection = connectionControlState(host.settings, host.getStatus().phase)
+  const configured = connection.kind !== "unconfigured"
+  return [
+    {
+      type: "group",
+      heading: "Connection and device",
+      items: [
+        {
+          name: "Connection",
+          desc: configured ? host.settings.endpoint : "Not connected",
+          aliases: ["connect", "pause", "resume", "endpoint"],
+          render: (setting) => configureConnection(setting, host, refresh),
+        },
+        {
+          name: "Device name",
+          desc: "A local label shown when managing authorized devices.",
+          aliases: ["computer", "phone", "identity"],
+          control: { type: "text", key: "deviceName" },
+        },
+        {
+          name: "Finish pairing",
+          desc: "Retry a safely stored pairing completion without creating another identity.",
+          visible: () => host.settings.pendingPairingCompletion !== null,
+          render: (setting) => configurePairingRetry(setting, host, refresh),
+        },
+        {
+          name: "Remove this device",
+          desc: "Revoke this device and forget its local Meridian connection. Vault files are kept.",
+          aliases: ["revoke", "disconnect", "forget identity"],
+          visible: () => configured && host.settings.pendingPairingCompletion === null,
+          render: (setting) => configureDeviceRemoval(setting, host, refresh),
+        },
+      ],
+    },
+    {
+      type: "group",
+      heading: "Selective sync",
+      items: [
+        {
+          name: "Excluded folders",
+          desc: "Device-local vault folders that Meridian leaves untouched. One folder per line.",
+          aliases: ["ignore folders", "select folders", "files"],
+          control: {
+            type: "textarea",
+            key: "excludedFolders",
+            rows: 3,
+            placeholder: "Archive\nAttachments/private",
+          },
+        },
+        {
+          name: "Excluded file extensions",
+          desc: "Device-local file types that Meridian leaves untouched, separated by commas.",
+          aliases: ["ignore file types", "attachments", "extensions"],
+          control: {
+            type: "text",
+            key: "excludedExtensions",
+            placeholder: "mov, zip",
+          },
+        },
+        {
+          name: "Apply selective sync",
+          desc: "Scan now. Changing exclusions never creates remote deletion records.",
+          aliases: ["scan exclusions"],
+          action: () => void runSettingAction(host.syncNow(), "Selective sync settings applied"),
+        },
+      ],
+    },
+    {
+      type: "group",
+      heading: "Configuration sync",
+      items: [
+        configToggle("Main settings", "config.main", ["app settings"]),
+        configToggle("Appearance", "config.appearance", ["theme settings"]),
+        configToggle("Themes and CSS snippets", "config.themes", ["snippets"]),
+        configToggle("Hotkeys", "config.hotkeys", ["keyboard shortcuts"]),
+        configToggle("Active core plugin list", "config.core-plugins", ["core plugins"]),
+        configToggle("Core plugin settings", "config.core-plugin-settings", ["plugin options"]),
+      ],
+    },
+    {
+      type: "group",
+      heading: "Network and mobile",
+      items: [
+        {
+          name: "Polling interval",
+          desc: "Fallback interval in seconds when live notifications are unavailable.",
+          aliases: ["network refresh"],
+          control: {
+            type: "slider",
+            key: "pollIntervalSeconds",
+            min: 15,
+            max: 300,
+            step: 15,
+            displayFormat: (value) => `${value} s`,
+          },
+        },
+        {
+          name: "Full scan interval",
+          desc: "Periodic reconciliation recovers events missed while a mobile device was suspended.",
+          aliases: ["iOS background scan"],
+          control: {
+            type: "slider",
+            key: "scanIntervalMinutes",
+            min: 1,
+            max: 30,
+            step: 1,
+            displayFormat: (value) => `${value} min`,
+          },
+        },
+        {
+          name: "Attachment size limit",
+          desc: "Conservative per-file memory limit for whole-file mobile APIs.",
+          aliases: ["maximum file size", "MiB"],
+          control: {
+            type: "dropdown",
+            key: "maxFileSizeMiB",
+            options: { "16": "16 MiB", "32": "32 MiB", "64": "64 MiB", "128": "128 MiB" },
+          },
+        },
+      ],
+    },
+    {
+      type: "group",
+      heading: "Recovery and repair",
+      items: [
+        {
+          name: "Recover vault ownership",
+          desc: "Use the offline recovery code after losing every authorized device.",
+          aliases: ["recovery code", "lost devices"],
+          action: () => new RecoveryConnectModal(host).open(),
+        },
+        {
+          name: "Rebuild local index",
+          desc: "Delete only rebuildable local scan state. Remote history and vault data remain intact.",
+          aliases: ["repair", "rescan"],
+          action: () =>
+            void runSettingAction(host.repairLocalIndex(), "Meridian local index rebuilt"),
+        },
+      ],
+    },
+  ]
+}
+
+function configToggle(
+  name: string,
+  key: MeridianSettingKey,
+  aliases: string[],
+): SettingDefinition<MeridianSettingKey> {
+  return {
+    name,
+    desc: "Local to this device. Secrets, workspace state, caches, and temporary files stay excluded.",
+    aliases,
+    control: { type: "toggle", key },
+  }
+}
+
+function configureConnection(setting: Setting, host: MeridianUiHost, refresh: () => void): void {
+  const connection = connectionControlState(host.settings, host.getStatus().phase)
+  setting.addButton((button) =>
+    button
+      .setButtonText(connection.label)
+      .setDisabled(connection.disabled)
+      .onClick(async () => {
+        const action = connection.action
+        if (action === "connect") {
+          new ConnectionModal(host).open()
+          return
+        }
+        if (action === null) return
+        button.setDisabled(true)
+        try {
+          if (action === "pause") await host.disconnect()
+          else await host.resumeConnection()
+          refresh()
+          new Notice(action === "pause" ? "Meridian sync paused" : "Meridian sync resumed")
+        } catch (error) {
+          new Notice(error instanceof Error ? error.message : "Unable to change sync state")
+          button.setDisabled(false)
+        }
+      }),
+  )
+}
+
+function configurePairingRetry(setting: Setting, host: MeridianUiHost, refresh: () => void): void {
+  setting.addButton((button) =>
+    button
+      .setButtonText("Retry pairing")
+      .setCta()
+      .onClick(async () => {
+        button.setDisabled(true)
+        try {
+          await host.completePendingPairing()
+          refresh()
+          new Notice("Device pairing completed")
+        } catch (error) {
+          new Notice(error instanceof Error ? error.message : "Unable to finish pairing")
+          button.setDisabled(false)
+        }
+      }),
+  )
+}
+
+function configureDeviceRemoval(
+  setting: Setting,
+  host: MeridianUiHost,
+  refresh: () => void,
+): () => void {
+  let active = true
+  const addRemovalButton = (label: string) => {
+    if (!active || setting.controlEl.childElementCount > 0) return
+    setting.addButton((button) =>
+      button
+        .setButtonText(label)
+        .setWarning()
+        .onClick(() => new RemoveCurrentDeviceModal(host, refresh).open()),
+    )
+  }
+  if (host.settings.pendingDeviceRemoval) {
+    setting.setDesc("A previous removal is pending. Retry server revocation and local cleanup.")
+    addRemovalButton("Retry removal")
+    return () => {
+      active = false
+    }
+  }
+  setting.setDesc("Checking whether this device can remove its Meridian identity…")
+  void host
+    .getDevices()
+    .then((devices) => {
+      if (!active) return
+      const current = devices.find((device) => device.deviceId === host.settings.deviceId)
+      if (!current || current.revokedAt !== null) {
+        setting.setDesc(
+          "This identity may already be revoked. Remove the local connection to pair again.",
+        )
+        addRemovalButton("Remove")
+      } else if (current.role === "owner") {
+        setting.setDesc("The owner device cannot remove itself. Use recovery after owner loss.")
+      } else {
+        setting.setDesc("Permanently revoke this device. Local vault files are kept.")
+        addRemovalButton("Remove")
+      }
+    })
+    .catch(() => {
+      if (!active) return
+      setting.setDesc(
+        "Unable to verify this identity. Removal proceeds only after server confirmation.",
+      )
+      addRemovalButton("Remove")
+    })
+  return () => {
+    active = false
+  }
+}
+
+async function runSettingAction(action: Promise<void>, success: string): Promise<void> {
+  try {
+    await action
+    new Notice(success)
+  } catch (error) {
+    new Notice(error instanceof Error ? error.message : "Unable to update Meridian settings")
+  }
 }
 
 function normalizeList(values: string[], normalize: (value: string) => string | null): string[] {
