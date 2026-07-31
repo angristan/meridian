@@ -1281,7 +1281,7 @@ describe("SyncController", () => {
       expect.objectContaining({
         action: "restore",
         fileId: identity,
-        parentRevisionIds: ["revision-current", "revision-old"],
+        parentRevisionIds: ["revision-current"],
         restoreSourceRevisionId: "revision-old",
       }),
     ])
@@ -1291,7 +1291,7 @@ describe("SyncController", () => {
     expect(remote.operations.at(-1)?.envelope).toMatchObject({
       action: "restore",
       fileId: identity,
-      parents: ["revision-current", "revision-old"],
+      parents: ["revision-current"],
     })
     controller.stop()
   })

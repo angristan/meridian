@@ -24,8 +24,12 @@ export class HistoryService {
     private readonly revisions: RevisionLoader,
   ) {}
 
-  history(path?: string): Promise<LocalRevision[]> {
-    return this.journal.listRevisions(path)
+  async history(path?: string): Promise<LocalRevision[]> {
+    if (path === undefined) return this.journal.listRevisions()
+    const snapshots = await this.journal.getSnapshots()
+    const fileId =
+      snapshots.get(path)?.fileId ?? (await this.journal.listRevisions(path))[0]?.fileId
+    return fileId ? this.journal.listFileRevisions(fileId) : []
   }
 
   async activity(localDeviceId: string, limit = 200): Promise<SyncActivity[]> {
@@ -52,7 +56,11 @@ export class HistoryService {
     if (occupant && occupant.fileId !== source.fileId) {
       throw new Error(`Restore path ${path} belongs to another tracked file`)
     }
-    const parents = uniqueIds([...heads.map((revision) => revision.revisionId), source.revisionId])
+    if (!occupant && (await this.vault.exists(path))) {
+      throw new Error(`Restore path ${path} is occupied by an untracked file`)
+    }
+    const currentBytes = await this.readOptional(path)
+    const parents = uniqueIds(heads.map((revision) => revision.revisionId))
     const entry: JournalEntry = {
       id: randomId(),
       action: "restore",
@@ -70,7 +78,13 @@ export class HistoryService {
       error: null,
       preparedRevision: null,
     }
-    await this.vault.write(path, decrypted.bytes)
+    const replaced = await this.vault.replaceIfUnchanged(
+      path,
+      currentBytes,
+      decrypted.bytes,
+      decrypted.isText,
+    )
+    if (!replaced) throw new Error(`Restore path ${path} changed while preparing the restore`)
     await this.journal.putEntry(entry)
     await this.journal.putSnapshot(
       await snapshotFor(path, source.fileId, decrypted.bytes, this.vault.configDir),
@@ -79,6 +93,10 @@ export class HistoryService {
       message: "Restored revision queued for sync",
       queued: (await this.journal.listPending()).length,
     }
+  }
+
+  private async readOptional(path: string): Promise<ArrayBuffer | null> {
+    return (await this.vault.exists(path)) ? this.vault.read(path) : null
   }
 }
 
