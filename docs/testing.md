@@ -57,6 +57,18 @@ Until the repository and a release are public, the build produces `obsidian-plug
 - Leave a device offline across many operations.
 - Disable WebSockets and verify polling catches up from the persisted cursor.
 
+### Responsiveness and index recovery
+
+- Populate 10,000 small files, edit one file, and verify routine sync scans only that path.
+- Change a file while Meridian is stopped or Obsidian is suspended; verify resume performs a complete scan and catches it.
+- Rename a file and verify the paired old/new dirty paths preserve one stable file identity.
+- Edit a path again while reconciliation is committing; verify the newer dirty token remains queued.
+- Apply a remote revision and verify its resulting Obsidian event does not echo a duplicate revision.
+- Pause during a large scan; the Worker must terminate, no partial reconciliation may commit, and dirty paths must remain.
+- Test an 8 MiB chunk, a 10,000-file index, and a 500-operation pull batch with the Worker enabled and with Blob Workers unavailable.
+
+Automated responsiveness tests use generous wall-clock ceilings to detect pathological regressions and assert that cooperative fallbacks and batch pulls yield to timer heartbeats. They are not hardware performance claims.
+
 ### Security lifecycle
 
 - Pair a second device and verify the automatically displayed phrase on both screens.

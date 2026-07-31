@@ -1,5 +1,6 @@
 import type { DeviceKeyMaterial, PullSyncProgress, RemoteOperation, RemotePort } from "../model"
 import { toBase64Url } from "../platform/bytes"
+import { yieldToEventLoop } from "../platform/scheduling"
 import type { JournalPort } from "../storage/journal"
 import type { OperationApplier } from "./operation-applier"
 
@@ -31,6 +32,7 @@ export class PullEngine {
     let previousHash = startingCheckpoint?.logHash ?? toBase64Url(new Uint8Array(32))
     let cursor = startCursor
     let targetCursor = startCursor
+    let processedSinceYield = 0
     const trustedFloor = device.trustedCheckpoint
     while (true) {
       if (shouldStop()) return { stopped: true }
@@ -66,6 +68,11 @@ export class PullEngine {
         previousHash = operation.logHash
         await this.journal.setCheckpoint({ cursor, logHash: operation.logHash })
         onProgress(pullProgress(startCursor, cursor, targetCursor))
+        processedSinceYield += 1
+        if (processedSinceYield >= 25) {
+          processedSinceYield = 0
+          await yieldToEventLoop()
+        }
       }
       if (cursor >= targetCursor) return { stopped: false }
       if (changes.operations.length === 0) {

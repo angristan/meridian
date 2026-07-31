@@ -60,6 +60,21 @@ SyncController
 
 Compatibility barrels preserve stable imports while implementations remain replaceable and independently testable.
 
+### Responsive local indexing
+
+Obsidian create, modify, delete, and rename events are coalesced by normalized path in the IndexedDB `dirty-paths` store before synchronization starts. Routine file-event and notification syncs scan only those paths. Journal entries, file snapshots, and consumed event tokens commit in one IndexedDB transaction; an event replaced during reconciliation therefore remains queued for the next pass.
+
+Startup, resume, manual sync, settings changes, repair, and the periodic interval retain a complete vault scan. These scans recover events missed during suspension, crashes, direct filesystem changes, and plugin downtime. Local exclusions remain device-local during both scan modes.
+
+```text
+Obsidian events -> durable dirty paths -> targeted scan ----┐
+       periodic/startup complete scan ----------------------┤
+                                                            v
+editor: Vault API reads/writes + final CAS      background: hash + index plan
+```
+
+The browser Worker receives file buffers as transferables and performs SHA-256 fingerprinting and pure index planning away from the renderer. It never calls Obsidian APIs. Platforms that reject Blob Workers use the same planner cooperatively with bounded event-loop yields. Pause and unload terminate pending Worker work; token-safe dirty records remain recoverable.
+
 ## Invariants
 
 - Durable Object SQLite is the only ordered metadata authority.
