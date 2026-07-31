@@ -1,6 +1,8 @@
 import type { App } from "obsidian"
 import type {
+  ConflictDetails,
   ConflictRecord,
+  ConflictResolutionAction,
   DeletedFileRecord,
   LocalRevision,
   MeridianSettings,
@@ -36,7 +38,8 @@ export interface MeridianUiHost {
   compareRevisionToCurrent(revisionId: string): Promise<RevisionComparison>
   restoreRevision(revisionId: string): Promise<void>
   getConflicts(): Promise<ConflictRecord[]>
-  resolveConflict(id: string): Promise<void>
+  getConflictDetails(id: string): Promise<ConflictDetails>
+  resolveConflict(id: string, action: ConflictResolutionAction): Promise<void>
   openPath(path: string): Promise<void>
   getDevices(): Promise<RemoteDevice[]>
   revokeDevice(device: RemoteDevice): Promise<void>

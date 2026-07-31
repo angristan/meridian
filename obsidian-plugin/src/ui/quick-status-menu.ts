@@ -1,9 +1,10 @@
 import { Menu, Notice } from "obsidian"
 import { ActivityModal } from "./activity-modal"
+import { ConflictsModal } from "./conflicts-modal"
 import { DeletedFilesModal } from "./deleted-files-modal"
 import { DevicesModal } from "./devices-pairing"
 import { DiagnosticsModal } from "./diagnostics-modal"
-import { ConflictsModal, HistoryModal } from "./history-conflicts"
+import { HistoryModal } from "./history-conflicts"
 import type { MeridianUiHost } from "./host"
 import {
   presentQuickStatus,

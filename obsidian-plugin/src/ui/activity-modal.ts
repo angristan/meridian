@@ -5,6 +5,8 @@ import {
   type PresentedActivity,
   presentActivities,
 } from "./activity-presentation"
+import { ConflictsModal } from "./conflicts-modal"
+import { DeletedFilesModal } from "./deleted-files-modal"
 import { HistoryModal } from "./history-conflicts"
 import type { MeridianUiHost } from "./host"
 
@@ -118,6 +120,14 @@ export class ActivityModal extends Modal {
         text: "Open",
       })
       open.addEventListener("click", () => void this.host.openPath(presentation.entry.path))
+    }
+    if (presentation.entry.kind === "deleted") {
+      const recover = actions.createEl("button", { text: "Recover" })
+      recover.addEventListener("click", () => new DeletedFilesModal(this.host).open())
+    }
+    if (presentation.entry.kind === "conflict") {
+      const resolve = actions.createEl("button", { text: "Resolve" })
+      resolve.addEventListener("click", () => new ConflictsModal(this.host).open())
     }
     const history = actions.createEl("button", {
       attr: { "aria-label": `View history for ${presentation.entry.path}` },

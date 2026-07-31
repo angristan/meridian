@@ -1,3 +1,4 @@
+export { ConflictsModal } from "./conflicts-modal"
 export {
   ConnectionModal,
   RecoveryConnectModal,

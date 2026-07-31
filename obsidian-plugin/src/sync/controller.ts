@@ -15,6 +15,7 @@ import type {
 } from "../model"
 import { INITIAL_STATUS } from "../model"
 import type { JournalPort } from "../storage/journal"
+import { ConflictService } from "./conflict-service"
 import { HistoryService } from "./history-service"
 import { OperationApplier } from "./operation-applier"
 import { PullEngine } from "./pull-engine"
@@ -30,10 +31,12 @@ export interface SyncControllerOptions {
 export class SyncController {
   private readonly reconciler: Reconciler
   private readonly historyService: HistoryService
+  private readonly conflictService: ConflictService
   private readonly pullEngine: PullEngine
   private readonly pushEngine: PushEngine
   private device: DeviceKeyMaterial | null = null
   private running: Promise<void> | null = null
+  private maintenance: Promise<void> | null = null
   private rerunReason: SyncReason | null = null
   private authenticated = false
   private stopNotifications: (() => void) | null = null
@@ -62,6 +65,7 @@ export class SyncController {
     const applier = new OperationApplier(vault, journal, remote, crypto, revisionLoader, categories)
     this.reconciler = new Reconciler(vault, journal)
     this.historyService = new HistoryService(vault, journal, revisionLoader)
+    this.conflictService = new ConflictService(vault, journal)
     this.pullEngine = new PullEngine(journal, remote, applier)
     this.pushEngine = new PushEngine(vault, journal, remote, crypto)
   }
@@ -98,13 +102,16 @@ export class SyncController {
       error: null,
     })
     await this.running
+    await this.maintenance
     this.finishStop()
   }
 
   stop(): void {
     this.requestStop()
-    const running = this.running
-    if (running) void running.finally(() => this.finishStop())
+    const work = [this.running, this.maintenance].filter(
+      (promise): promise is Promise<void> => promise !== null,
+    )
+    if (work.length > 0) void Promise.allSettled(work).then(() => this.finishStop())
     else this.finishStop()
   }
 
@@ -117,6 +124,9 @@ export class SyncController {
 
   sync(reason: SyncReason): Promise<void> {
     if (!this.device || this.stopRequested) return Promise.resolve()
+    if (this.maintenance) {
+      return this.maintenance.catch(() => undefined).then(() => this.sync(reason))
+    }
     if (this.running) {
       this.rerunReason = mergeSyncReasons(this.rerunReason, reason)
       return this.running
@@ -146,7 +156,9 @@ export class SyncController {
   async recoverDeleted(revisionId: string): Promise<void> {
     const device = this.requireDevice()
     await this.authenticate(device)
-    this.updateStatus(await this.historyService.recoverDeleted(device, revisionId))
+    await this.runMaintenance(async () => {
+      this.updateStatus(await this.historyService.recoverDeleted(device, revisionId))
+    })
   }
 
   async previewRevision(revisionId: string) {
@@ -164,15 +176,28 @@ export class SyncController {
   async restoreRevision(revisionId: string): Promise<void> {
     const device = this.requireDevice()
     await this.authenticate(device)
-    this.updateStatus(await this.historyService.restore(device, revisionId))
+    await this.runMaintenance(async () => {
+      this.updateStatus(await this.historyService.restore(device, revisionId))
+    })
   }
 
   conflicts() {
     return this.journal.listConflicts(true)
   }
 
-  async resolveConflict(id: string): Promise<void> {
-    await this.journal.resolveConflict(id)
+  conflictDetails(id: string) {
+    return this.conflictService.details(id)
+  }
+
+  async resolveConflict(
+    id: string,
+    action: Parameters<ConflictService["resolve"]>[1],
+  ): Promise<void> {
+    await this.runMaintenance(() => this.conflictService.resolve(id, action))
+    this.updateStatus({
+      message: "Conflict resolved",
+      queued: (await this.journal.listPending()).length,
+    })
   }
 
   async devices(): Promise<RemoteDevice[]> {
@@ -236,6 +261,18 @@ export class SyncController {
   async repairLocalIndex(): Promise<void> {
     await this.journal.clearSnapshots()
     await this.sync("manual")
+  }
+
+  private runMaintenance(operation: () => Promise<void>): Promise<void> {
+    if (this.stopRequested) return Promise.reject(new Error("Meridian sync is paused"))
+    const predecessor = this.maintenance ?? this.running ?? Promise.resolve()
+    const work = predecessor.then(operation)
+    let settled: Promise<void>
+    settled = work.finally(() => {
+      if (this.maintenance === settled) this.maintenance = null
+    })
+    this.maintenance = settled
+    return settled
   }
 
   private async runLoop(initialReason: SyncReason): Promise<void> {

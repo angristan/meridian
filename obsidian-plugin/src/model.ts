@@ -247,6 +247,23 @@ export interface ConflictRecord {
   resolvedAt: number | null
 }
 
+export type ConflictResolutionAction = "keep-current" | "use-incoming" | "keep-both"
+
+export interface ConflictFilePreview {
+  kind: "missing" | "text" | "binary"
+  byteLength: number
+  text: string | null
+  truncated: boolean
+}
+
+export interface ConflictDetails {
+  conflict: ConflictRecord
+  incomingDeleted: boolean
+  current: ConflictFilePreview
+  preserved: ConflictFilePreview
+  comparison: RevisionComparison
+}
+
 export interface TrustedCheckpoint {
   cursor: number
   logHash: string

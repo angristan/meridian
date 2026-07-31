@@ -293,46 +293,6 @@ class RestoreRevisionModal extends Modal {
   }
 }
 
-export class ConflictsModal extends Modal {
-  constructor(
-    private readonly host: MeridianUiHost,
-    private readonly onConflictsChanged?: () => void,
-  ) {
-    super(host.app)
-  }
-
-  override onOpen(): void {
-    this.setTitle("Sync conflicts")
-    void this.render()
-  }
-
-  private async render(): Promise<void> {
-    this.contentEl.empty()
-    const conflicts = await this.host.getConflicts()
-    if (conflicts.length === 0) {
-      this.contentEl.createDiv({ cls: "empty-state", text: "No unresolved conflicts." })
-      return
-    }
-    for (const conflict of conflicts) {
-      new Setting(this.contentEl)
-        .setName(conflict.sourcePath)
-        .setDesc(`Preserved as ${conflict.conflictPath}`)
-        .addButton((button) =>
-          button
-            .setButtonText("Open copy")
-            .onClick(() => this.host.openPath(conflict.conflictPath)),
-        )
-        .addButton((button) =>
-          button.setButtonText("Mark resolved").onClick(async () => {
-            await this.host.resolveConflict(conflict.id)
-            this.onConflictsChanged?.()
-            await this.render()
-          }),
-        )
-    }
-  }
-}
-
 function revisionLabel(revision: LocalRevision): string {
   return activityTitle(revisionKind(revision))
 }

@@ -1,7 +1,9 @@
 import { apiVersion, Notice, Platform, Plugin, TFile } from "obsidian"
 import { createPackageCryptoPort } from "./crypto/package-adapter"
 import {
+  type ConflictDetails,
   type ConflictRecord,
+  type ConflictResolutionAction,
   DEFAULT_SETTINGS,
   type DeletedFileRecord,
   INITIAL_STATUS,
@@ -383,8 +385,14 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
     return this.controller?.conflicts() ?? []
   }
 
-  async resolveConflict(id: string): Promise<void> {
-    await this.controller?.resolveConflict(id)
+  async getConflictDetails(id: string): Promise<ConflictDetails> {
+    if (!this.controller) throw new Error("Meridian is not connected")
+    return this.controller.conflictDetails(id)
+  }
+
+  async resolveConflict(id: string, action: ConflictResolutionAction): Promise<void> {
+    if (!this.controller) throw new Error("Meridian is not connected")
+    await this.controller.resolveConflict(id, action)
   }
 
   async getDevices(): Promise<RemoteDevice[]> {

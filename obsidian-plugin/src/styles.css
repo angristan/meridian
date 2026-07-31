@@ -235,6 +235,91 @@
   overflow-wrap: anywhere;
 }
 
+.meridian-conflicts-layout {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.35fr) minmax(0, 1fr);
+  min-height: 420px;
+  max-height: min(72vh, 760px);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  overflow: hidden;
+}
+
+.meridian-conflicts-list {
+  overflow-y: auto;
+  border-inline-end: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+}
+
+.meridian-conflict-detail {
+  min-width: 0;
+  padding: var(--size-4-3);
+  overflow-y: auto;
+}
+
+.meridian-conflict-header {
+  margin-bottom: var(--size-4-4);
+}
+
+.meridian-conflict-previews {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--size-4-3);
+}
+
+.meridian-conflict-preview {
+  min-width: 0;
+  padding: var(--size-4-3);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+}
+
+.meridian-conflict-preview-header {
+  display: flex;
+  gap: var(--size-4-2);
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--size-4-2);
+}
+
+.meridian-conflict-preview-content {
+  max-height: 220px;
+  margin: 0;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.meridian-conflict-comparison {
+  display: grid;
+  gap: var(--size-4-2);
+  margin-top: var(--size-4-4);
+}
+
+.meridian-conflict-choices {
+  display: grid;
+  gap: var(--size-4-2);
+  margin-top: var(--size-4-4);
+}
+
+.meridian-conflict-choice {
+  display: flex;
+  gap: var(--size-4-3);
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--size-4-3);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+}
+
+.meridian-conflict-choice > div {
+  min-width: 0;
+}
+
+.meridian-conflict-choice > button {
+  flex: 0 0 auto;
+}
+
 .meridian-history-layout {
   display: grid;
   grid-template-columns: minmax(180px, 0.4fr) minmax(0, 1fr);
@@ -494,6 +579,27 @@
 
 .is-mobile .meridian-status-view {
   --meridian-view-padding: var(--size-4-3);
+}
+
+.is-mobile .meridian-conflicts-layout,
+.is-mobile .meridian-conflict-previews {
+  grid-template-columns: 1fr;
+  max-height: none;
+}
+
+.is-mobile .meridian-conflicts-list {
+  max-height: 25vh;
+  border-inline-end: 0;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.is-mobile .meridian-conflict-choice {
+  align-items: stretch;
+  flex-direction: column;
+}
+
+.is-mobile .meridian-conflict-choice > button {
+  align-self: flex-start;
 }
 
 .is-mobile .meridian-deleted-item {
