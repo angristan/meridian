@@ -73,6 +73,20 @@ verify transition -> decrypt recipient key -> replace complete device secret
 
 A crash before secret replacement leaves the old cursor and replays the transition. A crash after secret replacement but before cursor advancement replays idempotently with the successor keyring. The cursor never passes a transition unless the successor secret is readable. Prepared revision plaintext is retained for successor-epoch re-encryption.
 
+### Coordinated retention and quotas
+
+Committed user history has infinite retention. Signed device acknowledgements report the exact durable cursor/hash and current epoch for every active device, but are telemetry only. They cannot authorize truncation without an authenticated generation-aware archive and rebootstrap path.
+
+```text
+upload request -> DO byte reservation -> immutable R2 PUT -> DO confirmation
+                                                     |
+file operation commit <--- requires every blob ------┘
+```
+
+The Durable Object reconciles an R2 blob catalog when storage is inspected or the owner changes a quota. New content reserves bytes atomically against the optional per-vault limit. A fixed emergency reserve remains available for revocation, epoch rotation, recovery, tombstones, and cleanup. The default limit is unlimited; exceeding an explicit limit rejects new content instead of deleting retained history.
+
+IndexedDB compaction deletes only completed upload entries and history rows that exactly duplicate retained revision rows. It works in independent transactions of at most 500 deletions. Pending/prepared operations, dirty event tokens, DAG ancestry, conflicts, checkpoints, revocations, and file history remain untouched. Revision stores have `fileId` indexes, and the legacy stable-ID migration records an atomic completion marker instead of rescanning every startup.
+
 ### Responsive local indexing
 
 Obsidian create, modify, delete, and rename events are coalesced by normalized path in the IndexedDB `dirty-paths` store before synchronization starts. Routine file-event and notification syncs scan only those paths. Journal entries, file snapshots, and consumed event tokens commit in one IndexedDB transaction; an event replaced during reconciliation therefore remains queued for the next pass.
@@ -93,6 +107,6 @@ The browser Worker receives file buffers as transferables and performs SHA-256 f
 - Durable Object SQLite is the only ordered metadata authority.
 - R2 stores immutable encrypted chunks only.
 - WebSockets provide hints; authenticated HTTP pull remains authoritative.
-- The plugin writes plaintext only through `VaultPort` and persists no plaintext in its journal.
+- The plugin writes vault plaintext only through `VaultPort`; exact prepared retry bytes may remain in IndexedDB until their operation commits.
 - Every external JSON, binary, filesystem, and cryptographic boundary validates its input.
 - HTTP signing bytes have one implementation in `packages/protocol` to prevent client/server drift.

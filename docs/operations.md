@@ -80,13 +80,27 @@ Pause synchronization on another device before opening it. Use immutable history
 
 Synchronization is not a backup. Keep a separate backup of the plaintext vault and offline recovery material. The Worker code version does not snapshot Durable Object SQLite or R2. R2 history retention protects application revisions only while their chunks remain retained.
 
-## Retention and garbage collection
+## Retention and storage limits
 
-Automatic history garbage collection remains disabled until acknowledgement-aware retention is implemented and validated. Meridian shows this gate in the storage view instead of offering an unsafe history-delete action. When enabled, history deletion must be idempotent, retain pinned revisions, and tolerate offline devices.
+Meridian uses **Keep committed history forever**. It never automatically removes committed operations, revision metadata, referenced R2 blobs, conflicts, checkpoints, snapshots, device/revocation history, or epoch keys required by history. A long-offline active device can therefore replay from its prior signed cursor. Log truncation and finite history remain disabled because current acknowledgements do not bind a generation-aware rebootstrap archive.
 
-The owner can manually clean up encrypted uploads older than seven days that no retained revision references. Upload claims are recorded before R2 writes, and cleanup is serialized by the Durable Object so an interrupted or concurrent sync cannot lose a blob before commit. Cleanup aborts without deleting anything if any retained file operation cannot be indexed safely.
+Meridian safely bounds disposable state:
 
-The storage view reports the Durable Object SQLite size and enumerates the vault's encrypted R2 objects on demand. The R2 scan is read-only and may take longer for large vaults.
+- completed local upload entries and exact duplicate history metadata are compacted in crash-safe IndexedDB batches;
+- dirty events, pending/prepared retries, DAG ancestry, unresolved conflicts, revocations, and checkpoints are never compacted;
+- expired pairing capabilities are removed in every terminal state;
+- only the current recovery idempotency receipt is retained;
+- encrypted uploads older than seven days may be removed only when no committed revision references them and no recent upload reservation protects them.
+
+Every blob upload reserves its byte size in the Durable Object before R2 streaming and is confirmed against R2 afterward. A file operation cannot commit unless every referenced blob exists. Cleanup is serialized and aborts without deleting anything if retained history cannot be indexed safely.
+
+The storage view reports remote SQLite/R2 usage, active-device acknowledgement progress, in-flight reservations, local browser quota pressure, and whether browser persistence was granted. Device acknowledgements are signed telemetry over the exact cursor, hash, epoch, and forever policy. They do not authorize deletion.
+
+### Optional remote quota
+
+The owner may set a per-vault limit in MiB or leave it blank for unlimited retention. Setting a limit first reconciles the R2 catalog and must leave emergency space for recovery and security operations. Concurrent uploads reserve space atomically. At the limit, new content fails with `storage_quota_exceeded`; existing history, downloads, recovery, revocation, epoch rotation, tombstones, and cleanup remain available. Meridian never deletes history to make room.
+
+Cloudflare account limits and browser quotas remain external hard limits. If IndexedDB is full, its transaction aborts, the cursor does not advance, and pending work or vault files remain available. Use **Meridian storage → Compact local sync records**, request persistent browser storage when offered, raise/remove the remote limit, or free origin storage. Keep an independent backup.
 
 ## Privacy-safe support bundle
 

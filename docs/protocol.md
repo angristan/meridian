@@ -236,6 +236,22 @@ Revision parent sets define the DAG. For concurrent heads:
 
 When platform path constraints make the deterministic name unavailable, the engine appends an increasing deterministic suffix derived from sorted revision IDs. No branch is deleted merely because another branch wins a path.
 
+## Retention and storage pressure
+
+Generation 1 retains committed history indefinitely. Operations, referenced ciphertext, revision DAG metadata, conflicts, checkpoints, encrypted snapshots, revoked-device authorization records, and all epoch keys needed to decrypt retained revisions are not age-pruned.
+
+After a complete sync, a device signs a `retention-acknowledgement/v1` message over vault ID, device ID, cursor, log hash, current epoch ID, and `historyRetention = forever`. The Worker accepts only an active device's monotonic acknowledgement on an authoritative cursor/hash and current epoch. Revoked devices do not count toward status. This acknowledgement is progress telemetry, not log-compaction consent: it contains no snapshot/archive root or rebootstrap generation.
+
+Blob upload uses a three-step lease:
+
+1. The authenticated client supplies the exact ciphertext length. The Durable Object records or refreshes a reservation and atomically checks the optional per-vault quota.
+2. The Worker streams immutable ciphertext to private R2.
+3. The Durable Object confirms the R2 object and size, catalogs it, and releases the reservation.
+
+A revision operation is accepted only after every public blob ID in its canonical body resolves to a stored R2 object. Exact operation retries bypass new quota allocation. Expired reservations are disposable after 24 hours. Unreferenced objects are eligible for owner-triggered deletion only after seven days; every deletion re-derives reachability from all retained canonical revision operations.
+
+The default quota is unlimited. An owner-configured quota counts reconciled R2 bytes, Durable Object SQLite, and live reservations, with separate emergency headroom. `507 storage_quota_exceeded` rejects new content before authority advances. Reads and security/recovery operations remain available. Neither quota pressure nor local IndexedDB exhaustion permits silent history deletion.
+
 ## Transport and limits
 
 HTTP JSON uses unpadded base64url for binary control fields. Durable signed bodies remain canonical CBOR bytes. Boundary schemas reject excess properties. Implementations MUST bound body size, array counts, string lengths, cursors, chunk sizes, and decomposed allocations before cryptography or storage.

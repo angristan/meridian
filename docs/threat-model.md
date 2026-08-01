@@ -117,7 +117,8 @@ Local vault use remains available offline. Push/pull is idempotent and resumable
 | Server rollback | persisted cursor/hash/generation, signed transferred checkpoints | isolated split views are not fully detectable |
 | Downgrade | complete suite in signed epoch; durable highest generation/sequence | a compromised endpoint can alter its own local floor |
 | Parser bombs | closed schemas, strict canonical subset, bounded bytes/depth/collections/chunks | host memory pressure still requires platform testing |
-| Partial write/crash | immutable blobs/revisions, server transaction, local journal, apply-before-cursor | abandoned ciphertext requires later conservative GC |
+| Partial write/crash | immutable blobs/revisions, byte reservation plus R2 confirmation, server transaction, local journal, apply-before-cursor | abandoned ciphertext requires later conservative GC |
+| Storage exhaustion | optional atomic per-vault reservations, emergency security headroom, local pressure warnings, lossless compaction, fail-closed `507`/IndexedDB transaction | infinite history grows without bound; Cloudflare and browser hard limits can still stop new writes |
 | Wrong clock | causality from parents/cursors; timestamps are hints | expiry checks need reasonable local/server time policy |
 | Path collision | NFC, relative paths, case-fold collision detection, deterministic conflict names | platform-specific reserved names need adapter tests |
 | Malicious notification | notification is a hint; HTTP pull is authoritative | reconnect storms require backoff/rate limits |
@@ -165,7 +166,7 @@ Whole-file Obsidian APIs can cause memory pressure for large attachments. Genera
 - Setup, session, pairing, and upload capabilities are random, scoped, logged only by result class, rate-limited, short-lived, and single-use where applicable.
 - Logs/traces never include tokens, stable unnecessary IDs, envelope bodies, plaintext, paths, keys, recovery codes, or pairing plaintext.
 - R2 is private and only authenticated Worker routes access it.
-- Garbage collection is disabled until acknowledgement and offline-device safety are specified. Pinned/history data is retained conservatively.
+- Committed-history garbage collection is disabled. Signed acknowledgements are telemetry only until a generation-aware rebootstrap archive exists. Only provably disposable local records, expired capabilities, obsolete recovery receipts, and old unreferenced uploads are removed.
 - Sync is not backup. Users keep independent versioned backups and test export/restore.
 - Real macOS and iOS tests cover suspend/resume, large files, Unicode/case collisions, and interrupted apply before production use.
 
