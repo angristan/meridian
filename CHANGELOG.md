@@ -1,3 +1,25 @@
+# [1.8.0](https://github.com/angristan/meridian/compare/1.7.1...1.8.0) (2026-08-01)
+
+
+### Bug Fixes
+
+* preserve edits behind prepared retries ([d352493](https://github.com/angristan/meridian/commit/d352493409ad680eb6cd3da540b348bbc207cf61))
+
+
+### Features
+
+* persist coalesced vault changes ([f7c8f18](https://github.com/angristan/meridian/commit/f7c8f18548ecd9bc38d34c7ed31b12d726a7e2fb))
+
+
+### Performance Improvements
+
+* batch dirty event consumption ([e3a7346](https://github.com/angristan/meridian/commit/e3a7346a397b31226b6f9dbd2a963804581c4fd4))
+* bound config discovery work ([53677a5](https://github.com/angristan/meridian/commit/53677a526ebb2da0e3526bd88569d48fb4ced2ef))
+* cancel background scans cleanly ([e330965](https://github.com/angristan/meridian/commit/e33096547836f07bcbd718f2f8d946f64ab38000))
+* move sync planning off the editor thread ([f2278cb](https://github.com/angristan/meridian/commit/f2278cb9225e8c45645ba669f60cd253d5c78bc1))
+* reconcile only changed vault paths ([eed4ea0](https://github.com/angristan/meridian/commit/eed4ea03f600eb908af1d37b5c2e236d932c61ec))
+* yield during large pull batches ([5b2b804](https://github.com/angristan/meridian/commit/5b2b804bf621eaec0a3ac760d3074cdbd00f2e48))
+
 ## [1.7.1](https://github.com/angristan/meridian/compare/1.7.0...1.7.1) (2026-07-31)
 
 
