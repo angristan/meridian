@@ -78,7 +78,9 @@ export interface FirstDeviceClaimBundle {
 
 const randomId = () => randomBytes(16)
 
-export async function createFirstDeviceClaimBundle(): Promise<FirstDeviceClaimBundle> {
+export async function createFirstDeviceClaimBundle(
+  initialLogFormat: LogFormat = LogFormat.CanonicalCborV1,
+): Promise<FirstDeviceClaimBundle> {
   const [signing, hpke] = await Promise.all([
     Promise.resolve(generateSigningKeyPair()),
     generateHpkeKeyPair(),
@@ -132,8 +134,8 @@ export async function createFirstDeviceClaimBundle(): Promise<FirstDeviceClaimBu
       logHash: hashBytes(ZERO_HASH),
       signerDeviceId: device,
       protocolGeneration: CIPHER_SUITE.protocolGeneration,
-      initialLogFormat: LogFormat.CanonicalCborV1,
-      logFormat: LogFormat.CanonicalCborV1,
+      initialLogFormat,
+      logFormat: initialLogFormat,
     },
     signing.privateKey,
   )

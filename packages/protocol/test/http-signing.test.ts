@@ -1,3 +1,4 @@
+import { describe, expect, it } from "vitest"
 import {
   deviceAuthSigningBytes,
   httpOperationSigningBytes,
@@ -7,7 +8,6 @@ import {
   setupClaimSigningBytes,
   signedHttpMessage,
 } from "../src/index.js"
-import { describe, expect, it } from "vitest"
 
 const text = new TextDecoder()
 
@@ -36,6 +36,9 @@ describe("HTTP signing frames", () => {
     )
     expect(setupClaimSigningBytes(base)).not.toEqual(
       setupClaimSigningBytes({ ...base, challenge: "other" }),
+    )
+    expect(setupClaimSigningBytes(base)).not.toEqual(
+      setupClaimSigningBytes({ ...base, logFormat: "canonical-cbor-v1" }),
     )
   })
 

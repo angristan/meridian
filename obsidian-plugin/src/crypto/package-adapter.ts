@@ -73,8 +73,12 @@ class PackageCryptoPort implements CryptoPort {
     return refreshTrustedCheckpoint(device, checkpoint)
   }
 
-  createFirstDevice(setupSession: string, claimChallenge: string): Promise<SetupClaim> {
-    return createFirstDevice(setupSession, claimChallenge)
+  createFirstDevice(
+    setupSession: string,
+    claimChallenge: string,
+    logFormat: LogFormat = "canonical-cbor-v1",
+  ): Promise<SetupClaim> {
+    return createFirstDevice(setupSession, claimChallenge, logFormat)
   }
 
   loadDevice(serializedKeyBundle: string): Promise<DeviceKeyMaterial> {

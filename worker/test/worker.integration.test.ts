@@ -200,6 +200,7 @@ async function setupAndAuthenticate(
     encryptedRecoveryPackage: base64UrlEncode(
       serializeEncryptedRecoveryPackage(first.encryptedRecoveryPackage),
     ),
+    logFormat: "canonical-cbor-v1",
     initialDevice: {
       deviceId,
       signingPublicKey,

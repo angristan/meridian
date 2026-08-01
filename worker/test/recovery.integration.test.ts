@@ -34,6 +34,7 @@ it("recovers ownership into a fresh device using only the recovery code", async 
     encryptedRecoveryPackage: base64UrlEncode(
       serializeEncryptedRecoveryPackage(first.encryptedRecoveryPackage),
     ),
+    logFormat: "canonical-cbor-v1",
     initialDevice: {
       deviceId: base64UrlEncode(first.device.deviceId),
       signingPublicKey: base64UrlEncode(first.device.signingPublicKey),

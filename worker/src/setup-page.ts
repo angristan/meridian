@@ -53,6 +53,7 @@ form.addEventListener("submit",async(event)=>{
     const payload=await response.json();
     if(!response.ok) throw new Error(payload?.error?.message||"Setup failed");
     const query=new URLSearchParams({endpoint:location.origin,session:payload.setupSession,challenge:payload.claimChallenge});
+    if(payload.logFormat) query.set("logFormat",payload.logFormat);
     setupLink="obsidian://meridian?"+query.toString();
     openLink.href=setupLink; copyValue.textContent=setupLink; result.hidden=false;
     status.textContent="Session created. It expires soon and can claim this deployment only once.";

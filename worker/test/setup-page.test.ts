@@ -23,6 +23,7 @@ describe("public setup surface", () => {
     const script = await SELF.fetch("https://example.test/assets/setup.js")
     expect(script.status).toBe(200)
     expect(script.headers.get("content-type")).toContain("text/javascript")
+    expect(await script.text()).toContain('query.set("logFormat",payload.logFormat)')
   })
 
   it("rejects an invalid setup token", async () => {

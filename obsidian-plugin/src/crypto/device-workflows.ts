@@ -20,6 +20,7 @@ import {
 import type {
   AuthChallengeProof,
   DeviceKeyMaterial,
+  LogFormat as LogFormatName,
   RecoveryDeviceMaterial,
   SetupClaim,
   TrustedCheckpoint,
@@ -36,8 +37,9 @@ import {
 export async function createFirstDevice(
   setupSession: string,
   claimChallenge: string,
+  logFormat: LogFormatName,
 ): Promise<SetupClaim> {
-  const created = await createFirstDeviceClaimBundle()
+  const created = await createFirstDeviceClaimBundle(logFormat)
   const device = created.device
   const certificate = encodeDeviceCertificate(device.certificate)
   const recoveryPackage = serializeEncryptedRecoveryPackage(created.encryptedRecoveryPackage)
@@ -46,6 +48,7 @@ export async function createFirstDevice(
     vaultId: toBase64Url(device.vaultId),
     recoverySigningPublicKey: toBase64Url(created.recoveryPublicKey),
     encryptedRecoveryPackage: toBase64Url(recoveryPackage),
+    ...(logFormat === LogFormat.CanonicalCborV1 ? { logFormat } : {}),
     initialDevice: {
       deviceId: toBase64Url(device.deviceId),
       signingPublicKey: toBase64Url(device.signingPublicKey),
@@ -64,6 +67,7 @@ export async function createFirstDevice(
       encryptedRecoveryPackage: recoveryPackage,
       setupSession,
       challenge: claimChallenge,
+      ...(unsignedClaim.logFormat === undefined ? {} : { logFormat: unsignedClaim.logFormat }),
     }),
     device.signingPrivateKey,
   )

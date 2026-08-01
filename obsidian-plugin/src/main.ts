@@ -305,6 +305,7 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
     endpoint: string,
     setupSession: string,
     claimChallenge: string,
+    logFormat: LogFormat = "legacy-http-v1",
   ): Promise<void> {
     if (hasConfiguredMeridianIdentity(this.settings)) {
       throw new Error("Meridian is already set up and connected in this vault.")
@@ -312,7 +313,7 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
     if (!setupSession || !claimChallenge)
       throw new Error("Setup session and claim challenge are required")
     const normalizedEndpoint = normalizeEndpoint(endpoint)
-    const claim = await this.cryptoPort.createFirstDevice(setupSession, claimChallenge)
+    const claim = await this.cryptoPort.createFirstDevice(setupSession, claimChallenge, logFormat)
     this.secrets.setDeviceKeyBundle(claim.deviceId, claim.keyBundle)
 
     const remote = new MeridianRemoteClient(normalizedEndpoint, new ObsidianHttpTransport())

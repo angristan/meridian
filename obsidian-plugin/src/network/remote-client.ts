@@ -19,6 +19,7 @@ import { connectCursorNotifications } from "./notifications"
 import {
   assertSuccess,
   isRecord,
+  MeridianHttpError,
   optionalNumber,
   parseDevice,
   parseJsonBody,
@@ -478,14 +479,31 @@ export class MeridianRemoteClient implements RemotePort {
         challengeId,
         challenge,
       })
-      const sessionResult = await this.jsonRequest("/v1/auth/session", {
-        method: "POST",
-        body: {
-          ...proof,
-          supportedLogFormats: ["legacy-http-v1", "canonical-cbor-v1"],
-        },
-        authenticated: false,
-      })
+      let sessionResult: unknown
+      try {
+        sessionResult = await this.jsonRequest("/v1/auth/session", {
+          method: "POST",
+          body: {
+            ...proof,
+            supportedLogFormats: ["legacy-http-v1", "canonical-cbor-v1"],
+          },
+          authenticated: false,
+        })
+      } catch (error) {
+        if (
+          !(error instanceof MeridianHttpError) ||
+          error.status !== 400 ||
+          error.code !== "invalid_request"
+        ) {
+          throw error
+        }
+        // A pre-upgrade Worker rejects the additive capability before consuming the challenge.
+        sessionResult = await this.jsonRequest("/v1/auth/session", {
+          method: "POST",
+          body: proof,
+          authenticated: false,
+        })
+      }
       const sessionToken = requiredString(sessionResult, "sessionToken")
       const sessionExpiresAt = requiredNumber(sessionResult, "expiresAt")
       if (this.authentication !== authentication) {

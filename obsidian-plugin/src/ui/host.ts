@@ -28,7 +28,12 @@ export interface MeridianUiHost {
   repairLocalIndex(): Promise<void>
   getLogFormat(): Promise<LogFormat | null>
   upgradeVaultProtocol(): Promise<void>
-  connectFromSetup(endpoint: string, setupSession: string, claimChallenge: string): Promise<void>
+  connectFromSetup(
+    endpoint: string,
+    setupSession: string,
+    claimChallenge: string,
+    logFormat?: LogFormat,
+  ): Promise<void>
   recoverVault(endpoint: string, recoveryCode: string): Promise<void>
   disconnect(): Promise<void>
   resumeConnection(): Promise<void>

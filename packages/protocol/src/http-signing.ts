@@ -42,6 +42,7 @@ export interface SetupClaimSigningInput {
   readonly encryptedRecoveryPackage: Uint8Array
   readonly setupSession: string
   readonly challenge: string
+  readonly logFormat?: "canonical-cbor-v1"
 }
 
 export function setupClaimSigningBytes(input: SetupClaimSigningInput): Uint8Array {
@@ -55,6 +56,7 @@ export function setupClaimSigningBytes(input: SetupClaimSigningInput): Uint8Arra
     ["encrypted-recovery-package", input.encryptedRecoveryPackage],
     ["setup-session", input.setupSession],
     ["challenge", input.challenge],
+    ...(input.logFormat === undefined ? [] : ([["log-format", input.logFormat]] as const)),
   ])
 }
 

@@ -100,6 +100,27 @@ describe("Meridian remote client", () => {
     })
   })
 
+  it("retries authentication without capabilities on a pre-upgrade Worker", async () => {
+    const transport = new QueueTransport([
+      response({ challengeId: "challenge-id", challenge: "challenge" }),
+      response(
+        { error: { code: "invalid_request", message: "Request body does not match schema" } },
+        400,
+      ),
+      response({ sessionToken: "legacy-session", expiresAt: Number.MAX_SAFE_INTEGER }),
+    ])
+    const client = new MeridianRemoteClient("https://example.test", transport)
+
+    await client.authenticate(TEST_DEVICE, new FakeCrypto())
+
+    expect(JSON.parse(String(transport.requests[1]?.body))).toMatchObject({
+      supportedLogFormats: ["legacy-http-v1", "canonical-cbor-v1"],
+    })
+    expect(JSON.parse(String(transport.requests[2]?.body))).not.toHaveProperty(
+      "supportedLogFormats",
+    )
+  })
+
   it("skips the device registry for an empty change page", async () => {
     const transport = new QueueTransport([
       response({ challengeId: "challenge-id", challenge: "challenge" }),

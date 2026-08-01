@@ -21,6 +21,7 @@ export const SetupClaimSchema = Schema.Struct({
   vaultId: Schema.String,
   recoverySigningPublicKey: Schema.String,
   encryptedRecoveryPackage: Schema.String,
+  logFormat: Schema.optionalKey(Schema.Literal("canonical-cbor-v1")),
   initialDevice: DevicePublicIdentitySchema,
   proof: Schema.String,
 })

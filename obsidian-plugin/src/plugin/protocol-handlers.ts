@@ -15,7 +15,18 @@ export function registerProtocolHandlers(plugin: Plugin, host: MeridianUiHost): 
       new Notice("The Meridian setup link is incomplete", 8_000)
       return
     }
-    new SetupLinkModal(host, endpoint, setupSession, claimChallenge).open()
+    const requestedLogFormat = parameters.logFormat
+    const logFormat =
+      requestedLogFormat === undefined
+        ? "legacy-http-v1"
+        : requestedLogFormat === "canonical-cbor-v1"
+          ? requestedLogFormat
+          : null
+    if (logFormat === null) {
+      new Notice("Update Meridian to use this setup link", 8_000)
+      return
+    }
+    new SetupLinkModal(host, endpoint, setupSession, claimChallenge, logFormat).open()
   }
 
   plugin.registerObsidianProtocolHandler("meridian", handleSetupLink)

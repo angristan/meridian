@@ -484,7 +484,11 @@ export interface PairedDeviceMaterial {
 }
 
 export interface CryptoPort {
-  createFirstDevice(setupSession: string, claimChallenge: string): Promise<SetupClaim>
+  createFirstDevice(
+    setupSession: string,
+    claimChallenge: string,
+    logFormat?: LogFormat,
+  ): Promise<SetupClaim>
   verifyOperationLogLink(
     device: DeviceKeyMaterial,
     operation: RemoteOperation,

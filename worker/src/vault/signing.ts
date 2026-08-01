@@ -7,9 +7,9 @@ import {
   deviceId,
   ed25519PublicKey,
   httpOperationSigningBytes,
+  Permission,
   pairingApprovalRequestSigningBytes,
   pairingJoinRequestSigningBytes,
-  Permission,
   setupClaimSigningBytes,
   snapshotUploadSigningBytes,
   vaultId,
@@ -94,6 +94,7 @@ export function setupClaimSigningMessage(claim: SetupClaim, challenge: string): 
     ),
     setupSession: claim.setupSession,
     challenge,
+    ...(claim.logFormat === undefined ? {} : { logFormat: claim.logFormat }),
   })
 }
 

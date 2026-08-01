@@ -60,6 +60,7 @@ export class VaultSetup {
     return json({
       setupSession: token,
       claimChallenge: challenge,
+      logFormat: "canonical-cbor-v1",
       expiresAt: now + SETUP_SESSION_TTL_MS,
     })
   }
@@ -109,6 +110,7 @@ export class VaultSetup {
       new HttpError(401, "invalid_proof", "First-device proof of possession is invalid"),
     )
 
+    const initialLogFormat = claim.logFormat ?? "legacy-http-v1"
     const recoveryStateId = base64UrlEncode(
       await computeRecoveryStateId(
         vaultId(base64UrlDecode(claim.vaultId, 16)),
@@ -148,13 +150,14 @@ export class VaultSetup {
         `INSERT INTO vault_state(
           singleton, vault_id, claimed_at, recovery_signing_public_key, recovery_package,
           recovery_state_id, cursor, head_hash, log_format
-         ) VALUES (1, ?, ?, ?, ?, ?, 0, ?, 'canonical-cbor-v1')`,
+         ) VALUES (1, ?, ?, ?, ?, ?, 0, ?, ?)`,
         claim.vaultId,
         claimedAt,
         claim.recoverySigningPublicKey,
         claim.encryptedRecoveryPackage,
         recoveryStateId,
         ZERO_HASH,
+        initialLogFormat,
       )
       this.sql.exec(
         `INSERT INTO devices(
