@@ -450,13 +450,16 @@ describe("Meridian remote client", () => {
 
   it("uses the public bounded recovery endpoints without a session", async () => {
     const transport = new QueueTransport([
-      response({ encryptedRecoveryPackage: "package" }),
+      response({ encryptedRecoveryPackage: "package", recoveryStateId: "state-id" }),
       response({ challengeId: "challenge", challenge: "nonce" }),
       response({ recoveredAt: 1 }, 201),
     ])
     const client = new MeridianRemoteClient("https://example.test", transport)
 
-    await expect(client.getRecoveryPackage()).resolves.toBe("package")
+    await expect(client.getRecoveryPackage()).resolves.toEqual({
+      encryptedRecoveryPackage: "package",
+      recoveryStateId: "state-id",
+    })
     await expect(client.createRecoveryChallenge()).resolves.toEqual({
       challengeId: "challenge",
       challenge: "nonce",

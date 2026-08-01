@@ -341,6 +341,11 @@ export interface DeviceKeyMaterial {
   trustedCheckpointAuthorized: boolean
 }
 
+export interface RecoveryPackageMaterial {
+  encryptedRecoveryPackage: string
+  recoveryStateId: string
+}
+
 export interface RecoveryDeviceMaterial {
   vaultId: string
   deviceId: string
@@ -503,6 +508,7 @@ export interface CryptoPort {
   recoverDevice(
     recoveryCode: string,
     encryptedRecoveryPackage: string,
+    recoveryStateId: string,
     challenge: { challengeId: string; challenge: string },
   ): Promise<RecoveryDeviceMaterial>
   encryptRevision(device: DeviceKeyMaterial, draft: RevisionDraft): Promise<EncryptedRevision>

@@ -105,9 +105,11 @@ describe("shared crypto adapter", () => {
     ).rejects.toThrow(/mobile-safe file size limit/)
     expect(oversizedLoadCalls).toBe(0)
 
+    const recoveryStateId = randomId(32)
     const recovered = await crypto.recoverDevice(
       claim.recoveryCode,
       stringField(claim.publicClaim, "encryptedRecoveryPackage"),
+      recoveryStateId,
       { challengeId: "recovery-challenge", challenge: randomId(32) },
     )
     const recoveredDevice = await crypto.loadDevice(recovered.keyBundle)
@@ -116,6 +118,7 @@ describe("shared crypto adapter", () => {
     expect(recoveredDevice.deviceId).toBe(recovered.deviceId)
     expect(recoveredDevice.trustedCheckpointAuthorized).toBe(true)
     expect(record(recovered.publicClaim)).toMatchObject({
+      previousRecoveryStateId: recoveryStateId,
       challengeId: "recovery-challenge",
     })
   })

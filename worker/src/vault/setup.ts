@@ -1,4 +1,14 @@
-import { assertIdentifier, hashToken, randomToken, verifyEd25519, ZERO_HASH } from "../encoding"
+import { computeRecoveryStateId } from "@meridian/crypto"
+import { vaultId } from "@meridian/protocol"
+import {
+  assertIdentifier,
+  base64UrlDecode,
+  base64UrlEncode,
+  hashToken,
+  randomToken,
+  verifyEd25519,
+  ZERO_HASH,
+} from "../encoding"
 import { assert, HttpError } from "../errors"
 import { SetupClaimSchema } from "../schemas"
 import {
@@ -99,6 +109,12 @@ export class VaultSetup {
       new HttpError(401, "invalid_proof", "First-device proof of possession is invalid"),
     )
 
+    const recoveryStateId = base64UrlEncode(
+      await computeRecoveryStateId(
+        vaultId(base64UrlDecode(claim.vaultId, 16)),
+        base64UrlDecode(claim.encryptedRecoveryPackage, MAX_RECOVERY_PACKAGE_BYTES),
+      ),
+    )
     const claimedAt = Date.now()
     this.transactionSync(() => {
       assert(
@@ -131,12 +147,13 @@ export class VaultSetup {
       this.sql.exec(
         `INSERT INTO vault_state(
           singleton, vault_id, claimed_at, recovery_signing_public_key, recovery_package,
-          cursor, head_hash, log_format
-         ) VALUES (1, ?, ?, ?, ?, 0, ?, 'canonical-cbor-v1')`,
+          recovery_state_id, cursor, head_hash, log_format
+         ) VALUES (1, ?, ?, ?, ?, ?, 0, ?, 'canonical-cbor-v1')`,
         claim.vaultId,
         claimedAt,
         claim.recoverySigningPublicKey,
         claim.encryptedRecoveryPackage,
+        recoveryStateId,
         ZERO_HASH,
       )
       this.sql.exec(

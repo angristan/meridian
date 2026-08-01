@@ -1,12 +1,13 @@
-import { SELF } from "cloudflare:test"
+import { env, runInDurableObject, SELF } from "cloudflare:test"
 import {
+  computeRecoveryStateId,
   createFirstDeviceClaimBundle,
   recoverDeviceFromPackage,
   serializeEncryptedRecoveryPackage,
   sign,
   signRecoveryClaim,
 } from "@meridian/crypto"
-import { encodeDeviceCertificate } from "@meridian/protocol"
+import { encodeDeviceCertificate, hashBytes, recoveryId } from "@meridian/protocol"
 import { expect, it } from "vitest"
 import { base64UrlDecode, base64UrlEncode } from "../src/encoding"
 import type { RecoveryClaim, SetupClaim } from "../src/schemas"
@@ -57,14 +58,30 @@ it("recovers ownership into a fresh device using only the recovery code", async 
   })
   expect(claimed.status).toBe(201)
 
+  const primaryStub = env.VAULT.get(env.VAULT.idFromName("primary"))
+  await runInDurableObject(primaryStub, async (_instance, state) => {
+    state.storage.sql.exec("UPDATE vault_state SET recovery_state_id = NULL")
+  })
   const packageResponse = await SELF.fetch("https://example.test/v1/recovery/package")
   expect(packageResponse.status).toBe(200)
   const packagePayload = (await packageResponse.json()) as {
     encryptedRecoveryPackage: string
+    recoveryStateId: string
   }
-  expect(packagePayload.encryptedRecoveryPackage).toBe(
-    base64UrlEncode(serializeEncryptedRecoveryPackage(first.encryptedRecoveryPackage)),
+  const initialPackage = serializeEncryptedRecoveryPackage(first.encryptedRecoveryPackage)
+  expect(packagePayload.encryptedRecoveryPackage).toBe(base64UrlEncode(initialPackage))
+  expect(packagePayload.recoveryStateId).toBe(
+    base64UrlEncode(await computeRecoveryStateId(first.device.vaultId, initialPackage)),
   )
+  await runInDurableObject(primaryStub, async (_instance, state) => {
+    expect(
+      state.storage.sql
+        .exec<{ recovery_state_id: string }>(
+          "SELECT recovery_state_id FROM vault_state WHERE singleton = 1",
+        )
+        .one().recovery_state_id,
+    ).toBe(packagePayload.recoveryStateId)
+  })
 
   const replacement = await recoverDeviceFromPackage(
     first.recoveryCode,
@@ -86,7 +103,10 @@ it("recovers ownership into a fresh device using only the recovery code", async 
 
   const replacementPackage = serializeEncryptedRecoveryPackage(replacement.encryptedRecoveryPackage)
   const certificate = encodeDeviceCertificate(replacement.device.certificate)
+  const recoveryIdentifier = recoveryId(new Uint8Array(16).fill(9))
   const proof = await signRecoveryClaim(first.recoveryCode, {
+    recoveryId: recoveryIdentifier,
+    previousRecoveryStateId: hashBytes(base64UrlDecode(packagePayload.recoveryStateId, 32)),
     challengeId: challenge.challengeId,
     challenge: base64UrlDecode(challenge.challenge, 32),
     vaultId: replacement.device.vaultId,
@@ -97,6 +117,8 @@ it("recovers ownership into a fresh device using only the recovery code", async 
     encryptedRecoveryPackage: replacementPackage,
   })
   const recoveryClaim: RecoveryClaim = {
+    recoveryId: base64UrlEncode(recoveryIdentifier),
+    previousRecoveryStateId: packagePayload.recoveryStateId,
     challengeId: challenge.challengeId,
     newDevice: {
       deviceId: base64UrlEncode(replacement.device.deviceId),
@@ -107,6 +129,18 @@ it("recovers ownership into a fresh device using only the recovery code", async 
     encryptedRecoveryPackage: base64UrlEncode(replacementPackage),
     proof: base64UrlEncode(proof),
   }
+  const {
+    recoveryId: _recoveryId,
+    previousRecoveryStateId: _predecessor,
+    ...legacyClaim
+  } = recoveryClaim
+  const legacyResponse = await SELF.fetch("https://example.test/v1/recovery/claim", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(legacyClaim),
+  })
+  expect(legacyResponse.status).toBe(426)
+
   const recovered = await SELF.fetch("https://example.test/v1/recovery/claim", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -119,5 +153,54 @@ it("recovers ownership into a fresh device using only the recovery code", async 
     headers: { "content-type": "application/json" },
     body: JSON.stringify(recoveryClaim),
   })
-  expect(replay.status).toBe(401)
+  expect(replay.status).toBe(200)
+  await expect(replay.json()).resolves.toMatchObject({ duplicate: true })
+
+  const staleReplacement = await recoverDeviceFromPackage(
+    first.recoveryCode,
+    first.encryptedRecoveryPackage,
+  )
+  const staleChallengeResponse = await SELF.fetch("https://example.test/v1/recovery/challenge", {
+    method: "POST",
+  })
+  const staleChallenge = (await staleChallengeResponse.json()) as {
+    challengeId: string
+    challenge: string
+  }
+  const stalePackage = serializeEncryptedRecoveryPackage(staleReplacement.encryptedRecoveryPackage)
+  const staleCertificate = encodeDeviceCertificate(staleReplacement.device.certificate)
+  const staleIdentifier = recoveryId(new Uint8Array(16).fill(10))
+  const staleProof = await signRecoveryClaim(first.recoveryCode, {
+    recoveryId: staleIdentifier,
+    previousRecoveryStateId: hashBytes(base64UrlDecode(packagePayload.recoveryStateId, 32)),
+    challengeId: staleChallenge.challengeId,
+    challenge: base64UrlDecode(staleChallenge.challenge, 32),
+    vaultId: staleReplacement.device.vaultId,
+    deviceId: staleReplacement.device.deviceId,
+    signingPublicKey: staleReplacement.device.signingPublicKey,
+    hpkePublicKey: staleReplacement.device.hpkePublicKey,
+    certificate: staleCertificate,
+    encryptedRecoveryPackage: stalePackage,
+  })
+  const staleResponse = await SELF.fetch("https://example.test/v1/recovery/claim", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      recoveryId: base64UrlEncode(staleIdentifier),
+      previousRecoveryStateId: packagePayload.recoveryStateId,
+      challengeId: staleChallenge.challengeId,
+      newDevice: {
+        deviceId: base64UrlEncode(staleReplacement.device.deviceId),
+        signingPublicKey: base64UrlEncode(staleReplacement.device.signingPublicKey),
+        hpkePublicKey: base64UrlEncode(staleReplacement.device.hpkePublicKey),
+        certificate: base64UrlEncode(staleCertificate),
+      },
+      encryptedRecoveryPackage: base64UrlEncode(stalePackage),
+      proof: base64UrlEncode(staleProof),
+    }),
+  })
+  expect(staleResponse.status).toBe(409)
+  await expect(staleResponse.json()).resolves.toMatchObject({
+    error: { code: "stale_recovery_state" },
+  })
 })

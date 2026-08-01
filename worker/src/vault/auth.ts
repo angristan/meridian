@@ -34,7 +34,7 @@ export class VaultAuth {
     return this.sessions.createAuthSession(request)
   }
 
-  recoveryPackage(): Response {
+  recoveryPackage(): Promise<Response> {
     return this.recovery.recoveryPackage()
   }
 

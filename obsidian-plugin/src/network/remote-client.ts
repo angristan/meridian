@@ -6,6 +6,7 @@ import type {
   PairingCapability,
   PairingResult,
   PairingStatus,
+  RecoveryPackageMaterial,
   RemoteChanges,
   RemoteDevice,
   RemotePort,
@@ -70,12 +71,15 @@ export class MeridianRemoteClient implements RemotePort {
     })
   }
 
-  async getRecoveryPackage(): Promise<string> {
+  async getRecoveryPackage(): Promise<RecoveryPackageMaterial> {
     const result = await this.jsonRequest("/v1/recovery/package", {
       method: "GET",
       authenticated: false,
     })
-    return requiredString(result, "encryptedRecoveryPackage")
+    return {
+      encryptedRecoveryPackage: requiredString(result, "encryptedRecoveryPackage"),
+      recoveryStateId: requiredString(result, "recoveryStateId"),
+    }
   }
 
   async createRecoveryChallenge(): Promise<{ challengeId: string; challenge: string }> {

@@ -1,8 +1,23 @@
-import { recoveryClaimSigningBytes } from "@meridian/crypto"
-import { deviceId, ed25519PublicKey, vaultId, x25519PublicKey } from "@meridian/protocol"
-import { assertIdentifier, base64UrlDecode, randomToken, verifyEd25519 } from "../encoding"
+import { computeRecoveryStateId, recoveryClaimSigningBytes } from "@meridian/crypto"
+import {
+  deviceId,
+  ed25519PublicKey,
+  encodeCanonical,
+  hashBytes,
+  recoveryId,
+  vaultId,
+  x25519PublicKey,
+} from "@meridian/protocol"
+import {
+  assertIdentifier,
+  base64UrlDecode,
+  base64UrlEncode,
+  randomToken,
+  sha256,
+  verifyEd25519,
+} from "../encoding"
 import { assert, HttpError } from "../errors"
-import { RecoveryClaimSchema } from "../schemas"
+import { type RecoveryClaim, RecoveryClaimSchema } from "../schemas"
 import {
   cleanupExpired,
   decode,
@@ -11,6 +26,7 @@ import {
   MAX_RECOVERY_PACKAGE_BYTES,
   requestJson,
   type TransactionSync,
+  type VaultStateRow,
   validateOpaqueData,
   validatePublicKey,
   validateSignature,
@@ -20,6 +36,14 @@ import { validateRecoveryRootedIdentity } from "./signing"
 
 const RECOVERY_CHALLENGE_TTL_MS = 5 * 60 * 1_000
 
+type RecoveryReceipt = {
+  recovery_id: string
+  request_hash: string
+  device_id: string
+  recovery_state_id: string
+  recovered_at: number
+}
+
 export class VaultRecovery {
   constructor(
     private readonly sql: SqlStorage,
@@ -27,19 +51,22 @@ export class VaultRecovery {
     private readonly closeAllSockets: () => void,
   ) {}
 
-  recoveryPackage(): Response {
+  async recoveryPackage(): Promise<Response> {
     const vault = vaultState(this.sql)
     assert(vault, new HttpError(409, "not_claimed", "This deployment has not been claimed"))
+    const recoveryStateId = await this.ensureRecoveryStateId(vault)
     return json({
       vaultId: vault.vault_id,
       recoverySigningPublicKey: vault.recovery_signing_public_key,
       encryptedRecoveryPackage: vault.recovery_package,
+      recoveryStateId,
     })
   }
 
   async createRecoveryChallenge(): Promise<Response> {
     const vault = vaultState(this.sql)
     assert(vault, new HttpError(409, "not_claimed", "This deployment has not been claimed"))
+    await this.ensureRecoveryStateId(vault)
     const now = Date.now()
     cleanupExpired(this.sql, now)
     const existing = this.sql
@@ -74,8 +101,18 @@ export class VaultRecovery {
 
   async recover(request: Request): Promise<Response> {
     const input = decode(RecoveryClaimSchema, await requestJson(request))
+    assert(
+      input.recoveryId !== undefined && input.previousRecoveryStateId !== undefined,
+      new HttpError(426, "protocol_upgrade_required", "Update Meridian to recover this vault"),
+    )
+    const recoveryIdentifier = input.recoveryId
+    assertIdentifier(recoveryIdentifier, "recoveryId")
     assertIdentifier(input.challengeId, "challengeId")
     assertIdentifier(input.newDevice.deviceId, "deviceId")
+    assert(
+      base64UrlDecode(input.previousRecoveryStateId, 32).byteLength === 32,
+      new HttpError(400, "invalid_recovery_state", "Recovery predecessor must be 32 bytes"),
+    )
     validatePublicKey(input.newDevice.signingPublicKey, "signingPublicKey")
     validatePublicKey(input.newDevice.hpkePublicKey, "hpkePublicKey")
     validateOpaqueData(input.newDevice.certificate, MAX_CERTIFICATE_BYTES, "certificate")
@@ -86,8 +123,13 @@ export class VaultRecovery {
     )
     validateSignature(input.proof)
 
+    const requestHash = await recoveryRequestHash(input)
+    const existingReceipt = this.receipt(input.recoveryId)
+    if (existingReceipt) return this.duplicateResponse(existingReceipt, requestHash)
+
     const vault = vaultState(this.sql)
     assert(vault, new HttpError(409, "not_claimed", "This deployment has not been claimed"))
+    await this.ensureRecoveryStateId(vault)
     validateRecoveryRootedIdentity(
       input.newDevice,
       vault.vault_id,
@@ -96,19 +138,20 @@ export class VaultRecovery {
     )
     const now = Date.now()
     const challenge = this.sql
-      .exec<{ challenge: string }>(
-        `SELECT challenge FROM recovery_challenges
-         WHERE challenge_id = ? AND consumed_at IS NULL AND expires_at > ?`,
+      .exec<{ challenge: string; expires_at: number; consumed_at: number | null }>(
+        `SELECT challenge, expires_at, consumed_at FROM recovery_challenges
+         WHERE challenge_id = ?`,
         input.challengeId,
-        now,
       )
       .toArray()[0]
     assert(
-      challenge,
+      challenge && challenge.consumed_at === null && challenge.expires_at > now,
       new HttpError(401, "invalid_recovery_challenge", "Recovery challenge is invalid or expired"),
     )
 
     const signingBytes = recoveryClaimSigningBytes({
+      recoveryId: recoveryId(base64UrlDecode(input.recoveryId, 16)),
+      previousRecoveryStateId: hashBytes(base64UrlDecode(input.previousRecoveryStateId, 32)),
       challengeId: input.challengeId,
       challenge: base64UrlDecode(challenge.challenge, 32),
       vaultId: vaultId(base64UrlDecode(vault.vault_id, 16)),
@@ -130,13 +173,36 @@ export class VaultRecovery {
       proofValid,
       new HttpError(401, "invalid_recovery_proof", "Recovery ownership proof is invalid"),
     )
+    const nextRecoveryStateId = base64UrlEncode(
+      await computeRecoveryStateId(
+        vaultId(base64UrlDecode(vault.vault_id, 16)),
+        base64UrlDecode(input.encryptedRecoveryPackage, MAX_RECOVERY_PACKAGE_BYTES),
+      ),
+    )
 
     const recoveredAt = Date.now()
-    this.transactionSync(() => {
+    const result = this.transactionSync(() => {
+      const concurrentReceipt = this.receipt(recoveryIdentifier)
+      if (concurrentReceipt) {
+        assert(
+          concurrentReceipt.request_hash === requestHash,
+          new HttpError(409, "idempotency_conflict", "Recovery ID was used with different content"),
+        )
+        return { receipt: concurrentReceipt, duplicate: true }
+      }
+
       const currentVault = vaultState(this.sql)
       assert(
         currentVault,
         new HttpError(409, "not_claimed", "This deployment has not been claimed"),
+      )
+      assert(
+        currentVault.recovery_state_id === input.previousRecoveryStateId,
+        new HttpError(
+          409,
+          "stale_recovery_state",
+          "A newer recovery package already replaced this state",
+        ),
       )
       validateRecoveryRootedIdentity(
         input.newDevice,
@@ -180,15 +246,108 @@ export class VaultRecovery {
         recoveredAt,
       )
       this.sql.exec(
-        "UPDATE vault_state SET recovery_package = ? WHERE singleton = 1",
+        `UPDATE vault_state SET recovery_package = ?, recovery_state_id = ? WHERE singleton = 1`,
         input.encryptedRecoveryPackage,
+        nextRecoveryStateId,
       )
+      this.sql.exec(
+        `INSERT INTO recovery_receipts(
+          recovery_id, request_hash, device_id, recovery_state_id, recovered_at
+         ) VALUES (?, ?, ?, ?, ?)`,
+        input.recoveryId,
+        requestHash,
+        input.newDevice.deviceId,
+        nextRecoveryStateId,
+        recoveredAt,
+      )
+      return {
+        receipt: {
+          recovery_id: input.recoveryId,
+          request_hash: requestHash,
+          device_id: input.newDevice.deviceId,
+          recovery_state_id: nextRecoveryStateId,
+          recovered_at: recoveredAt,
+        },
+        duplicate: false,
+      }
     })
 
-    this.closeAllSockets()
+    if (!result.duplicate) this.closeAllSockets()
     return json(
-      { vaultId: vault.vault_id, deviceId: input.newDevice.deviceId, recoveredAt },
-      { status: 201 },
+      {
+        vaultId: vault.vault_id,
+        deviceId: result.receipt.device_id,
+        recoveredAt: result.receipt.recovered_at,
+        recoveryStateId: result.receipt.recovery_state_id,
+        duplicate: result.duplicate,
+      },
+      { status: result.duplicate ? 200 : 201 },
     )
   }
+
+  private receipt(recoveryIdValue: string): RecoveryReceipt | undefined {
+    return this.sql
+      .exec<RecoveryReceipt>(
+        "SELECT * FROM recovery_receipts WHERE recovery_id = ?",
+        recoveryIdValue,
+      )
+      .toArray()[0]
+  }
+
+  private duplicateResponse(receipt: RecoveryReceipt, requestHash: string): Response {
+    assert(
+      receipt.request_hash === requestHash,
+      new HttpError(409, "idempotency_conflict", "Recovery ID was used with different content"),
+    )
+    const vault = vaultState(this.sql)
+    assert(vault, new HttpError(409, "not_claimed", "This deployment has not been claimed"))
+    return json({
+      vaultId: vault.vault_id,
+      deviceId: receipt.device_id,
+      recoveredAt: receipt.recovered_at,
+      recoveryStateId: receipt.recovery_state_id,
+      duplicate: true,
+    })
+  }
+
+  private async ensureRecoveryStateId(vault: VaultStateRow): Promise<string> {
+    if (vault.recovery_state_id) return vault.recovery_state_id
+    const computed = base64UrlEncode(
+      await computeRecoveryStateId(
+        vaultId(base64UrlDecode(vault.vault_id, 16)),
+        base64UrlDecode(vault.recovery_package, MAX_RECOVERY_PACKAGE_BYTES),
+      ),
+    )
+    return this.transactionSync(() => {
+      const current = vaultState(this.sql)
+      assert(current, new HttpError(409, "not_claimed", "This deployment has not been claimed"))
+      if (current.recovery_state_id) return current.recovery_state_id
+      this.sql.exec(
+        "UPDATE vault_state SET recovery_state_id = ? WHERE singleton = 1 AND recovery_state_id IS NULL",
+        computed,
+      )
+      return computed
+    })
+  }
+}
+
+async function recoveryRequestHash(input: RecoveryClaim): Promise<string> {
+  return base64UrlEncode(
+    await sha256(
+      encodeCanonical({
+        domain: "meridian/v1/recovery-receipt",
+        recoveryId: input.recoveryId ?? "",
+        previousRecoveryStateId: input.previousRecoveryStateId ?? "",
+        challengeId: input.challengeId,
+        newDevice: {
+          deviceId: input.newDevice.deviceId,
+          signingPublicKey: input.newDevice.signingPublicKey,
+          hpkePublicKey: input.newDevice.hpkePublicKey,
+          certificate: input.newDevice.certificate,
+        },
+        encryptedRecoveryPackage: input.encryptedRecoveryPackage,
+        proof: input.proof,
+      }),
+    ),
+  )
 }

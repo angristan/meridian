@@ -7,13 +7,16 @@ import {
   ed25519Signature,
   encodeCanonical,
   encodeDeviceCertificate,
+  hashBytes,
   Permission,
   pairingId,
+  recoveryId,
   vaultId,
 } from "@meridian/protocol"
 import { describe, expect, it } from "vitest"
 import {
   authChallengeSigningBytes,
+  computeRecoveryStateId,
   consumePairingEpochPackage,
   createFirstDeviceClaimBundle,
   createPairingDeviceRequest,
@@ -129,6 +132,11 @@ describe("plugin-facing cryptography workflows", () => {
     expect(bytesEqual(replacement.device.vaultId, claim.device.vaultId)).toBe(true)
     expect(bytesEqual(replacement.device.deviceId, claim.device.deviceId)).toBe(false)
     const recoveryClaim = {
+      recoveryId: recoveryId(new Uint8Array(16).fill(8)),
+      previousRecoveryStateId: await computeRecoveryStateId(
+        claim.device.vaultId,
+        serializeEncryptedRecoveryPackage(transportedPackage),
+      ),
       challengeId: "recovery-challenge-1",
       challenge: new Uint8Array(32).fill(7),
       vaultId: replacement.device.vaultId,
@@ -144,6 +152,16 @@ describe("plugin-facing cryptography workflows", () => {
     expect(
       verify(recoveryClaimSigningBytes(recoveryClaim), recoveryProof, claim.recoveryPublicKey),
     ).toBe(true)
+    expect(
+      verify(
+        recoveryClaimSigningBytes({
+          ...recoveryClaim,
+          previousRecoveryStateId: hashBytes(new Uint8Array(32).fill(9)),
+        }),
+        recoveryProof,
+        claim.recoveryPublicKey,
+      ),
+    ).toBe(false)
 
     const last = claim.recoveryCode.at(-1)
     const tamperedCode = `${claim.recoveryCode.slice(0, -1)}${last === "A" ? "B" : "A"}`

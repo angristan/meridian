@@ -287,5 +287,30 @@ export function migrateVaultSchema(sql: SqlStorage, transactionSync: Transaction
       }
       sql.exec("INSERT INTO _sql_schema_migrations (id, applied_at) VALUES (5, ?)", Date.now())
     })
+    version = 5
+  }
+
+  if (version < 6) {
+    transactionSync(() => {
+      const vaultDefinition =
+        sql
+          .exec<{ sql: string | null }>(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'vault_state'",
+          )
+          .one().sql ?? ""
+      if (!vaultDefinition.includes("recovery_state_id")) {
+        sql.exec("ALTER TABLE vault_state ADD COLUMN recovery_state_id TEXT")
+      }
+      sql.exec(`
+        CREATE TABLE IF NOT EXISTS recovery_receipts (
+          recovery_id TEXT PRIMARY KEY,
+          request_hash TEXT NOT NULL,
+          device_id TEXT NOT NULL,
+          recovery_state_id TEXT NOT NULL,
+          recovered_at INTEGER NOT NULL
+        )
+      `)
+      sql.exec("INSERT INTO _sql_schema_migrations (id, applied_at) VALUES (6, ?)", Date.now())
+    })
   }
 }

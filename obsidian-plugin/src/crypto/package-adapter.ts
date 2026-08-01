@@ -91,9 +91,10 @@ class PackageCryptoPort implements CryptoPort {
   recoverDevice(
     recoveryCode: string,
     encryptedRecoveryPackage: string,
+    recoveryStateId: string,
     challenge: { challengeId: string; challenge: string },
   ): Promise<RecoveryDeviceMaterial> {
-    return recoverDevice(recoveryCode, encryptedRecoveryPackage, challenge)
+    return recoverDevice(recoveryCode, encryptedRecoveryPackage, recoveryStateId, challenge)
   }
 
   encryptRevision(device: DeviceKeyMaterial, draft: RevisionDraft): Promise<EncryptedRevision> {

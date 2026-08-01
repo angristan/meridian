@@ -232,7 +232,7 @@ describe("Meridian Worker integration", () => {
       const migration = state.storage.sql
         .exec<{ version: number }>("SELECT MAX(id) AS version FROM _sql_schema_migrations")
         .one()
-      expect(migration.version).toBe(5)
+      expect(migration.version).toBe(6)
       const tables = state.storage.sql
         .exec<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table'")
         .toArray()
@@ -264,7 +264,7 @@ describe("Meridian Worker integration", () => {
       const migration = state.storage.sql
         .exec<{ version: number }>("SELECT MAX(id) AS version FROM _sql_schema_migrations")
         .one()
-      expect(migration.version).toBe(5)
+      expect(migration.version).toBe(6)
       expect(
         state.storage.sql
           .exec<{ name: string }>(

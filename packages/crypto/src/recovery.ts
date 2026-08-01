@@ -14,8 +14,11 @@ import {
   encodeCheckpoint,
   encodeEpochDeclaration,
   epochId,
+  type Hash,
+  hashBytes,
   nonce,
   type RecoveryEncryptionKey,
+  type RecoveryId,
   type RecoverySeed,
   type RecoveryState,
   recoverySeed,
@@ -130,7 +133,24 @@ export function deserializeEncryptedRecoveryPackage(encoded: Uint8Array): Encryp
   }
 }
 
+export async function computeRecoveryStateId(
+  vault: VaultId,
+  encryptedRecoveryPackage: Uint8Array,
+): Promise<Hash> {
+  return hashBytes(
+    await sha256(
+      encodeCanonical({
+        domain: "meridian/v1/recovery-state-id",
+        vaultId: vault,
+        encryptedRecoveryPackage,
+      }),
+    ),
+  )
+}
+
 export interface RecoveryClaimSigningInput {
+  readonly recoveryId: RecoveryId
+  readonly previousRecoveryStateId: Hash
   readonly challengeId: string
   readonly challenge: Uint8Array
   readonly vaultId: VaultId
@@ -143,7 +163,9 @@ export interface RecoveryClaimSigningInput {
 
 export function recoveryClaimSigningBytes(input: RecoveryClaimSigningInput): Uint8Array {
   return encodeCanonical({
-    domain: "meridian/v1/recovery-claim",
+    domain: "meridian/v1/recovery-claim-v2",
+    recoveryId: input.recoveryId,
+    previousRecoveryStateId: input.previousRecoveryStateId,
     challengeId: input.challengeId,
     challenge: input.challenge,
     vaultId: input.vaultId,

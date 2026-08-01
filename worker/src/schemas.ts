@@ -39,6 +39,8 @@ export const AuthSessionSchema = Schema.Struct({
 export type AuthSession = typeof AuthSessionSchema.Type
 
 export const RecoveryClaimSchema = Schema.Struct({
+  recoveryId: Schema.optionalKey(Schema.String),
+  previousRecoveryStateId: Schema.optionalKey(Schema.String),
   challengeId: Schema.String,
   newDevice: DevicePublicIdentitySchema,
   encryptedRecoveryPackage: Schema.String,

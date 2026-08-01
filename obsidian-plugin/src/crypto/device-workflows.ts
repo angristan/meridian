@@ -14,6 +14,7 @@ import {
   encodeDeviceCertificate,
   hashBytes,
   LogFormat,
+  recoveryId,
   setupClaimSigningBytes,
 } from "@meridian/protocol"
 import type {
@@ -23,7 +24,7 @@ import type {
   SetupClaim,
   TrustedCheckpoint,
 } from "../model"
-import { fromBase64Url, toBase64Url } from "../platform/bytes"
+import { fromBase64Url, randomId, toBase64Url } from "../platform/bytes"
 import {
   deviceBundle,
   deviceBundleFromSecret,
@@ -167,6 +168,7 @@ export async function signChallenge(
 export async function recoverDevice(
   recoveryCode: string,
   encryptedRecoveryPackage: string,
+  recoveryStateId: string,
   challenge: { challengeId: string; challenge: string },
 ): Promise<RecoveryDeviceMaterial> {
   const recovered = await recoverDeviceFromPackage(
@@ -176,7 +178,10 @@ export async function recoverDevice(
   const device = recovered.device
   const certificate = encodeDeviceCertificate(device.certificate)
   const nextPackage = serializeEncryptedRecoveryPackage(recovered.encryptedRecoveryPackage)
+  const recoveryIdentifier = randomId()
   const proof = await signRecoveryClaim(recoveryCode, {
+    recoveryId: recoveryId(fromBase64Url(recoveryIdentifier, 16)),
+    previousRecoveryStateId: hashBytes(fromBase64Url(recoveryStateId, 32)),
     challengeId: challenge.challengeId,
     challenge: fromBase64Url(challenge.challenge, 32),
     vaultId: device.vaultId,
@@ -191,6 +196,8 @@ export async function recoverDevice(
     deviceId: toBase64Url(device.deviceId),
     keyBundle: serializeStoredDeviceSecret(device, recovered.recoveryPublicKey),
     publicClaim: {
+      recoveryId: recoveryIdentifier,
+      previousRecoveryStateId: recoveryStateId,
       challengeId: challenge.challengeId,
       newDevice: {
         deviceId: toBase64Url(device.deviceId),

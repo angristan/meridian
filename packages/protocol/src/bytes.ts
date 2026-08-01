@@ -15,6 +15,7 @@ export type EpochId = BrandedBytes<"EpochId">
 export type BlobId = BrandedBytes<"BlobId">
 export type CertificateId = BrandedBytes<"CertificateId">
 export type PairingId = BrandedBytes<"PairingId">
+export type RecoveryId = BrandedBytes<"RecoveryId">
 export type Hash = BrandedBytes<"Hash">
 export type Ed25519PublicKey = BrandedBytes<"Ed25519PublicKey">
 export type Ed25519PrivateKey = BrandedBytes<"Ed25519PrivateKey">
@@ -71,6 +72,7 @@ export const epochId = (value: Uint8Array) => idBytes(value, "EpochId") as Epoch
 export const blobId = (value: Uint8Array) => idBytes(value, "BlobId") as BlobId
 export const certificateId = (value: Uint8Array) => idBytes(value, "CertificateId") as CertificateId
 export const pairingId = (value: Uint8Array) => idBytes(value, "PairingId") as PairingId
+export const recoveryId = (value: Uint8Array) => idBytes(value, "RecoveryId") as RecoveryId
 
 export function bytesEqual(left: Uint8Array, right: Uint8Array): boolean {
   if (left.byteLength !== right.byteLength) return false

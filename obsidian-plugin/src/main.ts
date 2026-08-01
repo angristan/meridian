@@ -337,11 +337,12 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
   async recoverVault(endpoint: string, recoveryCode: string): Promise<void> {
     const normalizedEndpoint = normalizeEndpoint(endpoint)
     const remote = new MeridianRemoteClient(normalizedEndpoint, new ObsidianHttpTransport())
-    const encryptedPackage = await remote.getRecoveryPackage()
+    const recoveryPackage = await remote.getRecoveryPackage()
     const challenge = await remote.createRecoveryChallenge()
     const recovered = await this.cryptoPort.recoverDevice(
       recoveryCode.trim(),
-      encryptedPackage,
+      recoveryPackage.encryptedRecoveryPackage,
+      recoveryPackage.recoveryStateId,
       challenge,
     )
     this.secrets.setDeviceKeyBundle(recovered.deviceId, recovered.keyBundle)

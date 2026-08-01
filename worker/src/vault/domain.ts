@@ -14,6 +14,7 @@ export type VaultStateRow = {
   claimed_at: number
   recovery_signing_public_key: string
   recovery_package: string
+  recovery_state_id: string | null
   cursor: number
   head_hash: string
   log_format: "legacy-http-v1" | "canonical-cbor-v1"
