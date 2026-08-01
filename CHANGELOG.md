@@ -1,3 +1,18 @@
+# [1.10.0](https://github.com/angristan/meridian/compare/1.9.0...1.10.0) (2026-08-01)
+
+
+### Bug Fixes
+
+* bind recovery state to epoch transitions ([4f2413c](https://github.com/angristan/meridian/commit/4f2413c997e64086e0d671aad96194df74803659))
+* validate epoch rotation readiness ([61dd5b4](https://github.com/angristan/meridian/commit/61dd5b455895fa1c0980b93b344a104aa1f1ec01))
+
+
+### Features
+
+* define recoverable epoch transitions ([b4835e5](https://github.com/angristan/meridian/commit/b4835e568bb80723fa6c7ae24a10266814e69223))
+* enforce authoritative key epochs ([3545fb1](https://github.com/angristan/meridian/commit/3545fb1680e0524104307713e89f247c3241cb30))
+* rotate vault keys through sync ([6df64b0](https://github.com/angristan/meridian/commit/6df64b0f9fab6df62ac638f40c3a87ce6c335d21))
+
 # [1.9.0](https://github.com/angristan/meridian/compare/1.8.0...1.9.0) (2026-08-01)
 
 
