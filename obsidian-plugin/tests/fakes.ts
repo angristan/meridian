@@ -26,6 +26,7 @@ import type {
   RemoteDevice,
   RemoteOperation,
   RemotePort,
+  RetentionAcknowledgement,
   RevisionDraft,
   ScannedFileSnapshot,
   SelectiveSyncSettings,
@@ -248,6 +249,20 @@ export class FakeCrypto implements CryptoPort {
     return { ...device, trustedCheckpoint: checkpoint, trustedCheckpointAuthorized: true }
   }
 
+  async createRetentionAcknowledgement(
+    device: DeviceKeyMaterial,
+    checkpoint: TrustedCheckpoint,
+  ): Promise<RetentionAcknowledgement> {
+    return {
+      deviceId: device.deviceId,
+      cursor: checkpoint.cursor,
+      logHash: checkpoint.logHash,
+      epochId: device.epochId,
+      historyRetention: "forever",
+      signature: `ack-${checkpoint.cursor}`,
+    }
+  }
+
   async createFirstDevice(vaultId: string): Promise<SetupClaim> {
     return {
       vaultId,
@@ -450,6 +465,7 @@ export class FakeRemote implements RemotePort {
   readonly operations: RemoteOperation[] = []
   authenticateCount = 0
   getChangesCount = 0
+  readonly retentionAcknowledgements: RetentionAcknowledgement[] = []
   private cursor = 0
   private nextChangesBarrier: { started: () => void; resume: Promise<void> } | null = null
   private nextBlobUploadBarrier: { started: () => void; resume: Promise<void> } | null = null
@@ -521,8 +537,16 @@ export class FakeRemote implements RemotePort {
       operationCount: this.operations.length,
       checkpointCount: 0,
       snapshotCount: 0,
+      retentionMode: "forever",
+      activeDeviceCount: 1,
+      acknowledgedDeviceCount: this.retentionAcknowledgements.length > 0 ? 1 : 0,
+      minimumAcknowledgedCursor: this.retentionAcknowledgements.at(-1)?.cursor ?? null,
       pruningAvailable: true,
     }
+  }
+
+  async acknowledgeRetention(acknowledgement: RetentionAcknowledgement): Promise<void> {
+    this.retentionAcknowledgements.push(structuredClone(acknowledgement))
   }
 
   async pruneStorage(): Promise<StoragePruneResult> {

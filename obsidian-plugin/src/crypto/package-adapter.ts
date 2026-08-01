@@ -21,6 +21,7 @@ import type {
   RecoveryDeviceMaterial,
   RemoteDevice,
   RemoteOperation,
+  RetentionAcknowledgement,
   RevisionDraft,
   SetupClaim,
 } from "../model"
@@ -43,6 +44,7 @@ import {
   inspectPairingVerification,
   verifyPairingConfirmation,
 } from "./pairing-workflows"
+import { createRetentionAcknowledgement } from "./retention-workflows"
 import { decryptRevision, encryptRevision, inspectRevision } from "./revision-workflows"
 
 /** Browser-only bridge from plugin workflows to the reviewed shared crypto package. */
@@ -73,6 +75,13 @@ class PackageCryptoPort implements CryptoPort {
     checkpoint: DeviceKeyMaterial["trustedCheckpoint"],
   ): Promise<DeviceKeyMaterial> {
     return refreshTrustedCheckpoint(device, checkpoint)
+  }
+
+  createRetentionAcknowledgement(
+    device: DeviceKeyMaterial,
+    checkpoint: DeviceKeyMaterial["trustedCheckpoint"],
+  ): Promise<RetentionAcknowledgement> {
+    return createRetentionAcknowledgement(device, checkpoint)
   }
 
   createFirstDevice(

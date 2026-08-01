@@ -10,6 +10,10 @@ interface CoordinatorStorage {
   operationCount: number
   checkpointCount: number
   snapshotCount: number
+  retentionMode: "forever"
+  activeDeviceCount: number
+  acknowledgedDeviceCount: number
+  minimumAcknowledgedCursor: number | null
   canPrune: boolean
 }
 
@@ -80,8 +84,23 @@ async function parseCoordinatorStorage(response: Response): Promise<CoordinatorS
     operationCount: nonNegativeNumber(value.operationCount, "operationCount"),
     checkpointCount: nonNegativeNumber(value.checkpointCount, "checkpointCount"),
     snapshotCount: nonNegativeNumber(value.snapshotCount, "snapshotCount"),
+    retentionMode: literalForever(value.retentionMode),
+    activeDeviceCount: nonNegativeNumber(value.activeDeviceCount, "activeDeviceCount"),
+    acknowledgedDeviceCount: nonNegativeNumber(
+      value.acknowledgedDeviceCount,
+      "acknowledgedDeviceCount",
+    ),
+    minimumAcknowledgedCursor:
+      value.minimumAcknowledgedCursor === null
+        ? null
+        : nonNegativeNumber(value.minimumAcknowledgedCursor, "minimumAcknowledgedCursor"),
     canPrune: boolean(value.canPrune, "canPrune"),
   }
+}
+
+function literalForever(value: unknown): "forever" {
+  if (value !== "forever") throw new Error("Coordinator retention mode is invalid")
+  return value
 }
 
 function boolean(value: unknown, field: string): boolean {

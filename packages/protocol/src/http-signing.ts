@@ -191,6 +191,29 @@ export function snapshotUploadSigningBytes(input: CursorArtifactSigningInput): U
   return cursorArtifactSigningBytes("snapshot/v1", "snapshot-id", input)
 }
 
+export interface RetentionAcknowledgementSigningInput {
+  readonly vaultId: string
+  readonly deviceId: string
+  readonly cursor: number
+  readonly logHash: string
+  readonly epochId: string
+  readonly historyRetention: "forever"
+}
+
+/** Binds one device's durable retention floor to an authenticated log and key epoch. */
+export function retentionAcknowledgementSigningBytes(
+  input: RetentionAcknowledgementSigningInput,
+): Uint8Array {
+  return signedHttpMessage("retention-acknowledgement/v1", [
+    ["vault-id", input.vaultId],
+    ["device-id", input.deviceId],
+    ["cursor", input.cursor],
+    ["log-hash", input.logHash],
+    ["epoch-id", input.epochId],
+    ["history-retention", input.historyRetention],
+  ])
+}
+
 function cursorArtifactSigningBytes(
   domain: string,
   idField: string,

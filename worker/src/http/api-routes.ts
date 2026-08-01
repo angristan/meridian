@@ -13,6 +13,7 @@ import {
   PairingReleaseSchema,
   PairingResultSchema,
   RecoveryClaimSchema,
+  RetentionAcknowledgementSchema,
   RevokeDeviceSchema,
   SnapshotSchema,
 } from "../schemas"
@@ -164,6 +165,13 @@ export function registerApiRoutes(app: WorkerApp): void {
     runResponse(
       callVaultEffect(c.env, "/v1/checkpoints/latest", "GET", undefined, sessionToken(c)),
     ),
+  )
+  app.put(
+    "/v1/retention/acknowledgement",
+    proxyJson(RetentionAcknowledgementSchema, () => "/v1/retention/acknowledgement", {
+      authenticated: true,
+      method: "PUT",
+    }),
   )
   app.put(
     "/v1/snapshot",

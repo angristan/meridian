@@ -39,6 +39,7 @@ import type {
   PairingApproval,
   PairingJoin,
   PairingRelease,
+  RetentionAcknowledgement,
   SetupClaim,
 } from "../src/schemas"
 import { migrateVaultSchema } from "../src/vault/migrations"
@@ -48,6 +49,7 @@ import {
   operationSigningMessage,
   pairingApprovalSigningMessage,
   pairingJoinSigningMessage,
+  retentionAcknowledgementSigningMessage,
   setupClaimSigningMessage,
 } from "../src/vault-do"
 
@@ -244,7 +246,7 @@ describe("Meridian Worker integration", () => {
       const migration = state.storage.sql
         .exec<{ version: number }>("SELECT MAX(id) AS version FROM _sql_schema_migrations")
         .one()
-      expect(migration.version).toBe(8)
+      expect(migration.version).toBe(9)
       const tables = state.storage.sql
         .exec<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table'")
         .toArray()
@@ -253,6 +255,7 @@ describe("Meridian Worker integration", () => {
       expect(tables).toContain("devices")
       expect(tables).toContain("snapshots")
       expect(tables).toContain("blob_claims")
+      expect(tables).toContain("retention_acknowledgements")
       const pairingsDefinition = state.storage.sql
         .exec<{ sql: string }>(
           "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'pairings'",
@@ -282,7 +285,7 @@ describe("Meridian Worker integration", () => {
       const migration = state.storage.sql
         .exec<{ version: number }>("SELECT MAX(id) AS version FROM _sql_schema_migrations")
         .one()
-      expect(migration.version).toBe(8)
+      expect(migration.version).toBe(9)
       expect(
         state.storage.sql
           .exec<{ name: string }>(
@@ -604,6 +607,60 @@ describe("Meridian Worker integration", () => {
       headers: authorization,
     })
     expect(oldClient.status).toBe(426)
+  })
+
+  it("records only signed retention acknowledgements on authoritative history", async () => {
+    const stub = env.VAULT.get(env.VAULT.idFromName("retention-acknowledgement-test"))
+    const directFetch: TestFetch = (url, init) => stub.fetch(new Request(url, init))
+    const { deviceId, sessionToken, signingKey, vaultId, device } = await setupAndAuthenticate(
+      directFetch,
+      "/internal/setup/session",
+    )
+    const authorization = { authorization: `Bearer ${sessionToken}` }
+    const unsigned: RetentionAcknowledgement = {
+      deviceId,
+      cursor: 0,
+      logHash: ZERO_HASH,
+      epochId: base64UrlEncode(device.epoch.body.epochId),
+      historyRetention: "forever",
+      signature: base64UrlEncode(randomBytes(64)),
+    }
+    const acknowledgement = {
+      ...unsigned,
+      signature: await sign(signingKey, retentionAcknowledgementSigningMessage(vaultId, unsigned)),
+    }
+    const first = await directFetch("https://example.test/v1/retention/acknowledgement", {
+      method: "PUT",
+      headers: { ...authorization, "content-type": "application/json" },
+      body: JSON.stringify(acknowledgement),
+    })
+    expect(first.status).toBe(200)
+    await expect(first.json()).resolves.toMatchObject({ duplicate: false, cursor: 0 })
+
+    const duplicate = await directFetch("https://example.test/v1/retention/acknowledgement", {
+      method: "PUT",
+      headers: { ...authorization, "content-type": "application/json" },
+      body: JSON.stringify(acknowledgement),
+    })
+    await expect(duplicate.json()).resolves.toMatchObject({ duplicate: true, cursor: 0 })
+
+    const substituted = await directFetch("https://example.test/v1/retention/acknowledgement", {
+      method: "PUT",
+      headers: { ...authorization, "content-type": "application/json" },
+      body: JSON.stringify({ ...acknowledgement, logHash: base64UrlEncode(randomBytes(32)) }),
+    })
+    expect(substituted.status).toBe(409)
+    await expect(substituted.json()).resolves.toMatchObject({ error: { code: "log_mismatch" } })
+
+    const storage = await directFetch("https://example.test/v1/storage", {
+      headers: authorization,
+    })
+    await expect(storage.json()).resolves.toMatchObject({
+      retentionMode: "forever",
+      activeDeviceCount: 1,
+      acknowledgedDeviceCount: 1,
+      minimumAcknowledgedCursor: 0,
+    })
   })
 
   it("claims once, authenticates, appends idempotently, and proxies private blobs", async () => {

@@ -197,6 +197,10 @@ describe("Meridian remote client", () => {
         operationCount: 7,
         checkpointCount: 2,
         snapshotCount: 1,
+        retentionMode: "forever",
+        activeDeviceCount: 2,
+        acknowledgedDeviceCount: 1,
+        minimumAcknowledgedCursor: null,
         canPrune: true,
       }),
     ])
@@ -211,9 +215,37 @@ describe("Meridian remote client", () => {
       operationCount: 7,
       checkpointCount: 2,
       snapshotCount: 1,
+      retentionMode: "forever",
+      activeDeviceCount: 2,
+      acknowledgedDeviceCount: 1,
+      minimumAcknowledgedCursor: null,
       pruningAvailable: true,
     })
     expect(transport.requests.at(-1)?.url).toBe("https://example.test/v1/storage")
+  })
+
+  it("publishes a signed retention acknowledgement", async () => {
+    const transport = new QueueTransport([
+      response({ challengeId: "challenge-id", challenge: "challenge" }),
+      response({ sessionToken: "session-token", expiresAt: Number.MAX_SAFE_INTEGER }),
+      response({ acknowledged: true, duplicate: false, cursor: 7 }),
+    ])
+    const client = new MeridianRemoteClient("https://example.test", transport)
+
+    await client.authenticate(TEST_DEVICE, new FakeCrypto())
+    await client.acknowledgeRetention({
+      deviceId: TEST_DEVICE.deviceId,
+      cursor: 7,
+      logHash: "hash-7",
+      epochId: TEST_DEVICE.epochId,
+      historyRetention: "forever",
+      signature: "signature",
+    })
+
+    expect(transport.requests.at(-1)).toMatchObject({
+      url: "https://example.test/v1/retention/acknowledgement",
+      method: "PUT",
+    })
   })
 
   it("requests owner-authorized orphan cleanup", async () => {

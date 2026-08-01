@@ -372,5 +372,25 @@ export function migrateVaultSchema(sql: SqlStorage, transactionSync: Transaction
       }
       sql.exec("INSERT INTO _sql_schema_migrations (id, applied_at) VALUES (8, ?)", Date.now())
     })
+    version = 8
+  }
+
+  if (version < 9) {
+    transactionSync(() => {
+      sql.exec(`
+        CREATE TABLE IF NOT EXISTS retention_acknowledgements (
+          device_id TEXT PRIMARY KEY,
+          cursor INTEGER NOT NULL CHECK (cursor >= 0),
+          log_hash TEXT NOT NULL,
+          epoch_id TEXT NOT NULL,
+          history_retention TEXT NOT NULL CHECK (history_retention = 'forever'),
+          signature TEXT NOT NULL,
+          acknowledged_at INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS retention_acknowledgements_cursor
+          ON retention_acknowledgements(cursor);
+      `)
+      sql.exec("INSERT INTO _sql_schema_migrations (id, applied_at) VALUES (9, ?)", Date.now())
+    })
   }
 }

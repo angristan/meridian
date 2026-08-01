@@ -512,6 +512,7 @@ export class SyncController {
     if (!push.committed && (await this.startAutomaticProtocolUpgrade(this.requireDevice()))) return
     if (!push.committed && (await this.startAutomaticEpochTransition(this.requireDevice()))) return
 
+    await this.acknowledgeRetention()
     this.updateStatus({
       phase: "idle",
       message: "Up to date",
@@ -657,6 +658,26 @@ export class SyncController {
     }
     this.rerunReason = mergeSyncReasons(this.rerunReason, "notification")
     return true
+  }
+
+  private async acknowledgeRetention(): Promise<void> {
+    const device = this.requireDevice()
+    const checkpoint = (await this.journal.getCheckpoint()) ?? device.trustedCheckpoint
+    const acknowledgement = await this.crypto.createRetentionAcknowledgement(device, checkpoint)
+    try {
+      await this.remote.acknowledgeRetention(acknowledgement)
+    } catch (error) {
+      // A concurrent append or rotation can make an otherwise valid acknowledgement stale. The
+      // next notification sync signs the new head; no cleanup boundary advances in the meantime.
+      if (
+        error instanceof MeridianHttpError &&
+        (error.code === "log_mismatch" || error.code === "stale_epoch")
+      ) {
+        this.rerunReason = mergeSyncReasons(this.rerunReason, "notification")
+        return
+      }
+      throw error
+    }
   }
 
   private async authenticate(device: DeviceKeyMaterial): Promise<void> {

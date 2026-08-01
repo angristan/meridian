@@ -14,6 +14,7 @@ export {
   operationSigningMessage,
   pairingApprovalSigningMessage,
   pairingJoinSigningMessage,
+  retentionAcknowledgementSigningMessage,
   setupClaimSigningMessage,
   snapshotSigningMessage,
 } from "./vault/signing"
@@ -110,6 +111,8 @@ export class VaultDurableObject extends DurableObject<VaultDurableObjectEnv> {
         return await this.records.putCheckpoint(request)
       if (request.method === "GET" && pathname === "/v1/checkpoints/latest")
         return await this.records.latestCheckpoint(request)
+      if (request.method === "PUT" && pathname === "/v1/retention/acknowledgement")
+        return await this.records.acknowledgeRetention(request)
       if (request.method === "PUT" && pathname === "/v1/snapshot")
         return await this.records.putSnapshot(request)
       if (request.method === "GET" && pathname === "/v1/snapshot")

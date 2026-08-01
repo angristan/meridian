@@ -100,6 +100,12 @@ describe("SyncController", () => {
       tombstone: false,
       cursor: 1,
     })
+    expect(remote.retentionAcknowledgements.at(-1)).toMatchObject({
+      cursor: 1,
+      logHash: "hash-1",
+      epochId: TEST_DEVICE.epochId,
+      historyRetention: "forever",
+    })
     expect(statuses.at(-1)).toBe("idle")
     controller.stop()
   })

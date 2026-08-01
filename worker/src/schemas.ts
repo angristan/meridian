@@ -144,4 +144,15 @@ export const SnapshotSchema = Schema.Struct({
 
 export type Snapshot = typeof SnapshotSchema.Type
 
+export const RetentionAcknowledgementSchema = Schema.Struct({
+  deviceId: Schema.String,
+  cursor: Schema.Number,
+  logHash: Schema.String,
+  epochId: Schema.String,
+  historyRetention: Schema.Literal("forever"),
+  signature: Schema.String,
+})
+
+export type RetentionAcknowledgement = typeof RetentionAcknowledgementSchema.Type
+
 export const EmptyObjectSchema = Schema.Struct({})

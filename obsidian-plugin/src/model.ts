@@ -252,6 +252,15 @@ export interface RevisionComparison {
   unavailableReason: string | null
 }
 
+export interface RetentionAcknowledgement {
+  deviceId: string
+  cursor: number
+  logHash: string
+  epochId: string
+  historyRetention: "forever"
+  signature: string
+}
+
 export interface StorageUsage {
   totalBytes: number
   blobBytes: number
@@ -260,6 +269,10 @@ export interface StorageUsage {
   operationCount: number
   checkpointCount: number
   snapshotCount: number
+  retentionMode: "forever"
+  activeDeviceCount: number
+  acknowledgedDeviceCount: number
+  minimumAcknowledgedCursor: number | null
   pruningAvailable: boolean
 }
 
@@ -526,6 +539,10 @@ export interface CryptoPort {
     device: DeviceKeyMaterial,
     checkpoint: TrustedCheckpoint,
   ): Promise<DeviceKeyMaterial>
+  createRetentionAcknowledgement(
+    device: DeviceKeyMaterial,
+    checkpoint: TrustedCheckpoint,
+  ): Promise<RetentionAcknowledgement>
   loadDevice(serializedKeyBundle: string): Promise<DeviceKeyMaterial>
   signChallenge(
     device: DeviceKeyMaterial,
@@ -675,6 +692,7 @@ export interface RemotePort {
   putBlob(blob: EncryptedBlob): Promise<void>
   getBlob(blobId: string): Promise<ArrayBuffer>
   getStorageUsage(): Promise<StorageUsage>
+  acknowledgeRetention(acknowledgement: RetentionAcknowledgement): Promise<void>
   pruneStorage(): Promise<StoragePruneResult>
   commit(envelope: unknown, idempotencyKey: string): Promise<{ cursor: number; logHash: string }>
   listDevices(): Promise<RemoteDevice[]>

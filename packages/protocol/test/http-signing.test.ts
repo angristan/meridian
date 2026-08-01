@@ -5,6 +5,7 @@ import {
   pairingCandidateConfirmationSigningBytes,
   pairingCompletionSigningBytes,
   pairingJoinRequestSigningBytes,
+  retentionAcknowledgementSigningBytes,
   setupClaimSigningBytes,
   signedHttpMessage,
 } from "../src/index.js"
@@ -70,6 +71,23 @@ describe("HTTP signing frames", () => {
     )
     expect(pairingCandidateConfirmationSigningBytes(state)).not.toEqual(
       pairingCandidateConfirmationSigningBytes({ ...state, transferHash: "other" }),
+    )
+  })
+
+  it("binds retention acknowledgements to the exact durable state", () => {
+    const acknowledgement = {
+      vaultId: "vault",
+      deviceId: "device",
+      cursor: 42,
+      logHash: "hash",
+      epochId: "epoch",
+      historyRetention: "forever" as const,
+    }
+    expect(retentionAcknowledgementSigningBytes(acknowledgement)).not.toEqual(
+      retentionAcknowledgementSigningBytes({ ...acknowledgement, cursor: 41 }),
+    )
+    expect(retentionAcknowledgementSigningBytes(acknowledgement)).not.toEqual(
+      retentionAcknowledgementSigningBytes({ ...acknowledgement, epochId: "old-epoch" }),
     )
   })
 

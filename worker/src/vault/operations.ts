@@ -681,11 +681,31 @@ export class VaultOperations {
     const snapshotCount = this.sql
       .exec<{ count: number }>("SELECT COUNT(*) AS count FROM snapshots")
       .one().count
+    const state = vaultState(this.sql)
+    assert(state, new HttpError(409, "not_claimed", "This deployment has not been claimed"))
+    const activeDeviceCount = this.sql
+      .exec<{ count: number }>("SELECT COUNT(*) AS count FROM devices WHERE revoked_at IS NULL")
+      .one().count
+    const acknowledged = this.sql
+      .exec<{ count: number; minimum_cursor: number | null }>(
+        `SELECT COUNT(*) AS count, MIN(a.cursor) AS minimum_cursor
+         FROM retention_acknowledgements a
+         JOIN devices d ON d.device_id = a.device_id
+         WHERE d.revoked_at IS NULL AND (? IS NULL OR a.epoch_id = ?)`,
+        state.current_epoch_id,
+        state.current_epoch_id,
+      )
+      .one()
     return json({
       databaseBytes: this.sql.databaseSize,
       operationCount,
       checkpointCount,
       snapshotCount,
+      retentionMode: "forever",
+      activeDeviceCount,
+      acknowledgedDeviceCount: acknowledged.count,
+      minimumAcknowledgedCursor:
+        acknowledged.count === activeDeviceCount ? acknowledged.minimum_cursor : null,
       canPrune: session.role === "owner",
     })
   }

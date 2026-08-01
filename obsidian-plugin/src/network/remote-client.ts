@@ -10,6 +10,7 @@ import type {
   RemoteChanges,
   RemoteDevice,
   RemotePort,
+  RetentionAcknowledgement,
   SetupClaim,
   StoragePruneResult,
   StorageUsage,
@@ -152,8 +153,20 @@ export class MeridianRemoteClient implements RemotePort {
       operationCount: requiredNumber(result, "operationCount"),
       checkpointCount: requiredNumber(result, "checkpointCount"),
       snapshotCount: requiredNumber(result, "snapshotCount"),
+      retentionMode: requiredForever(result, "retentionMode"),
+      activeDeviceCount: requiredNumber(result, "activeDeviceCount"),
+      acknowledgedDeviceCount: requiredNumber(result, "acknowledgedDeviceCount"),
+      minimumAcknowledgedCursor: requiredNullableNumber(result, "minimumAcknowledgedCursor"),
       pruningAvailable: requiredBoolean(result, "canPrune"),
     }
+  }
+
+  async acknowledgeRetention(acknowledgement: RetentionAcknowledgement): Promise<void> {
+    await this.jsonRequest("/v1/retention/acknowledgement", {
+      method: "PUT",
+      body: acknowledgement,
+      authenticated: true,
+    })
   }
 
   async pruneStorage(): Promise<StoragePruneResult> {
@@ -543,6 +556,20 @@ export class MeridianRemoteClient implements RemotePort {
   private url(path: string): string {
     return `${this.endpoint}${path}`
   }
+}
+
+function requiredNullableNumber(value: unknown, field: string): number | null {
+  if (!isRecord(value) || !(field in value)) {
+    throw new Error(`Server response field ${field} is invalid`)
+  }
+  return value[field] === null ? null : requiredNumber(value, field)
+}
+
+function requiredForever(value: unknown, field: string): "forever" {
+  if (!isRecord(value) || value[field] !== "forever") {
+    throw new Error(`Server response field ${field} is invalid`)
+  }
+  return "forever"
 }
 
 export function normalizeEndpoint(value: string): string {

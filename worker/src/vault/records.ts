@@ -1,6 +1,6 @@
 import { assertIdentifier, verifyEd25519 } from "../encoding"
 import { assert, HttpError } from "../errors"
-import { CheckpointSchema, SnapshotSchema } from "../schemas"
+import { CheckpointSchema, RetentionAcknowledgementSchema, SnapshotSchema } from "../schemas"
 import {
   activeDevice,
   authenticate,
@@ -10,9 +10,14 @@ import {
   requestJson,
   validateOpaqueData,
   validateSignature,
+  vaultState,
 } from "./domain"
 import { hashAtCursor } from "./operations"
-import { checkpointSigningMessage, snapshotSigningMessage } from "./signing"
+import {
+  checkpointSigningMessage,
+  retentionAcknowledgementSigningMessage,
+  snapshotSigningMessage,
+} from "./signing"
 
 export class VaultRecords {
   constructor(private readonly sql: SqlStorage) {}
@@ -94,6 +99,90 @@ export class VaultRecords {
       )
       .toArray()[0]
     return checkpoint ? json({ checkpoint }) : json({ checkpoint: null })
+  }
+
+  async acknowledgeRetention(request: Request): Promise<Response> {
+    const session = await authenticate(this.sql, request)
+    const acknowledgement = decode(RetentionAcknowledgementSchema, await requestJson(request))
+    assertIdentifier(acknowledgement.deviceId, "deviceId")
+    assertIdentifier(acknowledgement.epochId, "epochId")
+    assert(
+      Number.isSafeInteger(acknowledgement.cursor) && acknowledgement.cursor >= 0,
+      new HttpError(400, "invalid_cursor", "Acknowledgement cursor is invalid"),
+    )
+    validateSignature(acknowledgement.signature)
+    assert(
+      acknowledgement.deviceId === session.deviceId,
+      new HttpError(403, "device_mismatch", "Acknowledgement device does not match the session"),
+    )
+    const state = vaultState(this.sql)
+    assert(state, new HttpError(409, "not_claimed", "This deployment has not been claimed"))
+    assert(
+      acknowledgement.cursor <= state.cursor &&
+        hashAtCursor(this.sql, acknowledgement.cursor) === acknowledgement.logHash,
+      new HttpError(409, "log_mismatch", "Acknowledgement does not match the authoritative log"),
+    )
+    assert(
+      state.current_epoch_id === null || acknowledgement.epochId === state.current_epoch_id,
+      new HttpError(409, "stale_epoch", "Acknowledgement uses a stale vault epoch"),
+    )
+    const device = activeDevice(this.sql, session.deviceId)
+    assert(device, new HttpError(401, "device_revoked", "Device is no longer active"))
+    const valid = await verifyEd25519(
+      device.signing_public_key,
+      acknowledgement.signature,
+      retentionAcknowledgementSigningMessage(session.vaultId, acknowledgement),
+    )
+    assert(valid, new HttpError(401, "invalid_signature", "Acknowledgement signature is invalid"))
+    assert(
+      activeDevice(this.sql, session.deviceId),
+      new HttpError(401, "device_revoked", "Device is no longer active"),
+    )
+
+    const existing = this.sql
+      .exec<{
+        cursor: number
+        log_hash: string
+        epoch_id: string
+        history_retention: "forever"
+        signature: string
+      }>("SELECT * FROM retention_acknowledgements WHERE device_id = ?", session.deviceId)
+      .toArray()[0]
+    if (existing && existing.cursor >= acknowledgement.cursor) {
+      assert(
+        existing.cursor === acknowledgement.cursor &&
+          existing.log_hash === acknowledgement.logHash &&
+          existing.epoch_id === acknowledgement.epochId &&
+          existing.history_retention === acknowledgement.historyRetention &&
+          existing.signature === acknowledgement.signature,
+        new HttpError(
+          409,
+          "acknowledgement_rollback",
+          "Retention acknowledgement cannot move backward or fork",
+        ),
+      )
+      return json({ acknowledged: true, duplicate: true, cursor: existing.cursor })
+    }
+    this.sql.exec(
+      `INSERT INTO retention_acknowledgements(
+         device_id, cursor, log_hash, epoch_id, history_retention, signature, acknowledged_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(device_id) DO UPDATE SET
+         cursor = excluded.cursor,
+         log_hash = excluded.log_hash,
+         epoch_id = excluded.epoch_id,
+         history_retention = excluded.history_retention,
+         signature = excluded.signature,
+         acknowledged_at = excluded.acknowledged_at`,
+      session.deviceId,
+      acknowledgement.cursor,
+      acknowledgement.logHash,
+      acknowledgement.epochId,
+      acknowledgement.historyRetention,
+      acknowledgement.signature,
+      Date.now(),
+    )
+    return json({ acknowledged: true, duplicate: false, cursor: acknowledgement.cursor })
   }
 
   async putSnapshot(request: Request): Promise<Response> {

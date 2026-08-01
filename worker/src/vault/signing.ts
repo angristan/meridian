@@ -10,6 +10,7 @@ import {
   Permission,
   pairingApprovalRequestSigningBytes,
   pairingJoinRequestSigningBytes,
+  retentionAcknowledgementSigningBytes,
   setupClaimSigningBytes,
   snapshotUploadSigningBytes,
   vaultId,
@@ -24,6 +25,7 @@ import type {
   PairingApproval,
   PairingJoin,
   PairingRelease,
+  RetentionAcknowledgement,
   SetupClaim,
   Snapshot,
 } from "../schemas"
@@ -165,6 +167,20 @@ export function checkpointSigningMessage(checkpoint: Checkpoint): Uint8Array {
     logHash: checkpoint.logHash,
     epochId: checkpoint.epochId,
     envelope: base64UrlDecode(checkpoint.envelope, MAX_ENVELOPE_BYTES),
+  })
+}
+
+export function retentionAcknowledgementSigningMessage(
+  vaultId: string,
+  acknowledgement: RetentionAcknowledgement,
+): Uint8Array {
+  return retentionAcknowledgementSigningBytes({
+    vaultId,
+    deviceId: acknowledgement.deviceId,
+    cursor: acknowledgement.cursor,
+    logHash: acknowledgement.logHash,
+    epochId: acknowledgement.epochId,
+    historyRetention: acknowledgement.historyRetention,
   })
 }
 
