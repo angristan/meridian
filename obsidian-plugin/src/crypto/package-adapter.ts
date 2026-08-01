@@ -8,6 +8,8 @@ import type {
   DeviceRevocationRecord,
   EncryptedRevision,
   HistoryRevisionMetadata,
+  LogFormat,
+  LogFormatUpgradeMaterial,
   PairedDeviceMaterial,
   PairingApprovalMaterial,
   PairingCapability,
@@ -30,6 +32,7 @@ import {
   refreshTrustedCheckpoint,
   signChallenge,
 } from "./device-workflows"
+import { createLogFormatUpgrade, verifyLogFormatUpgrade } from "./log-format-transition"
 import {
   approvePairing,
   consumePairingResult,
@@ -46,8 +49,13 @@ export function createPackageCryptoPort(): CryptoPort {
 }
 
 class PackageCryptoPort implements CryptoPort {
-  verifyOperationLogLink(operation: RemoteOperation, previousHash: string): Promise<void> {
-    return assertRemoteLogLink(operation, previousHash)
+  verifyOperationLogLink(
+    device: DeviceKeyMaterial,
+    operation: RemoteOperation,
+    previousHash: string,
+    logFormat: LogFormat,
+  ): Promise<void> {
+    return assertRemoteLogLink(device.vaultId, operation, previousHash, logFormat)
   }
 
   inspectRevision(
@@ -114,6 +122,20 @@ class PackageCryptoPort implements CryptoPort {
     operation: RemoteOperation,
   ): Promise<DeviceRevocationRecord> {
     return verifyDeviceRevocation(device, operation)
+  }
+
+  createLogFormatUpgrade(
+    device: DeviceKeyMaterial,
+    checkpoint: DeviceKeyMaterial["trustedCheckpoint"],
+  ): Promise<LogFormatUpgradeMaterial> {
+    return createLogFormatUpgrade(device, checkpoint)
+  }
+
+  verifyLogFormatUpgrade(
+    device: DeviceKeyMaterial,
+    operation: RemoteOperation,
+  ): Promise<"canonical-cbor-v1"> {
+    return verifyLogFormatUpgrade(device, operation)
   }
 
   createPairingJoin(

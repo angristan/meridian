@@ -10,6 +10,8 @@ import type {
   EncryptedBlob,
   EncryptedRevision,
   HistoryRevisionMetadata,
+  LogFormat,
+  LogFormatUpgradeMaterial,
   PairedDeviceMaterial,
   PairingApprovalMaterial,
   PairingCapability,
@@ -204,7 +206,12 @@ export interface FakeEnvelope {
 }
 
 export class FakeCrypto implements CryptoPort {
-  async verifyOperationLogLink(): Promise<void> {}
+  async verifyOperationLogLink(
+    _device: DeviceKeyMaterial,
+    _operation: RemoteOperation,
+    _previousHash: string,
+    _logFormat: LogFormat,
+  ): Promise<void> {}
 
   async inspectRevision(
     _device: DeviceKeyMaterial,
@@ -356,6 +363,26 @@ export class FakeCrypto implements CryptoPort {
       operationId: envelope.operationId,
       cursor: operation.cursor,
     }
+  }
+
+  async createLogFormatUpgrade(
+    device: DeviceKeyMaterial,
+    checkpoint: TrustedCheckpoint,
+  ): Promise<LogFormatUpgradeMaterial> {
+    return {
+      operationId: "log-format-transition",
+      envelope: {
+        operationId: "log-format-transition",
+        authorDeviceId: device.deviceId,
+        type: "log-format-transition",
+        previousCursor: checkpoint.cursor,
+        previousHash: checkpoint.logHash,
+      },
+    }
+  }
+
+  async verifyLogFormatUpgrade(): Promise<"canonical-cbor-v1"> {
+    return "canonical-cbor-v1"
   }
 
   async createPairingJoin(_pairing: PairingCapability): Promise<PairingJoinMaterial> {
@@ -552,6 +579,21 @@ export class FakeRemote implements RemotePort {
   ): () => void {
     onState(true)
     return () => onState(false)
+  }
+
+  addLogFormatTransition(): void {
+    const previousCursor = this.cursor
+    this.cursor += 1
+    this.operations.push({
+      cursor: this.cursor,
+      logHash: `hash-${this.cursor}`,
+      envelope: {
+        type: "log-format-transition",
+        operationId: `transition-${this.cursor}`,
+        authorDeviceId: TEST_DEVICE.deviceId,
+        previousHash: previousCursor === 0 ? "hash-0" : `hash-${previousCursor}`,
+      },
+    })
   }
 
   addRemoteRevision(envelope: FakeEnvelope, bytes: ArrayBuffer | null): void {

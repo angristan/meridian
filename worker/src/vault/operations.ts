@@ -1,4 +1,13 @@
-import { decodeOperation, logChainSigningBytes } from "@meridian/protocol"
+import {
+  decodeOperation,
+  hashBytes,
+  LogFormat,
+  logChainSigningBytes,
+  logEntryHashInput,
+  operationSigningBytes,
+  type SignedOperation,
+  vaultId,
+} from "@meridian/protocol"
 import {
   assertIdentifier,
   base64UrlDecode,
@@ -67,6 +76,54 @@ export class VaultOperations {
     private readonly blobs: R2Bucket,
   ) {}
 
+  private async canonicalOperation(
+    operation: Operation,
+    vault: string,
+    signingPublicKey: string,
+  ): Promise<SignedOperation> {
+    let signed: SignedOperation
+    try {
+      signed = decodeOperation(base64UrlDecode(operation.envelope, MAX_ENVELOPE_BYTES))
+    } catch {
+      throw new HttpError(
+        400,
+        "invalid_operation_envelope",
+        "Operation envelope is not canonical generation-1 data",
+      )
+    }
+    const body = signed.body
+    const expectedBodyType =
+      operation.type === "device-revocation"
+        ? "device-revocation"
+        : operation.type === "key-epoch"
+          ? "epoch-transition"
+          : operation.type === "log-format-transition"
+            ? "log-format-transition"
+            : "revision"
+    assert(
+      body.type === expectedBodyType &&
+        base64UrlEncode(body.operationId) === operation.operationId &&
+        base64UrlEncode(body.vaultId) === vault &&
+        base64UrlEncode(body.epochId) === operation.epochId &&
+        body.authorDeviceId !== "recovery" &&
+        base64UrlEncode(body.authorDeviceId) === operation.authorDeviceId,
+      new HttpError(
+        400,
+        "operation_envelope_mismatch",
+        "Operation wrapper does not match its canonical signed envelope",
+      ),
+    )
+    assert(
+      await verifyEd25519(
+        signingPublicKey,
+        base64UrlEncode(signed.signature),
+        operationSigningBytes(body),
+      ),
+      new HttpError(401, "invalid_signature", "Canonical operation signature is invalid"),
+    )
+    return signed
+  }
+
   private async operationRequestHash(operation: Operation): Promise<string> {
     return base64UrlEncode(
       await sha256(
@@ -100,7 +157,7 @@ export class VaultOperations {
         "A subject device is allowed only on revocation operations",
       ),
     )
-    if (operation.type === "key-epoch") {
+    if (operation.type === "key-epoch" || operation.type === "log-format-transition") {
       assert(
         session.role === "owner",
         new HttpError(403, "owner_required", "This operation requires an owner device"),
@@ -133,6 +190,11 @@ export class VaultOperations {
       signatureValid,
       new HttpError(401, "invalid_signature", "Operation signature is invalid"),
     )
+    const signedOperation = await this.canonicalOperation(
+      operation,
+      session.vaultId,
+      author.signing_public_key,
+    )
     const requestHash = await this.operationRequestHash(operation)
 
     for (let attempt = 0; attempt < 5; attempt += 1) {
@@ -156,19 +218,43 @@ export class VaultOperations {
 
       const state = vaultState(this.sql)
       assert(state, new HttpError(409, "not_claimed", "This deployment has not been claimed"))
+      assert(
+        state.log_format === LogFormat.LegacyHttpV1 ||
+          state.log_format === LogFormat.CanonicalCborV1,
+        new HttpError(500, "invalid_log_format", "Stored log format is invalid"),
+      )
+      const transition =
+        signedOperation.body.type === "log-format-transition" ? signedOperation.body : null
+      if (transition) {
+        assert(
+          state.log_format === LogFormat.LegacyHttpV1 &&
+            transition.previousCursor === state.cursor &&
+            base64UrlEncode(transition.previousLogHash) === state.head_hash,
+          new HttpError(
+            409,
+            "log_transition_conflict",
+            "Log transition does not match the current legacy head",
+          ),
+        )
+      }
       const previousHashBytes = base64UrlDecode(state.head_hash, 32)
-      const chainHash = base64UrlEncode(
-        await sha256(
-          concatBytes(
-            logChainSigningBytes(
+      const cursor = state.cursor + 1
+      const hashInput =
+        state.log_format === LogFormat.CanonicalCborV1
+          ? logEntryHashInput(
+              vaultId(base64UrlDecode(state.vault_id, 16)),
+              cursor,
+              hashBytes(previousHashBytes),
+              signedOperation,
+            )
+          : logChainSigningBytes(
               previousHashBytes,
               operationSigningMessage(operation),
               base64UrlDecode(operation.signature, 64),
-            ),
-          ),
-        ),
-      )
-      const cursor = state.cursor + 1
+            )
+      const chainHash = base64UrlEncode(await sha256(hashInput))
+      const nextLogFormat = transition?.nextLogFormat ?? state.log_format
+      const transitionCursor = transition ? cursor : state.log_transition_cursor
       const createdAt = Date.now()
 
       try {
@@ -198,7 +284,8 @@ export class VaultOperations {
           if (
             !freshState ||
             freshState.cursor !== state.cursor ||
-            freshState.head_hash !== state.head_hash
+            freshState.head_hash !== state.head_hash ||
+            freshState.log_format !== state.log_format
           ) {
             throw new RetryAppend()
           }
@@ -222,9 +309,13 @@ export class VaultOperations {
             createdAt,
           )
           this.sql.exec(
-            "UPDATE vault_state SET cursor = ?, head_hash = ? WHERE singleton = 1",
+            `UPDATE vault_state
+             SET cursor = ?, head_hash = ?, log_format = ?, log_transition_cursor = ?
+             WHERE singleton = 1`,
             cursor,
             chainHash,
+            nextLogFormat,
+            transitionCursor,
           )
 
           if (operation.type === "device-revocation") {

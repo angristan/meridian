@@ -33,6 +33,7 @@ export const AuthSessionSchema = Schema.Struct({
   deviceId: Schema.String,
   challengeId: Schema.String,
   signature: Schema.String,
+  supportedLogFormats: Schema.optionalKey(Schema.Array(Schema.String)),
 })
 
 export type AuthSession = typeof AuthSessionSchema.Type
@@ -99,6 +100,7 @@ export const OperationTypeSchema = Schema.Literals([
   "restore",
   "device-revocation",
   "key-epoch",
+  "log-format-transition",
 ])
 
 export const OperationSchema = Schema.Struct({

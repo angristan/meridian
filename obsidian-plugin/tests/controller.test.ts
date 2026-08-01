@@ -5,6 +5,7 @@ import type {
   EncryptedBlob,
   EncryptedRevision,
   JournalEntry,
+  RemoteOperation,
   RevisionDraft,
   ScannedFileSnapshot,
   SelectiveSyncSettings,
@@ -146,6 +147,43 @@ describe("SyncController", () => {
     expect(vault.targetedScans).toEqual([["note.md"]])
     expect(remote.operations.at(-1)?.envelope).toMatchObject({ path: "note.md" })
     expect(await journal.listDirtyPaths()).toEqual([])
+    controller.stop()
+  })
+
+  it("switches formats only after applying a signed log transition", async () => {
+    const vault = new FakeVault()
+    const journal = new MemoryJournal()
+    const remote = new FakeRemote()
+    remote.addLogFormatTransition()
+    const verifiedFormats: string[] = []
+    class FormatTrackingCrypto extends FakeCrypto {
+      override async verifyOperationLogLink(
+        _device: DeviceKeyMaterial,
+        _operation: RemoteOperation,
+        _previousHash: string,
+        logFormat: "legacy-http-v1" | "canonical-cbor-v1",
+      ): Promise<void> {
+        verifiedFormats.push(logFormat)
+      }
+    }
+    const controller = new SyncController(
+      vault,
+      journal,
+      remote,
+      new FormatTrackingCrypto(),
+      () => ALL_CATEGORIES,
+      () => {},
+    )
+
+    await controller.start(TEST_DEVICE)
+
+    expect(verifiedFormats).toEqual(["legacy-http-v1"])
+    expect(await journal.getCheckpoint()).toEqual({
+      cursor: 1,
+      logHash: "hash-1",
+      initialLogFormat: "legacy-http-v1",
+      logFormat: "canonical-cbor-v1",
+    })
     controller.stop()
   })
 

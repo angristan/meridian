@@ -1,4 +1,11 @@
-import type { DeviceKeyMaterial, PullSyncProgress, RemoteOperation, RemotePort } from "../model"
+import type {
+  DeviceKeyMaterial,
+  LogFormat,
+  PullSyncProgress,
+  RemoteOperation,
+  RemotePort,
+  TrustedCheckpoint,
+} from "../model"
 import { toBase64Url } from "../platform/bytes"
 import { yieldToEventLoop } from "../platform/scheduling"
 import type { JournalPort } from "../storage/journal"
@@ -14,8 +21,10 @@ export class PullEngine {
     private readonly remote: RemotePort,
     private readonly applier: OperationApplier,
     private readonly verifyLogLink: (
+      device: DeviceKeyMaterial,
       operation: RemoteOperation,
       previousHash: string,
+      logFormat: LogFormat,
     ) => Promise<void>,
   ) {}
 
@@ -30,6 +39,12 @@ export class PullEngine {
       throw new Error("Local operation log checkpoint is missing")
     }
     let previousHash = startingCheckpoint?.logHash ?? toBase64Url(new Uint8Array(32))
+    const trustedFormats = checkpointFormats(device.trustedCheckpoint)
+    const startingFormats = startingCheckpoint
+      ? checkpointFormats(startingCheckpoint)
+      : trustedFormats
+    const initialLogFormat = startingFormats.initialLogFormat
+    let logFormat = startCursor === 0 ? initialLogFormat : startingFormats.logFormat
     let cursor = startCursor
     let targetCursor = startCursor
     let processedSinceYield = 0
@@ -48,7 +63,7 @@ export class PullEngine {
         if (operation.cursor !== cursor + 1) {
           throw new Error(`Operation log is discontinuous at cursor ${operation.cursor}`)
         }
-        await this.verifyLogLink(operation, previousHash)
+        await this.verifyLogLink(device, operation, previousHash, logFormat)
         if (
           operation.cursor === trustedFloor.cursor &&
           operation.logHash !== trustedFloor.logHash
@@ -64,9 +79,26 @@ export class PullEngine {
             totalBytes: blob.totalBytes,
           }),
         )
+        if (operationType(operation) === "log-format-transition") {
+          logFormat = "canonical-cbor-v1"
+        }
         cursor = operation.cursor
         previousHash = operation.logHash
-        await this.journal.setCheckpoint({ cursor, logHash: operation.logHash })
+        if (cursor === trustedFloor.cursor) {
+          const floorFormats = checkpointFormats(trustedFloor)
+          if (
+            initialLogFormat !== floorFormats.initialLogFormat ||
+            logFormat !== floorFormats.logFormat
+          ) {
+            throw new Error("Server log format conflicts with the signed checkpoint")
+          }
+        }
+        await this.journal.setCheckpoint({
+          cursor,
+          logHash: operation.logHash,
+          initialLogFormat,
+          logFormat,
+        })
         onProgress(pullProgress(startCursor, cursor, targetCursor))
         processedSinceYield += 1
         if (processedSinceYield >= 25) {
@@ -80,6 +112,23 @@ export class PullEngine {
       }
     }
   }
+}
+
+function checkpointFormats(checkpoint: TrustedCheckpoint): {
+  initialLogFormat: LogFormat
+  logFormat: LogFormat
+} {
+  return {
+    initialLogFormat: checkpoint.initialLogFormat ?? "legacy-http-v1",
+    logFormat: checkpoint.logFormat ?? "legacy-http-v1",
+  }
+}
+
+function operationType(operation: RemoteOperation): string {
+  const envelope = operation.envelope
+  if (typeof envelope !== "object" || envelope === null || Array.isArray(envelope)) return ""
+  const type = (envelope as Record<string, unknown>).type
+  return typeof type === "string" ? type : ""
 }
 
 function pullProgress(

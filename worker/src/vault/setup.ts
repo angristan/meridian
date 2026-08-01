@@ -130,8 +130,9 @@ export class VaultSetup {
 
       this.sql.exec(
         `INSERT INTO vault_state(
-          singleton, vault_id, claimed_at, recovery_signing_public_key, recovery_package, cursor, head_hash
-         ) VALUES (1, ?, ?, ?, ?, 0, ?)`,
+          singleton, vault_id, claimed_at, recovery_signing_public_key, recovery_package,
+          cursor, head_hash, log_format
+         ) VALUES (1, ?, ?, ?, ?, 0, ?, 'canonical-cbor-v1')`,
         claim.vaultId,
         claimedAt,
         claim.recoverySigningPublicKey,

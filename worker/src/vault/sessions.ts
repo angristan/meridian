@@ -74,6 +74,11 @@ export class VaultSessions {
     validateSignature(input.signature)
     const vault = vaultState(this.sql)
     assert(vault, new HttpError(409, "not_claimed", "This deployment has not been claimed"))
+    const supportsCanonicalLog = input.supportedLogFormats?.includes("canonical-cbor-v1") === true
+    assert(
+      vault.log_format !== "canonical-cbor-v1" || supportsCanonicalLog,
+      new HttpError(426, "protocol_upgrade_required", "Update Meridian to continue syncing"),
+    )
     const device = activeDevice(this.sql, input.deviceId)
     assert(device, new HttpError(404, "device_not_found", "Device is not authorized"))
 
@@ -122,11 +127,14 @@ export class VaultSessions {
         new HttpError(401, "invalid_challenge", "Challenge was already used"),
       )
       this.sql.exec(
-        "INSERT INTO sessions(token_hash, device_id, created_at, expires_at) VALUES (?, ?, ?, ?)",
+        `INSERT INTO sessions(
+          token_hash, device_id, created_at, expires_at, supports_canonical_log
+        ) VALUES (?, ?, ?, ?, ?)`,
         sessionHash,
         input.deviceId,
         committedAt,
         committedAt + AUTH_SESSION_TTL_MS,
+        supportsCanonicalLog ? 1 : 0,
       )
     })
     return json({

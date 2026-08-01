@@ -476,7 +476,10 @@ export class MeridianRemoteClient implements RemotePort {
       })
       const sessionResult = await this.jsonRequest("/v1/auth/session", {
         method: "POST",
-        body: proof,
+        body: {
+          ...proof,
+          supportedLogFormats: ["legacy-http-v1", "canonical-cbor-v1"],
+        },
         authenticated: false,
       })
       const sessionToken = requiredString(sessionResult, "sessionToken")

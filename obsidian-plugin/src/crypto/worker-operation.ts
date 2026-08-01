@@ -7,6 +7,7 @@ export type WorkerOperationType =
   | "restore"
   | "device-revocation"
   | "key-epoch"
+  | "log-format-transition"
 
 export interface WorkerOperation {
   readonly operationId: string
@@ -65,7 +66,8 @@ function operationType(value: unknown): WorkerOperationType {
     value !== "tombstone" &&
     value !== "restore" &&
     value !== "device-revocation" &&
-    value !== "key-epoch"
+    value !== "key-epoch" &&
+    value !== "log-format-transition"
   ) {
     throw new Error("Remote operation has an invalid type")
   }

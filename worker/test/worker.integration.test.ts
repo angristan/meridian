@@ -1,14 +1,33 @@
 import { env, runInDurableObject, SELF } from "cloudflare:test"
 import {
   createFirstDeviceClaimBundle,
+  type DeviceKeyBundle,
   serializeEncryptedRecoveryPackage,
   sign as signBytes,
+  signOperation,
 } from "@meridian/crypto"
 import {
+  CIPHER_SUITE,
+  certificateId,
+  epochId as deviceEpochId,
   type Ed25519PrivateKey,
+  ed25519Signature,
   encodeDeviceCertificate,
+  encodeOperation,
+  fileId,
+  hashBytes,
+  LogFormat,
+  logChainSigningBytes,
+  logEntryHashInput,
+  nonce,
+  operationId,
+  operationSigningBytes,
   pairingCandidateConfirmationSigningBytes,
   pairingCompletionSigningBytes,
+  deviceId as protocolDeviceId,
+  vaultId as protocolVaultId,
+  revisionId,
+  wrappedRevisionKey,
 } from "@meridian/protocol"
 import { describe, expect, it } from "vitest"
 import { base64UrlDecode, base64UrlEncode, randomToken, sha256, ZERO_HASH } from "../src/encoding"
@@ -65,12 +84,51 @@ async function sign(
   )
 }
 
+async function signedRevocation(
+  key: CryptoKeyPair | Ed25519PrivateKey,
+  vault: string,
+  authorDeviceId: string,
+  epoch: string,
+  subjectDeviceId: string,
+): Promise<Operation> {
+  const identifier = operationId(randomBytes(16))
+  const body = {
+    type: "device-revocation" as const,
+    operationId: identifier,
+    vaultId: protocolVaultId(base64UrlDecode(vault, 16)),
+    epochId: deviceEpochId(base64UrlDecode(epoch, 16)),
+    authorDeviceId: protocolDeviceId(base64UrlDecode(authorDeviceId, 16)),
+    certificateId: certificateId(randomBytes(16)),
+    reason: "retired" as const,
+    suite: CIPHER_SUITE,
+  }
+  const signed = {
+    body,
+    signature: ed25519Signature(base64UrlDecode(await sign(key, operationSigningBytes(body)), 64)),
+  }
+  const unsigned: Operation = {
+    operationId: base64UrlEncode(identifier),
+    authorDeviceId,
+    epochId: epoch,
+    type: "device-revocation",
+    subjectDeviceId,
+    envelope: base64UrlEncode(encodeOperation(signed)),
+    signature: base64UrlEncode(randomBytes(64)),
+  }
+  return { ...unsigned, signature: await sign(key, operationSigningMessage(unsigned)) }
+}
+
+type TestFetch = (url: string, init?: RequestInit) => Promise<Response>
+
+const publicFetch: TestFetch = (url, init) => SELF.fetch(url, init)
+
 async function authenticateDevice(
   vaultId: string,
   deviceId: string,
   signingKey: CryptoKeyPair | Ed25519PrivateKey,
+  fetcher: TestFetch = publicFetch,
 ): Promise<string> {
-  const challengeResponse = await SELF.fetch("https://example.test/v1/auth/challenge", {
+  const challengeResponse = await fetcher("https://example.test/v1/auth/challenge", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ deviceId }),
@@ -80,7 +138,7 @@ async function authenticateDevice(
     challengeId: string
     challenge: string
   }
-  const repeatedChallengeResponse = await SELF.fetch("https://example.test/v1/auth/challenge", {
+  const repeatedChallengeResponse = await fetcher("https://example.test/v1/auth/challenge", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ deviceId }),
@@ -92,12 +150,13 @@ async function authenticateDevice(
     deviceId,
     challengeId: challenge.challengeId,
     signature: base64UrlEncode(randomBytes(64)),
+    supportedLogFormats: ["legacy-http-v1", "canonical-cbor-v1"],
   }
   authInput.signature = await sign(
     signingKey,
     authSigningMessage(vaultId, authInput, challenge.challenge),
   )
-  const sessionResponse = await SELF.fetch("https://example.test/v1/auth/session", {
+  const sessionResponse = await fetcher("https://example.test/v1/auth/session", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(authInput),
@@ -107,11 +166,15 @@ async function authenticateDevice(
   return session.sessionToken
 }
 
-async function setupAndAuthenticate(): Promise<{
+async function setupAndAuthenticate(
+  fetcher: TestFetch = publicFetch,
+  setupPath = "/v1/setup/session",
+): Promise<{
   readonly deviceId: string
   readonly sessionToken: string
   readonly signingKey: Ed25519PrivateKey
   readonly vaultId: string
+  readonly device: DeviceKeyBundle
 }> {
   const first = await createFirstDeviceClaimBundle()
   const signingKey = first.device.signingPrivateKey
@@ -119,7 +182,7 @@ async function setupAndAuthenticate(): Promise<{
   const vaultId = base64UrlEncode(first.device.vaultId)
   const signingPublicKey = base64UrlEncode(first.device.signingPublicKey)
 
-  const setupResponse = await SELF.fetch("https://example.test/v1/setup/session", {
+  const setupResponse = await fetcher(`https://example.test${setupPath}`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ token: SETUP_TOKEN }),
@@ -149,15 +212,15 @@ async function setupAndAuthenticate(): Promise<{
     ...unsignedClaim,
     proof: await sign(signingKey, setupClaimSigningMessage(unsignedClaim, setup.claimChallenge)),
   }
-  const claimResponse = await SELF.fetch("https://example.test/v1/setup/claim", {
+  const claimResponse = await fetcher("https://example.test/v1/setup/claim", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(claim),
   })
   expect(claimResponse.status).toBe(201)
 
-  const sessionToken = await authenticateDevice(vaultId, deviceId, signingKey)
-  return { deviceId, sessionToken, signingKey, vaultId }
+  const sessionToken = await authenticateDevice(vaultId, deviceId, signingKey, fetcher)
+  return { deviceId, sessionToken, signingKey, vaultId, device: first.device }
 }
 
 describe("Meridian Worker integration", () => {
@@ -169,7 +232,7 @@ describe("Meridian Worker integration", () => {
       const migration = state.storage.sql
         .exec<{ version: number }>("SELECT MAX(id) AS version FROM _sql_schema_migrations")
         .one()
-      expect(migration.version).toBe(4)
+      expect(migration.version).toBe(5)
       const tables = state.storage.sql
         .exec<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table'")
         .toArray()
@@ -201,7 +264,7 @@ describe("Meridian Worker integration", () => {
       const migration = state.storage.sql
         .exec<{ version: number }>("SELECT MAX(id) AS version FROM _sql_schema_migrations")
         .one()
-      expect(migration.version).toBe(4)
+      expect(migration.version).toBe(5)
       expect(
         state.storage.sql
           .exec<{ name: string }>(
@@ -212,8 +275,152 @@ describe("Meridian Worker integration", () => {
     })
   })
 
+  it("bridges a migrated legacy log and blocks old sessions", async () => {
+    const primaryStub = env.VAULT.get(env.VAULT.idFromName("log-transition-test"))
+    const directFetch: TestFetch = (url, init) => primaryStub.fetch(new Request(url, init))
+    const { deviceId, sessionToken, signingKey, vaultId, device } = await setupAndAuthenticate(
+      directFetch,
+      "/internal/setup/session",
+    )
+    const authorization = { authorization: `Bearer ${sessionToken}` }
+    await runInDurableObject(primaryStub, async (_instance, state) => {
+      state.storage.sql.exec(
+        "UPDATE vault_state SET log_format = 'legacy-http-v1', log_transition_cursor = NULL",
+      )
+    })
+
+    const transitionIdentifier = operationId(randomBytes(16))
+    const signedTransition = signOperation(
+      {
+        type: "log-format-transition",
+        operationId: transitionIdentifier,
+        vaultId: device.vaultId,
+        epochId: device.epoch.body.epochId,
+        authorDeviceId: device.deviceId,
+        previousCursor: 0,
+        previousLogHash: hashBytes(new Uint8Array(32)),
+        nextLogFormat: LogFormat.CanonicalCborV1,
+        suite: CIPHER_SUITE,
+      },
+      device.signingPrivateKey,
+    )
+    const transitionUnsigned: Operation = {
+      operationId: base64UrlEncode(transitionIdentifier),
+      authorDeviceId: deviceId,
+      epochId: base64UrlEncode(device.epoch.body.epochId),
+      type: "log-format-transition",
+      envelope: base64UrlEncode(encodeOperation(signedTransition)),
+      signature: base64UrlEncode(randomBytes(64)),
+    }
+    const transition: Operation = {
+      ...transitionUnsigned,
+      signature: await sign(signingKey, operationSigningMessage(transitionUnsigned)),
+    }
+    const transitionResponse = await directFetch("https://example.test/v1/operations", {
+      method: "POST",
+      headers: { ...authorization, "content-type": "application/json" },
+      body: JSON.stringify(transition),
+    })
+    expect(transitionResponse.status).toBe(201)
+    const transitionResult = (await transitionResponse.json()) as {
+      cursor: number
+      chainHash: string
+    }
+    expect(transitionResult.cursor).toBe(1)
+    expect(transitionResult.chainHash).toBe(
+      base64UrlEncode(
+        await sha256(
+          logChainSigningBytes(
+            new Uint8Array(32),
+            operationSigningMessage(transition),
+            base64UrlDecode(transition.signature, 64),
+          ),
+        ),
+      ),
+    )
+    const duplicate = await directFetch("https://example.test/v1/operations", {
+      method: "POST",
+      headers: { ...authorization, "content-type": "application/json" },
+      body: JSON.stringify(transition),
+    })
+    expect(duplicate.status).toBe(200)
+
+    const revisionIdentifier = operationId(randomBytes(16))
+    const signedRevision = signOperation(
+      {
+        type: "revision",
+        operationId: revisionIdentifier,
+        vaultId: device.vaultId,
+        epochId: device.epoch.body.epochId,
+        authorDeviceId: device.deviceId,
+        fileId: fileId(randomBytes(16)),
+        revisionId: revisionId(randomBytes(16)),
+        wrappedRevisionKey: wrappedRevisionKey(randomBytes(40)),
+        metadataNonce: nonce(randomBytes(12)),
+        encryptedMetadata: randomBytes(16),
+        chunks: [],
+        suite: CIPHER_SUITE,
+      },
+      device.signingPrivateKey,
+    )
+    const revisionUnsigned: Operation = {
+      operationId: base64UrlEncode(revisionIdentifier),
+      authorDeviceId: deviceId,
+      epochId: base64UrlEncode(device.epoch.body.epochId),
+      type: "revision",
+      envelope: base64UrlEncode(encodeOperation(signedRevision)),
+      signature: base64UrlEncode(randomBytes(64)),
+    }
+    const revision: Operation = {
+      ...revisionUnsigned,
+      signature: await sign(signingKey, operationSigningMessage(revisionUnsigned)),
+    }
+    const revisionResponse = await directFetch("https://example.test/v1/operations", {
+      method: "POST",
+      headers: { ...authorization, "content-type": "application/json" },
+      body: JSON.stringify(revision),
+    })
+    expect(revisionResponse.status).toBe(201)
+    const revisionResult = (await revisionResponse.json()) as { cursor: number; chainHash: string }
+    expect(revisionResult).toEqual({
+      cursor: 2,
+      chainHash: base64UrlEncode(
+        await sha256(
+          logEntryHashInput(
+            protocolVaultId(base64UrlDecode(vaultId, 16)),
+            2,
+            hashBytes(base64UrlDecode(transitionResult.chainHash, 32)),
+            signedRevision,
+          ),
+        ),
+      ),
+      previousHash: transitionResult.chainHash,
+      duplicate: false,
+    })
+
+    await runInDurableObject(primaryStub, async (_instance, state) => {
+      const vault = state.storage.sql
+        .exec<{ log_format: string; log_transition_cursor: number }>(
+          "SELECT log_format, log_transition_cursor FROM vault_state WHERE singleton = 1",
+        )
+        .one()
+      expect(vault).toEqual({
+        log_format: "canonical-cbor-v1",
+        log_transition_cursor: 1,
+      })
+      state.storage.sql.exec("UPDATE sessions SET supports_canonical_log = 0")
+    })
+    const oldClient = await directFetch("https://example.test/v1/changes?after=2", {
+      headers: authorization,
+    })
+    expect(oldClient.status).toBe(426)
+    await expect(oldClient.json()).resolves.toMatchObject({
+      error: { code: "protocol_upgrade_required" },
+    })
+  })
+
   it("claims once, authenticates, appends idempotently, and proxies private blobs", async () => {
-    const { deviceId, sessionToken, signingKey, vaultId } = await setupAndAuthenticate()
+    const { deviceId, sessionToken, signingKey, vaultId, device } = await setupAndAuthenticate()
     const authorization = { authorization: `Bearer ${sessionToken}` }
     const descriptorResponse = await SELF.fetch("https://example.test/v1/device/descriptor", {
       method: "PUT",
@@ -227,12 +434,30 @@ describe("Meridian Worker integration", () => {
       platform: "macOS",
     })
 
+    const operationIdentifier = operationId(randomBytes(16))
+    const signedRevision = signOperation(
+      {
+        type: "revision",
+        operationId: operationIdentifier,
+        vaultId: device.vaultId,
+        epochId: device.epoch.body.epochId,
+        authorDeviceId: device.deviceId,
+        fileId: fileId(randomBytes(16)),
+        revisionId: revisionId(randomBytes(16)),
+        wrappedRevisionKey: wrappedRevisionKey(randomBytes(40)),
+        metadataNonce: nonce(randomBytes(12)),
+        encryptedMetadata: randomBytes(16),
+        chunks: [],
+        suite: CIPHER_SUITE,
+      },
+      device.signingPrivateKey,
+    )
     const unsignedOperation: Operation = {
-      operationId: randomToken(18),
+      operationId: base64UrlEncode(operationIdentifier),
       authorDeviceId: deviceId,
-      epochId: randomToken(18),
+      epochId: base64UrlEncode(device.epoch.body.epochId),
       type: "revision",
-      envelope: base64UrlEncode(randomBytes(128)),
+      envelope: base64UrlEncode(encodeOperation(signedRevision)),
       signature: base64UrlEncode(randomBytes(64)),
     }
     const operation: Operation = {
@@ -251,6 +476,18 @@ describe("Meridian Worker integration", () => {
       duplicate: boolean
     }
     expect(firstCommitResult).toMatchObject({ cursor: 1, duplicate: false })
+    expect(firstCommitResult.chainHash).toBe(
+      base64UrlEncode(
+        await sha256(
+          logEntryHashInput(
+            protocolVaultId(base64UrlDecode(vaultId, 16)),
+            1,
+            hashBytes(base64UrlDecode(ZERO_HASH, 32)),
+            signedRevision,
+          ),
+        ),
+      ),
+    )
 
     const duplicateCommit = await SELF.fetch("https://example.test/v1/operations", {
       method: "POST",
@@ -381,9 +618,10 @@ describe("Meridian Worker integration", () => {
       method: "POST",
       headers: authorization,
     })
-    expect(unsafePrune.status).toBe(409)
+    expect(unsafePrune.status).toBe(200)
     await expect(unsafePrune.json()).resolves.toMatchObject({
-      error: { code: "pruning_unavailable" },
+      deletedBytes: 0,
+      deletedCount: 0,
     })
     const preservedBlob = await SELF.fetch(`https://example.test/v1/blobs/${blobId}`, {
       headers: authorization,
@@ -860,19 +1098,13 @@ describe("Meridian Worker integration", () => {
         "iOS",
       )
     })
-    const ownerRevocationUnsigned: Operation = {
-      operationId: randomToken(18),
-      authorDeviceId: deviceId,
-      epochId: randomToken(18),
-      type: "device-revocation",
-      subjectDeviceId: ownerRevocationTarget,
-      envelope: base64UrlEncode(randomBytes(128)),
-      signature: base64UrlEncode(randomBytes(64)),
-    }
-    const ownerRevocation: Operation = {
-      ...ownerRevocationUnsigned,
-      signature: await sign(signingKey, operationSigningMessage(ownerRevocationUnsigned)),
-    }
+    const ownerRevocation = await signedRevocation(
+      signingKey,
+      vaultId,
+      deviceId,
+      base64UrlEncode(device.epoch.body.epochId),
+      ownerRevocationTarget,
+    )
     for (const expectedStatus of [201, 200]) {
       const response = await SELF.fetch(
         `https://example.test/v1/devices/${ownerRevocationTarget}/revoke`,
@@ -943,19 +1175,13 @@ describe("Meridian Worker integration", () => {
       error: { code: "cannot_revoke_owner" },
     })
 
-    const selfRevocationUnsigned: Operation = {
-      operationId: randomToken(18),
-      authorDeviceId: candidateId,
-      epochId: randomToken(18),
-      type: "device-revocation",
-      subjectDeviceId: candidateId,
-      envelope: base64UrlEncode(randomBytes(128)),
-      signature: base64UrlEncode(randomBytes(64)),
-    }
-    const selfRevocation: Operation = {
-      ...selfRevocationUnsigned,
-      signature: await sign(candidateKey, operationSigningMessage(selfRevocationUnsigned)),
-    }
+    const selfRevocation = await signedRevocation(
+      candidateKey,
+      vaultId,
+      candidateId,
+      base64UrlEncode(device.epoch.body.epochId),
+      candidateId,
+    )
     const selfRevokeResponse = await SELF.fetch(
       `https://example.test/v1/devices/${candidateId}/revoke`,
       {

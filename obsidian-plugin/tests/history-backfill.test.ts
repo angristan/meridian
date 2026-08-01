@@ -59,7 +59,12 @@ describe("HistoryBackfillService", () => {
       "revision-two",
       "revision-one",
     ])
-    expect(await journal.getHistoryCheckpoint()).toEqual({ cursor: 2, logHash: "hash-2" })
+    expect(await journal.getHistoryCheckpoint()).toEqual({
+      cursor: 2,
+      logHash: "hash-2",
+      initialLogFormat: "legacy-http-v1",
+      logFormat: "legacy-http-v1",
+    })
   })
 
   it("resumes after an interrupted metadata inspection", async () => {
@@ -80,7 +85,12 @@ describe("HistoryBackfillService", () => {
     const service = new HistoryBackfillService(journal, remote, crypto)
 
     await expect(service.backfill(TEST_DEVICE)).rejects.toThrow("suspended")
-    expect(await journal.getHistoryCheckpoint()).toEqual({ cursor: 1, logHash: "hash-1" })
+    expect(await journal.getHistoryCheckpoint()).toEqual({
+      cursor: 1,
+      logHash: "hash-1",
+      initialLogFormat: "legacy-http-v1",
+      logFormat: "legacy-http-v1",
+    })
     crypto.interrupted = false
     await expect(service.backfill(TEST_DEVICE)).resolves.toEqual({ added: 1, throughCursor: 2 })
     expect(await journal.listHistoryRevisions()).toHaveLength(2)

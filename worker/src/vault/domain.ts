@@ -16,6 +16,8 @@ export type VaultStateRow = {
   recovery_package: string
   cursor: number
   head_hash: string
+  log_format: "legacy-http-v1" | "canonical-cbor-v1"
+  log_transition_cursor: number | null
 }
 
 export type DeviceRow = {
@@ -127,8 +129,11 @@ export async function authenticate(sql: SqlStorage, request: Request): Promise<S
       role: "owner" | "member"
       vault_id: string
       expires_at: number
+      supports_canonical_log: number
+      log_format: "legacy-http-v1" | "canonical-cbor-v1"
     }>(
-      `SELECT s.device_id, d.role, v.vault_id, s.expires_at
+      `SELECT s.device_id, d.role, v.vault_id, s.expires_at,
+              s.supports_canonical_log, v.log_format
        FROM sessions s
        JOIN devices d ON d.device_id = s.device_id
        JOIN vault_state v ON v.singleton = 1
@@ -138,6 +143,10 @@ export async function authenticate(sql: SqlStorage, request: Request): Promise<S
     )
     .toArray()[0]
   assert(row, new HttpError(401, "invalid_session", "Device session is invalid or expired"))
+  assert(
+    row.log_format !== "canonical-cbor-v1" || row.supports_canonical_log === 1,
+    new HttpError(426, "protocol_upgrade_required", "Update Meridian to continue syncing"),
+  )
   return {
     deviceId: row.device_id,
     vaultId: row.vault_id,

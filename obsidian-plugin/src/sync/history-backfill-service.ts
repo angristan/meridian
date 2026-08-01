@@ -25,9 +25,15 @@ export class HistoryBackfillService {
     if (!device.trustedCheckpointAuthorized) {
       throw new Error("Re-pair this legacy device before downloading complete history")
     }
+    const trustedInitialFormat = device.trustedCheckpoint.initialLogFormat ?? "legacy-http-v1"
     let checkpoint =
       (await this.journal.getHistoryCheckpoint()) ??
-      ({ cursor: 0, logHash: toBase64Url(new Uint8Array(32)) } satisfies TrustedCheckpoint)
+      ({
+        cursor: 0,
+        logHash: toBase64Url(new Uint8Array(32)),
+        initialLogFormat: trustedInitialFormat,
+        logFormat: trustedInitialFormat,
+      } satisfies TrustedCheckpoint)
     let targetCursor: number | null = null
     let added = 0
     while (targetCursor === null || checkpoint.cursor < targetCursor) {
@@ -45,19 +51,29 @@ export class HistoryBackfillService {
         if (operation.cursor !== checkpoint.cursor + 1) {
           throw new Error(`History is discontinuous at cursor ${operation.cursor}`)
         }
-        await this.crypto.verifyOperationLogLink(operation, checkpoint.logHash)
+        await this.crypto.verifyOperationLogLink(
+          device,
+          operation,
+          checkpoint.logHash,
+          checkpoint.logFormat ?? "legacy-http-v1",
+        )
         if (
           operation.cursor === device.trustedCheckpoint.cursor &&
           operation.logHash !== device.trustedCheckpoint.logHash
         ) {
           throw new Error("History conflicts with the signed device checkpoint")
         }
-        const revision = await this.inspectOperation(device, operation)
-        if (revision) {
-          await this.journal.putHistoryRevision(revision)
+        const inspected = await this.inspectOperation(device, operation)
+        if (inspected.revision) {
+          await this.journal.putHistoryRevision(inspected.revision)
           added += 1
         }
-        checkpoint = { cursor: operation.cursor, logHash: operation.logHash }
+        checkpoint = {
+          cursor: operation.cursor,
+          logHash: operation.logHash,
+          initialLogFormat: checkpoint.initialLogFormat ?? "legacy-http-v1",
+          logFormat: inspected.nextLogFormat ?? checkpoint.logFormat ?? "legacy-http-v1",
+        }
         await this.journal.setHistoryCheckpoint(checkpoint)
       }
     }
@@ -67,11 +83,18 @@ export class HistoryBackfillService {
   private async inspectOperation(
     device: DeviceKeyMaterial,
     operation: RemoteOperation,
-  ): Promise<LocalRevision | null> {
+  ): Promise<{
+    revision: LocalRevision | null
+    nextLogFormat: "canonical-cbor-v1" | null
+  }> {
     const type = operationType(operation)
     if (type === "device-revocation") {
       await this.crypto.verifyDeviceRevocation(device, operation)
-      return null
+      return { revision: null, nextLogFormat: null }
+    }
+    if (type === "log-format-transition") {
+      const nextLogFormat = await this.crypto.verifyLogFormatUpgrade(device, operation)
+      return { revision: null, nextLogFormat }
     }
     if (type === "key-epoch") {
       throw new Error("Complete history contains a key epoch unsupported by this client")
@@ -81,18 +104,21 @@ export class HistoryBackfillService {
     }
     const metadata = await this.crypto.inspectRevision(device, operation, Number.MAX_SAFE_INTEGER)
     return {
-      revisionId: metadata.revisionId,
-      fileId: metadata.fileId,
-      path: metadata.path,
-      action: metadata.action,
-      previousPath: metadata.previousPath,
-      parents: metadata.parents,
-      deviceId: metadata.authorDeviceId,
-      createdAt: metadata.createdAt,
-      cursor: operation.cursor,
-      tombstone: metadata.action === "delete",
-      isConflict: false,
-      operation,
+      revision: {
+        revisionId: metadata.revisionId,
+        fileId: metadata.fileId,
+        path: metadata.path,
+        action: metadata.action,
+        previousPath: metadata.previousPath,
+        parents: metadata.parents,
+        deviceId: metadata.authorDeviceId,
+        createdAt: metadata.createdAt,
+        cursor: operation.cursor,
+        tombstone: metadata.action === "delete",
+        isConflict: false,
+        operation,
+      },
+      nextLogFormat: null,
     }
   }
 }

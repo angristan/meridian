@@ -58,6 +58,10 @@ export class OperationApplier {
       await this.journal.putDeviceRevocation(revocation)
       return
     }
+    if (wire?.type === "log-format-transition") {
+      await this.crypto.verifyLogFormatUpgrade(device, operation)
+      return
+    }
     if (wire?.type === "key-epoch") {
       throw new Error("Remote epoch transition is not supported by this client")
     }

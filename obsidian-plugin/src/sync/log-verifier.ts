@@ -1,12 +1,22 @@
-import { httpOperationSigningBytes, logChainSigningBytes } from "@meridian/protocol"
-import type { RemoteOperation } from "../model"
+import {
+  decodeOperation,
+  hashBytes,
+  httpOperationSigningBytes,
+  LogFormat,
+  logChainSigningBytes,
+  logEntryHashInput,
+  vaultId as protocolVaultId,
+} from "@meridian/protocol"
+import type { LogFormat as LogFormatName, RemoteOperation } from "../model"
 import { fromBase64Url, toBase64Url } from "../platform/bytes"
 
 const MAX_ENVELOPE_BYTES = 256 * 1024
 
 export async function assertRemoteLogLink(
+  vaultId: string,
   operation: RemoteOperation,
   expectedPreviousHash: string,
+  logFormat: LogFormatName,
 ): Promise<void> {
   const wire = record(operation.envelope)
   const previousHash = requiredString(wire, "previousHash")
@@ -17,20 +27,34 @@ export async function assertRemoteLogLink(
   if (chainHash !== operation.logHash) {
     throw new Error(`Operation log hash disagrees at cursor ${operation.cursor}`)
   }
-  const subjectDeviceId = optionalString(wire, "subjectDeviceId")
-  const operationMessage = httpOperationSigningBytes({
-    operationId: requiredString(wire, "operationId"),
-    authorDeviceId: requiredString(wire, "authorDeviceId"),
-    epochId: requiredString(wire, "epochId"),
-    type: requiredString(wire, "type"),
-    ...(subjectDeviceId === undefined ? {} : { subjectDeviceId }),
-    envelope: fromBase64Url(requiredString(wire, "envelope"), MAX_ENVELOPE_BYTES),
-  })
-  const hashInput = logChainSigningBytes(
-    decodeExact(previousHash, 32, "previousHash"),
-    operationMessage,
-    decodeExact(requiredString(wire, "signature"), 64, "signature"),
-  )
+  const envelope = fromBase64Url(requiredString(wire, "envelope"), MAX_ENVELOPE_BYTES)
+  let hashInput: Uint8Array
+  if (logFormat === LogFormat.CanonicalCborV1) {
+    const signedOperation = decodeOperation(envelope)
+    hashInput = logEntryHashInput(
+      protocolVaultId(decodeExact(vaultId, 16, "vaultId")),
+      operation.cursor,
+      hashBytes(decodeExact(previousHash, 32, "previousHash")),
+      signedOperation,
+    )
+  } else if (logFormat === LogFormat.LegacyHttpV1) {
+    const subjectDeviceId = optionalString(wire, "subjectDeviceId")
+    const operationMessage = httpOperationSigningBytes({
+      operationId: requiredString(wire, "operationId"),
+      authorDeviceId: requiredString(wire, "authorDeviceId"),
+      epochId: requiredString(wire, "epochId"),
+      type: requiredString(wire, "type"),
+      ...(subjectDeviceId === undefined ? {} : { subjectDeviceId }),
+      envelope,
+    })
+    hashInput = logChainSigningBytes(
+      decodeExact(previousHash, 32, "previousHash"),
+      operationMessage,
+      decodeExact(requiredString(wire, "signature"), 64, "signature"),
+    )
+  } else {
+    throw new Error("Operation log format is unsupported; update Meridian to continue")
+  }
   const computed = toBase64Url(
     new Uint8Array(await crypto.subtle.digest("SHA-256", copy(hashInput))),
   )

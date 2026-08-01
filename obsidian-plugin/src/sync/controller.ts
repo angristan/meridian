@@ -88,8 +88,12 @@ export class SyncController {
     this.historyService = new HistoryService(vault, journal, revisionLoader)
     this.historyBackfill = new HistoryBackfillService(journal, remote, crypto)
     this.conflictService = new ConflictService(vault, journal)
-    this.pullEngine = new PullEngine(journal, remote, applier, (operation, previousHash) =>
-      crypto.verifyOperationLogLink(operation, previousHash),
+    this.pullEngine = new PullEngine(
+      journal,
+      remote,
+      applier,
+      (device, operation, previousHash, logFormat) =>
+        crypto.verifyOperationLogLink(device, operation, previousHash, logFormat),
     )
     this.pushEngine = new PushEngine(vault, journal, remote, crypto)
   }

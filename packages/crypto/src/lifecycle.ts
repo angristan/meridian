@@ -3,6 +3,7 @@ import {
   type CborValue,
   CIPHER_SUITE,
   certificateId,
+  checkpointLogFormats,
   type DeviceCertificate,
   type DeviceId,
   decodeCanonical,
@@ -25,6 +26,7 @@ import {
   encodeEpochDeclaration,
   epochId,
   hashBytes,
+  LogFormat,
   Permission,
   type SignedCheckpoint,
   type VaultEpochKey,
@@ -130,6 +132,8 @@ export async function createFirstDeviceClaimBundle(): Promise<FirstDeviceClaimBu
       logHash: hashBytes(ZERO_HASH),
       signerDeviceId: device,
       protocolGeneration: CIPHER_SUITE.protocolGeneration,
+      initialLogFormat: LogFormat.CanonicalCborV1,
+      logFormat: LogFormat.CanonicalCborV1,
     },
     signing.privateKey,
   )
@@ -221,6 +225,7 @@ export async function recoverDeviceFromPackage(
     },
     recoveryKeys.signingPrivateKey,
   )
+  const recoveryLogFormats = checkpointLogFormats(state.checkpoint.body)
   const checkpoint = signCheckpoint(
     {
       vaultId: state.vaultId,
@@ -229,6 +234,7 @@ export async function recoverDeviceFromPackage(
       logHash: state.checkpoint.body.logHash,
       signerDeviceId: replacementDeviceId,
       protocolGeneration: CIPHER_SUITE.protocolGeneration,
+      ...recoveryLogFormats,
     },
     signing.privateKey,
   )

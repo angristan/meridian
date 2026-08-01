@@ -255,7 +255,12 @@ describe("shared crypto adapter", () => {
       record(ownerClaim.publicClaim).initialDevice,
       "certificate",
     )
-    const trustedHead = { cursor: 5, logHash: randomId(32) }
+    const trustedHead = {
+      cursor: 5,
+      logHash: randomId(32),
+      initialLogFormat: "canonical-cbor-v1" as const,
+      logFormat: "canonical-cbor-v1" as const,
+    }
     const refreshedOwner = await crypto.refreshTrustedCheckpoint(owner, trustedHead)
     expect(refreshedOwner).toMatchObject({
       trustedCheckpoint: trustedHead,

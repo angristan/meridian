@@ -304,9 +304,15 @@ export interface ConflictDetails {
   comparison: RevisionComparison
 }
 
+export type LogFormat = "legacy-http-v1" | "canonical-cbor-v1"
+
 export interface TrustedCheckpoint {
   cursor: number
   logHash: string
+  /** Missing values are migrated as the deployed legacy format. */
+  initialLogFormat?: LogFormat
+  /** Format used to verify the operation after this checkpoint. */
+  logFormat?: LogFormat
 }
 
 export interface SetupClaim {
@@ -388,6 +394,11 @@ export interface DeviceRevocationMaterial {
   envelope: unknown
 }
 
+export interface LogFormatUpgradeMaterial {
+  operationId: string
+  envelope: unknown
+}
+
 export interface HistoryRevisionMetadata {
   revisionId: string
   operationId: string
@@ -459,7 +470,12 @@ export interface PairedDeviceMaterial {
 
 export interface CryptoPort {
   createFirstDevice(setupSession: string, claimChallenge: string): Promise<SetupClaim>
-  verifyOperationLogLink(operation: RemoteOperation, previousHash: string): Promise<void>
+  verifyOperationLogLink(
+    device: DeviceKeyMaterial,
+    operation: RemoteOperation,
+    previousHash: string,
+    logFormat: LogFormat,
+  ): Promise<void>
   inspectRevision(
     device: DeviceKeyMaterial,
     operation: RemoteOperation,
@@ -495,6 +511,14 @@ export interface CryptoPort {
     device: DeviceKeyMaterial,
     operation: RemoteOperation,
   ): Promise<DeviceRevocationRecord>
+  createLogFormatUpgrade(
+    device: DeviceKeyMaterial,
+    checkpoint: TrustedCheckpoint,
+  ): Promise<LogFormatUpgradeMaterial>
+  verifyLogFormatUpgrade(
+    device: DeviceKeyMaterial,
+    operation: RemoteOperation,
+  ): Promise<"canonical-cbor-v1">
   createPairingJoin(
     pairing: PairingCapability,
     descriptor: PairingDeviceDescriptor,

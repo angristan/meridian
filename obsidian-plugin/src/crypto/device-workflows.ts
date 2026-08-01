@@ -8,10 +8,12 @@ import {
   signRecoveryClaim,
 } from "@meridian/crypto"
 import {
+  checkpointLogFormats,
   decodeDeviceCertificate,
   deviceAuthSigningBytes,
   encodeDeviceCertificate,
   hashBytes,
+  LogFormat,
   setupClaimSigningBytes,
 } from "@meridian/protocol"
 import type {
@@ -83,6 +85,7 @@ export async function loadDevice(serializedKeyBundle: string): Promise<DeviceKey
     trustedCheckpoint: {
       cursor: bundle.checkpoint.body.cursor,
       logHash: toBase64Url(bundle.checkpoint.body.logHash),
+      ...checkpointLogFormats(bundle.checkpoint.body),
     },
     trustedCheckpointAuthorized: hasAuthorizedCheckpoint(secret),
   }
@@ -103,6 +106,17 @@ export async function refreshTrustedCheckpoint(
   ) {
     throw new Error("Trusted checkpoint hash conflicts at the same cursor")
   }
+  const currentFormats = checkpointLogFormats(bundle.checkpoint.body)
+  const nextFormats = {
+    initialLogFormat: checkpoint.initialLogFormat ?? currentFormats.initialLogFormat,
+    logFormat: checkpoint.logFormat ?? currentFormats.logFormat,
+  }
+  if (
+    currentFormats.logFormat === LogFormat.CanonicalCborV1 &&
+    nextFormats.logFormat === LogFormat.LegacyHttpV1
+  ) {
+    throw new Error("Cannot replace a trusted checkpoint with an older log format")
+  }
   const signed = signCheckpoint(
     {
       vaultId: bundle.vaultId,
@@ -111,6 +125,7 @@ export async function refreshTrustedCheckpoint(
       logHash: hashBytes(fromBase64Url(checkpoint.logHash, 32)),
       signerDeviceId: bundle.deviceId,
       protocolGeneration: bundle.checkpoint.body.protocolGeneration,
+      ...nextFormats,
     },
     bundle.signingPrivateKey,
   )
