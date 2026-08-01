@@ -60,6 +60,19 @@ SyncController
 
 Compatibility barrels preserve stable imports while implementations remain replaceable and independently testable.
 
+### Crash-safe epoch changes
+
+The Durable Object commits an epoch transition, authoritative epoch ID/sequence, recovery-package CAS, and pairing fence in one SQLite transaction. The signed transition carries one HPKE key package for each active device.
+
+On pull, SecretStorage is the authoritative key state and IndexedDB is the recoverable log cursor:
+
+```text
+verify transition -> decrypt recipient key -> replace complete device secret
+                  -> invalidate old prepared ciphertext -> advance IndexedDB cursor
+```
+
+A crash before secret replacement leaves the old cursor and replays the transition. A crash after secret replacement but before cursor advancement replays idempotently with the successor keyring. The cursor never passes a transition unless the successor secret is readable. Prepared revision plaintext is retained for successor-epoch re-encryption.
+
 ### Responsive local indexing
 
 Obsidian create, modify, delete, and rename events are coalesced by normalized path in the IndexedDB `dirty-paths` store before synchronization starts. Routine file-event and notification syncs scan only those paths. Journal entries, file snapshots, and consumed event tokens commit in one IndexedDB transaction; an event replaced during reconciliation therefore remains queued for the next pass.

@@ -112,8 +112,8 @@ Local vault use remains available offline. Push/pull is idempotent and resumable
 | Replay/duplicate requests | stable operation/idempotency IDs and append transaction | resource exhaustion still needs server rate limits |
 | Stolen session | short expiry, exact authorization checks | bearer can act until expiry, bounded by certificate permissions |
 | Pairing MITM/substitution | signed device descriptor, ciphertext-free verification preview, two explicit phrase confirmations, owner-local HPKE transfer withholding, full signed transcript, certificate chain, 40-bit phrase, short expiry | user can confirm a mismatched phrase or attacker can guess at 1 in 2^40 per attempt |
-| Lost device | revoke certificate, reject later operations/sessions, rotate epoch | downloaded history and old keys cannot be erased |
-| Malicious or stale recovery package | AES-GCM, vault-bound AAD, signed epoch/checkpoint, public recovery state ID, predecessor CAS | a malicious server can still roll back its complete stored state; an independent checkpoint is needed to detect all-device-loss rollback |
+| Lost device | revoke certificate, reject later operations/sessions, recipient-exact automatic epoch rotation | downloaded history and old keys cannot be erased |
+| Malicious or stale recovery package | legacy AES-GCM or owner-signed HPKE package, vault-bound context, required transition ID, public state ID, predecessor CAS | a malicious server can still roll back its complete stored state; an independent checkpoint is needed to detect all-device-loss rollback |
 | Server rollback | persisted cursor/hash/generation, signed transferred checkpoints | isolated split views are not fully detectable |
 | Downgrade | complete suite in signed epoch; durable highest generation/sequence | a compromised endpoint can alter its own local floor |
 | Parser bombs | closed schemas, strict canonical subset, bounded bytes/depth/collections/chunks | host memory pressure still requires platform testing |

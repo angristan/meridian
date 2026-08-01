@@ -82,6 +82,18 @@ Automated responsiveness tests use generous wall-clock ceilings to detect pathol
 - Retry the successful recovery request exactly; return the same result without a second replacement.
 - Submit a legacy or stale recovery claim; reject it without consuming valid newer state.
 
+### Epoch rotation
+
+- Update and check in only some active devices; verify migration rotation waits without preparing an operation.
+- Check in every active device; verify the owner automatically commits one transition and every device reaches the same successor sequence.
+- Lose the commit response, fail SecretStorage replacement, and crash before IndexedDB checkpoint advancement; verify the exact transition retries and the cursor never passes an unreadable key.
+- Prepare a revision under the predecessor epoch, then receive a transition; verify exact plaintext is retained and ciphertext is regenerated under the successor.
+- Revoke one member; verify the next recipient set excludes it and the remaining devices rotate automatically.
+- Race rotation with a revision, second rotation, recovery, and pairing completion; exactly one predecessor CAS may win.
+- Read revisions from every retained old epoch and reject a missing, duplicate, substituted, or undecryptable recipient package.
+- Recover from a version-2 owner-updated package; verify its owner authorization, required transition, checkpoint, keyring, and recovery CAS before writing.
+- Try a client without epoch support after activation; it must receive **Update Meridian to continue** and append nothing.
+
 ### Security lifecycle
 
 - Pair a second device and verify the automatically displayed phrase on both screens.

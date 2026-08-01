@@ -55,9 +55,9 @@ If pairing is canceled, select **Retry** on the Mac to generate a fresh code. If
 
 ### Lost device
 
-The owner-only **Revoke** action appends a signed revocation and immediately blocks the selected device’s sessions and writes. The current owner cannot revoke itself. Generation 1 does not yet distribute a rotated epoch to only the remaining devices. For a suspected key compromise, use the recovery flow from a trusted replacement device; it revokes every old device and rotates the epoch.
+The owner-only **Revoke** action appends a signed revocation and immediately blocks the selected device’s sessions and writes. The current owner cannot revoke itself. After the remaining active devices check in with epoch-transition support, the owner automatically signs a new epoch and distributes its key only to them. Settings shows the current sequence under **Security and protocol → Encryption epoch**.
 
-Neither flow can erase plaintext or old epoch keys already obtained by a device.
+For a suspected owner compromise, use recovery from a trusted replacement device. It revokes every old device and creates a recovery-signed epoch. Neither flow can erase plaintext or old epoch keys already obtained by a device.
 
 ### Lost all devices
 

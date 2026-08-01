@@ -115,7 +115,7 @@ A device has an independent Ed25519 signing keypair and HPKE/X25519 keypair. A v
 - both public keys;
 - duplicate-free permissions in the fixed order `read`, `write`, `manage-devices`, `rotate-epoch`;
 - a recovery issuer or an issuer certificate ID;
-- authorized epoch and suite;
+- issuance epoch and suite; the immutable certificate remains valid across later signed epochs;
 - first valid log cursor and optional expiry.
 
 The recovery signing key signs initial certificates. A later certificate may be signed by an unexpired, unrevoked certificate with `manage-devices`. Validation walks at most 32 issuers, rejects cycles, requires one vault throughout, checks every signature and validity bound, and terminates at the recovery public key.
@@ -128,7 +128,11 @@ Before member self-removal, the plugin quiesces synchronization and durably stor
 
 A signed epoch declaration binds vault and epoch IDs, monotonic sequence, previous epoch ID, complete suite, creator, and reason. The initial and recovery epochs are recovery-signed. Authorized devices with `rotate-epoch` may create routine, revocation, or migration epochs.
 
-A client MUST verify epoch authorization before use, then durably record the greatest accepted protocol generation and epoch sequence. It rejects:
+A routine transition is signed by the owner under the predecessor epoch. It binds the exact predecessor cursor/hash, next declaration, one HPKE key package for every active device, the previous recovery state ID, and a replacement encrypted recovery package. Each key package binds the vault, operation, predecessor, successor, and recipient. The Worker requires an exact active-device recipient set and confirmed client support.
+
+The Worker appends the transition, advances its authoritative epoch, replaces recovery state by predecessor CAS, and cancels incomplete pairings in one Durable Object transaction. The transition is the final operation authorized by the predecessor epoch. All later operations must name the successor epoch. A concurrent write, pairing completion, recovery, or second rotation invalidates the prepared transition and causes a pull and exact rebuild.
+
+A client MUST verify epoch authorization before use, decrypt its recipient package, replace its complete SecretStorage bundle, and only then advance the IndexedDB log cursor. Prepared revisions retain their exact plaintext but discard predecessor-epoch ciphertext for re-encryption. It durably records the greatest accepted protocol generation and epoch sequence. It rejects:
 
 - a lower protocol generation;
 - an older epoch sequence;
@@ -136,7 +140,7 @@ A client MUST verify epoch authorization before use, then durably record the gre
 - a transition whose previous ID does not match the accepted epoch;
 - an old-epoch operation authored after a transition or applicable revocation.
 
-Revoking a device SHOULD be followed by a new epoch and HPKE redistribution to remaining devices. Rotation gives no retroactive secrecy.
+After all active devices advertise epoch-transition support, the owner automatically creates the migration epoch. A later device revocation automatically creates another epoch whose recipient set excludes revoked devices. Rotation gives no retroactive secrecy. Pairing after rotation transfers the current key plus the bounded historical keyring; an in-progress pairing is fenced when rotation commits.
 
 ## Revisions and operations
 
@@ -208,7 +212,7 @@ A pairing capability is server-side, short-lived, and single-use. The QR code is
 
 The recovery code encodes 256 random seed bits plus a 32-bit checksum in a versioned, grouped unpadded-base64url form. It is high-entropy ownership material, not a password. The server never receives it.
 
-The AES-GCM recovery package includes vault, current signed epoch and key, the bounded historical epoch keyring, signed checkpoint, and monotonic recovery sequence. Associated data binds the recovery domain, vault, generation, KDF, and AEAD. A clear signed checkpoint is stored beside it and MUST match the authenticated inner checkpoint.
+Legacy recovery packages use AES-GCM under a key derived from the recovery seed. Owner-updated version-2 packages use HPKE to the recovery signing key converted to X25519 by the reviewed curve conversion. Their encrypted plaintext includes vault, current signed epoch and key, the bounded historical keyring, predecessor checkpoint, required transition operation ID, monotonic recovery sequence, and an owner signature with its recovery-rooted authorization chain. Associated data binds the recovery domain, vault, generation, KDF, and AEAD. A clear signed checkpoint is stored beside the ciphertext and MUST match the authenticated inner checkpoint.
 
 The public recovery state ID is SHA-256 of canonical, domain-separated bytes containing the vault ID and the exact serialized encrypted recovery package. Recovery claim version 2 signs a stable recovery attempt ID, the previous recovery state ID, the challenge, replacement identity, and replacement package.
 
