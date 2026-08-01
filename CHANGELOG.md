@@ -1,3 +1,18 @@
+# [1.11.0](https://github.com/angristan/meridian/compare/1.10.0...1.11.0) (2026-08-01)
+
+
+### Bug Fixes
+
+* bound obsolete recovery receipts ([1416266](https://github.com/angristan/meridian/commit/1416266cb05d4da44d9204e7f9753648b10b3184))
+* compact disposable sync records safely ([72ae32b](https://github.com/angristan/meridian/commit/72ae32ba268addfa99aa67374018a58e779ff0ca))
+* fail closed under storage pressure ([402d758](https://github.com/angristan/meridian/commit/402d758959bcfe318e235c21880608122fc98dd3))
+
+
+### Features
+
+* enforce configurable storage quotas ([01c8759](https://github.com/angristan/meridian/commit/01c8759879931a98ee36be9f9e10ec64077ca007))
+* track device retention acknowledgements ([a0176f6](https://github.com/angristan/meridian/commit/a0176f6997a679bb892435a039b9808c23790af4))
+
 # [1.10.0](https://github.com/angristan/meridian/compare/1.9.0...1.10.0) (2026-08-01)
 
 
