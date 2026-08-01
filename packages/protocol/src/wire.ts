@@ -3,17 +3,24 @@ import {
   certificateId,
   type DeviceId,
   deviceId,
-  type Hash,
   ed25519PublicKey,
   ed25519Signature,
   epochId,
+  type Hash,
   hashBytes,
   pairingId,
   vaultId,
   x25519PublicKey,
 } from "./bytes.js"
 import { type CborValue, decodeCanonical, encodeCanonical } from "./canonical-cbor.js"
-import { CIPHER_SUITE, Domain, MAX_SAFE_CURSOR, Permission } from "./constants.js"
+import {
+  CIPHER_SUITE,
+  Domain,
+  type LogFormat,
+  LogFormat as LogFormats,
+  MAX_SAFE_CURSOR,
+  Permission,
+} from "./constants.js"
 import type {
   CheckpointBody,
   DeviceCertificate,
@@ -67,6 +74,14 @@ function bytes(value: CborValue | undefined, length: number, label: string): Uin
 function text(value: CborValue | undefined, label: string): string {
   if (typeof value !== "string") throw new ProtocolDecodeError(`${label} must be text`)
   return value
+}
+
+function decodeLogFormat(value: CborValue | undefined, label: string): LogFormat {
+  const format = text(value, label)
+  if (format !== LogFormats.LegacyHttpV1 && format !== LogFormats.CanonicalCborV1) {
+    throw new ProtocolDecodeError(`${label} is unsupported`)
+  }
+  return format
 }
 
 function boundedText(value: CborValue | undefined, maximum: number, label: string): string {
@@ -327,6 +342,12 @@ export function decodeEpochDeclaration(encoded: Uint8Array): EpochDeclaration {
 }
 
 export function checkpointBodyToCbor(body: CheckpointBody): CborValue {
+  const hasInitialFormat = body.initialLogFormat !== undefined
+  const hasCurrentFormat = body.logFormat !== undefined
+  if (hasInitialFormat !== hasCurrentFormat) {
+    throw new TypeError("Checkpoint log formats must be present together")
+  }
+  checkpointLogFormats(body)
   return {
     vaultId: body.vaultId,
     epochId: body.epochId,
@@ -334,7 +355,32 @@ export function checkpointBodyToCbor(body: CheckpointBody): CborValue {
     logHash: body.logHash,
     signerDeviceId: body.signerDeviceId,
     protocolGeneration: body.protocolGeneration,
+    ...(hasInitialFormat
+      ? { initialLogFormat: body.initialLogFormat, logFormat: body.logFormat }
+      : {}),
   }
+}
+
+export function checkpointLogFormats(body: CheckpointBody): {
+  initialLogFormat: LogFormat
+  logFormat: LogFormat
+} {
+  if (body.initialLogFormat === undefined && body.logFormat === undefined) {
+    return {
+      initialLogFormat: LogFormats.LegacyHttpV1,
+      logFormat: LogFormats.LegacyHttpV1,
+    }
+  }
+  if (body.initialLogFormat === undefined || body.logFormat === undefined) {
+    throw new TypeError("Checkpoint log formats must be present together")
+  }
+  if (
+    body.initialLogFormat === LogFormats.CanonicalCborV1 &&
+    body.logFormat === LogFormats.LegacyHttpV1
+  ) {
+    throw new TypeError("Checkpoint log format cannot move backwards")
+  }
+  return { initialLogFormat: body.initialLogFormat, logFormat: body.logFormat }
 }
 
 export function checkpointSigningBytes(body: CheckpointBody): Uint8Array {
@@ -353,16 +399,25 @@ export function decodeCheckpointValue(value: CborValue): SignedCheckpoint {
   const envelope = record(value, "checkpoint")
   exactKeys(envelope, ["body", "signature"], "checkpoint")
   const body = record(envelope.body, "checkpoint body")
-  exactKeys(
-    body,
-    ["vaultId", "epochId", "cursor", "logHash", "signerDeviceId", "protocolGeneration"],
-    "checkpoint body",
-  )
+  const legacyKeys = [
+    "vaultId",
+    "epochId",
+    "cursor",
+    "logHash",
+    "signerDeviceId",
+    "protocolGeneration",
+  ]
+  const versionedKeys = [...legacyKeys, "initialLogFormat", "logFormat"]
+  if ("initialLogFormat" in body || "logFormat" in body) {
+    exactKeys(body, versionedKeys, "checkpoint body")
+  } else {
+    exactKeys(body, legacyKeys, "checkpoint body")
+  }
   const protocolGeneration = integer(body.protocolGeneration, "checkpoint protocol generation")
   if (protocolGeneration !== CIPHER_SUITE.protocolGeneration) {
     throw new ProtocolDecodeError("Unsupported checkpoint protocol generation")
   }
-  return {
+  const checkpoint: SignedCheckpoint = {
     body: {
       vaultId: vaultId(bytes(body.vaultId, 16, "vault ID")),
       epochId: epochId(bytes(body.epochId, 16, "epoch ID")),
@@ -370,9 +425,21 @@ export function decodeCheckpointValue(value: CborValue): SignedCheckpoint {
       logHash: hashBytes(bytes(body.logHash, 32, "checkpoint log hash")),
       signerDeviceId: deviceId(bytes(body.signerDeviceId, 16, "checkpoint signer device ID")),
       protocolGeneration,
+      ...(body.initialLogFormat === undefined
+        ? {}
+        : {
+            initialLogFormat: decodeLogFormat(body.initialLogFormat, "initial log format"),
+            logFormat: decodeLogFormat(body.logFormat, "current log format"),
+          }),
     },
     signature: ed25519Signature(bytes(envelope.signature, 64, "checkpoint signature")),
   }
+  try {
+    checkpointLogFormats(checkpoint.body)
+  } catch (error) {
+    throw new ProtocolDecodeError(error instanceof Error ? error.message : "Invalid log formats")
+  }
+  return checkpoint
 }
 
 export function decodeCheckpoint(encoded: Uint8Array): SignedCheckpoint {

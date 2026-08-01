@@ -14,6 +14,13 @@ export const CIPHER_SUITE = Object.freeze({
 
 export type CipherSuite = typeof CIPHER_SUITE
 
+export const LogFormat = Object.freeze({
+  LegacyHttpV1: "legacy-http-v1",
+  CanonicalCborV1: "canonical-cbor-v1",
+} as const)
+
+export type LogFormat = (typeof LogFormat)[keyof typeof LogFormat]
+
 export const Domain = Object.freeze({
   AssociatedData: "meridian/v1/aad",
   Certificate: "meridian/v1/device-certificate",
@@ -37,6 +44,7 @@ export const OperationType = Object.freeze({
   Revision: "revision",
   DeviceRevocation: "device-revocation",
   EpochTransition: "epoch-transition",
+  LogFormatTransition: "log-format-transition",
 } as const)
 
 export type OperationType = (typeof OperationType)[keyof typeof OperationType]

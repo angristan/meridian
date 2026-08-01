@@ -16,7 +16,7 @@ import type {
   WrappedRevisionKey,
   X25519PublicKey,
 } from "./bytes.js"
-import type { CipherSuite, OperationType, Permission } from "./constants.js"
+import type { CipherSuite, LogFormat, OperationType, Permission } from "./constants.js"
 
 export interface Signed<T> {
   readonly body: T
@@ -60,6 +60,10 @@ export interface CheckpointBody {
   readonly logHash: Hash
   readonly signerDeviceId: DeviceId
   readonly protocolGeneration: number
+  /** Missing on legacy checkpoints, which always use the legacy format from cursor zero. */
+  readonly initialLogFormat?: LogFormat
+  /** Format used to verify the operation immediately after this checkpoint. */
+  readonly logFormat?: LogFormat
 }
 
 export type SignedCheckpoint = Signed<CheckpointBody>
@@ -130,7 +134,24 @@ export interface EpochTransitionOperation {
   readonly suite: CipherSuite
 }
 
-export type OperationBody = RevisionOperation | DeviceRevocationOperation | EpochTransitionOperation
+/** Owner-authorized bridge from deployed legacy hashes to canonical generation-1 hashes. */
+export interface LogFormatTransitionOperation {
+  readonly type: "log-format-transition"
+  readonly operationId: OperationId
+  readonly vaultId: VaultId
+  readonly epochId: EpochId
+  readonly authorDeviceId: DeviceId
+  readonly previousCursor: number
+  readonly previousLogHash: Hash
+  readonly nextLogFormat: "canonical-cbor-v1"
+  readonly suite: CipherSuite
+}
+
+export type OperationBody =
+  | RevisionOperation
+  | DeviceRevocationOperation
+  | EpochTransitionOperation
+  | LogFormatTransitionOperation
 export type SignedOperation = Signed<OperationBody>
 
 export interface LogEntry {

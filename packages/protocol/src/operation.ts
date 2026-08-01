@@ -5,6 +5,7 @@ import {
   ed25519Signature,
   epochId,
   fileId,
+  hashBytes,
   nonce,
   operationId,
   revisionId,
@@ -18,6 +19,7 @@ import type {
   DeviceRevocationOperation,
   EncryptedChunk,
   EpochTransitionOperation,
+  LogFormatTransitionOperation,
   OperationBody,
   RevisionMetadata,
   RevisionOperation,
@@ -211,7 +213,15 @@ export function operationBodyToCbor(body: OperationBody): CborValue {
   if (body.type === OperationType.DeviceRevocation) {
     return { ...common, certificateId: body.certificateId, reason: body.reason }
   }
-  return { ...common, declaration: encodeEpochDeclaration(body.declaration) }
+  if (body.type === OperationType.EpochTransition) {
+    return { ...common, declaration: encodeEpochDeclaration(body.declaration) }
+  }
+  return {
+    ...common,
+    previousCursor: body.previousCursor,
+    previousLogHash: body.previousLogHash,
+    nextLogFormat: body.nextLogFormat,
+  }
 }
 
 export function operationSigningBytes(body: OperationBody): Uint8Array {
@@ -328,6 +338,39 @@ function decodeRevocation(value: Record<string, CborValue>): DeviceRevocationOpe
   }
 }
 
+function decodeLogFormatTransition(value: Record<string, CborValue>): LogFormatTransitionOperation {
+  exact(
+    value,
+    [
+      "type",
+      "operationId",
+      "vaultId",
+      "epochId",
+      "authorDeviceId",
+      "suite",
+      "previousCursor",
+      "previousLogHash",
+      "nextLogFormat",
+    ],
+    "log format transition operation",
+  )
+  const common = decodeCommon(value)
+  if (common.authorDeviceId === "recovery") {
+    throw new ProtocolDecodeError("Recovery identity cannot authorize an interactive log upgrade")
+  }
+  if (value.nextLogFormat !== "canonical-cbor-v1") {
+    throw new ProtocolDecodeError("Log format transition target is unsupported")
+  }
+  return {
+    type: "log-format-transition",
+    ...common,
+    authorDeviceId: common.authorDeviceId,
+    previousCursor: integer(value.previousCursor, "previous log cursor"),
+    previousLogHash: hashBytes(bytes(value.previousLogHash, 32, "previous log hash")),
+    nextLogFormat: value.nextLogFormat,
+  }
+}
+
 function decodeEpochTransition(value: Record<string, CborValue>): EpochTransitionOperation {
   exact(
     value,
@@ -353,6 +396,7 @@ export function decodeOperation(encoded: Uint8Array): SignedOperation {
   if (type === OperationType.Revision) decoded = decodeRevision(body)
   else if (type === OperationType.DeviceRevocation) decoded = decodeRevocation(body)
   else if (type === OperationType.EpochTransition) decoded = decodeEpochTransition(body)
+  else if (type === OperationType.LogFormatTransition) decoded = decodeLogFormatTransition(body)
   else throw new ProtocolDecodeError("Unknown operation type")
 
   return {
