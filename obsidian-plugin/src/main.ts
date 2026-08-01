@@ -7,6 +7,7 @@ import {
   DEFAULT_SETTINGS,
   type DeletedFileRecord,
   INITIAL_STATUS,
+  type LocalCompactionResult,
   type LocalRevision,
   type LogFormat,
   type MeridianSettings,
@@ -377,6 +378,16 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
   async getStorageUsage(): Promise<StorageUsage> {
     if (!this.controller) throw new Error("Meridian is not connected")
     return this.controller.storageUsage()
+  }
+
+  async compactLocalStorage(): Promise<LocalCompactionResult> {
+    if (!this.controller) throw new Error("Meridian is not connected")
+    return this.controller.compactLocalStorage()
+  }
+
+  async requestPersistentStorage(): Promise<boolean | null> {
+    if (!this.controller) throw new Error("Meridian is not connected")
+    return this.controller.requestPersistentStorage()
   }
 
   async pruneStorage(): Promise<StoragePruneResult> {

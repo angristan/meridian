@@ -26,13 +26,13 @@ import type {
   RemoteDevice,
   RemoteOperation,
   RemotePort,
+  RemoteStorageUsage,
   RetentionAcknowledgement,
   RevisionDraft,
   ScannedFileSnapshot,
   SelectiveSyncSettings,
   SetupClaim,
   StoragePruneResult,
-  StorageUsage,
   TrustedCheckpoint,
   VaultPort,
   VaultScanOptions,
@@ -527,7 +527,7 @@ export class FakeRemote implements RemotePort {
     await barrier?.resume
   }
 
-  async getStorageUsage(): Promise<StorageUsage> {
+  async getStorageUsage(): Promise<RemoteStorageUsage> {
     const blobBytes = [...this.blobs.values()].reduce((total, bytes) => total + bytes.byteLength, 0)
     return {
       totalBytes: blobBytes,

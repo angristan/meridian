@@ -5,6 +5,7 @@ import type {
   FileSnapshot,
   JournalEntry,
   JournalState,
+  LocalCompactionResult,
   LocalRevision,
   TrustedCheckpoint,
 } from "../model"
@@ -42,6 +43,23 @@ export class MemoryJournal implements JournalPort {
         preparedRevision: { ...entry.preparedRevision, invalidatedByEpoch: true },
       })
     }
+  }
+
+  async compactLocalStorage(): Promise<LocalCompactionResult> {
+    let completedEntries = 0
+    for (const [id, entry] of this.entries) {
+      if (entry.state !== "complete") continue
+      this.entries.delete(id)
+      completedEntries += 1
+    }
+    let duplicateHistoryRevisions = 0
+    for (const [id, historyRevision] of this.historyRevisions) {
+      const current = this.revisions.get(id)
+      if (!current || JSON.stringify(current) !== JSON.stringify(historyRevision)) continue
+      this.historyRevisions.delete(id)
+      duplicateHistoryRevisions += 1
+    }
+    return { completedEntries, duplicateHistoryRevisions }
   }
 
   async putEntry(entry: JournalEntry): Promise<void> {

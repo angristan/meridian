@@ -5,6 +5,7 @@ import type {
   FileSnapshot,
   JournalEntry,
   JournalState,
+  LocalCompactionResult,
   LocalRevision,
   TrustedCheckpoint,
 } from "../model"
@@ -24,7 +25,7 @@ export class IndexedDbJournal implements JournalPort {
       const request = indexedDB.open(this.databaseName, DATABASE_VERSION)
       request.onerror = () => reject(request.error ?? new Error("Unable to open sync journal"))
       request.onblocked = () => reject(new Error("Sync journal upgrade is blocked"))
-      request.onupgradeneeded = () => upgradeJournalSchema(request.result)
+      request.onupgradeneeded = () => upgradeJournalSchema(request.result, request.transaction)
       request.onsuccess = () => {
         const database = request.result
         database.onversionchange = () => database.close()
@@ -62,6 +63,24 @@ export class IndexedDbJournal implements JournalPort {
       } satisfies JournalEntry)
     }
     await done
+  }
+
+  async compactLocalStorage(): Promise<LocalCompactionResult> {
+    const result: LocalCompactionResult = {
+      completedEntries: 0,
+      duplicateHistoryRevisions: 0,
+    }
+    while (true) {
+      const deleted = await this.deleteCompleteEntryBatch()
+      result.completedEntries += deleted
+      if (deleted < COMPACTION_BATCH_SIZE) break
+    }
+    while (true) {
+      const deleted = await this.deleteDuplicateHistoryBatch()
+      result.duplicateHistoryRevisions += deleted
+      if (deleted < COMPACTION_BATCH_SIZE) break
+    }
+    return result
   }
 
   async putEntry(entry: JournalEntry): Promise<void> {
@@ -228,11 +247,14 @@ export class IndexedDbJournal implements JournalPort {
   }
 
   async listFileRevisions(fileId: string): Promise<LocalRevision[]> {
-    return sortRevisions(
-      (await this.getAll<LocalRevision>("revisions")).filter(
-        (revision) => revision.fileId === fileId,
-      ),
+    const database = this.requireDatabase()
+    const transaction = database.transaction("revisions", "readonly")
+    const done = transactionDone(transaction)
+    const revisions = await requestResult<LocalRevision[]>(
+      transaction.objectStore("revisions").index("fileId").getAll(fileId),
     )
+    await done
+    return sortRevisions(revisions)
   }
 
   async getHistoryCheckpoint(): Promise<TrustedCheckpoint | null> {
@@ -293,6 +315,35 @@ export class IndexedDbJournal implements JournalPort {
     await transactionDone(transaction)
   }
 
+  private async deleteCompleteEntryBatch(): Promise<number> {
+    const database = this.requireDatabase()
+    const transaction = database.transaction("entries", "readwrite")
+    const done = transactionDone(transaction)
+    const deleted = await deleteCursorMatches(
+      transaction,
+      transaction.objectStore("entries").index("state").openCursor("complete"),
+      () => true,
+    )
+    await done
+    return deleted
+  }
+
+  private async deleteDuplicateHistoryBatch(): Promise<number> {
+    const database = this.requireDatabase()
+    const transaction = database.transaction(["history-revisions", "revisions"], "readwrite")
+    const done = transactionDone(transaction)
+    const history = transaction.objectStore("history-revisions")
+    const revisions = transaction.objectStore("revisions")
+    const deleted = await deleteCursorMatches(transaction, history.openCursor(), async (cursor) => {
+      const current = await requestResult<LocalRevision | undefined>(
+        revisions.get(cursor.primaryKey),
+      )
+      return current !== undefined && sameRevision(current, cursor.value as LocalRevision)
+    })
+    await done
+    return deleted
+  }
+
   private async getMetadata<T>(key: string): Promise<T | null> {
     const database = this.requireDatabase()
     const transaction = database.transaction("meta", "readonly")
@@ -324,4 +375,39 @@ export class IndexedDbJournal implements JournalPort {
     if (!this.database) throw new Error("Sync journal is not open")
     return this.database
   }
+}
+
+const COMPACTION_BATCH_SIZE = 500
+
+async function deleteCursorMatches(
+  transaction: IDBTransaction,
+  request: IDBRequest<IDBCursorWithValue | null>,
+  shouldDelete: (cursor: IDBCursorWithValue) => boolean | Promise<boolean>,
+): Promise<number> {
+  return new Promise<number>((resolve, reject) => {
+    let deleted = 0
+    request.onerror = () => reject(request.error ?? new Error("Local compaction cursor failed"))
+    request.onsuccess = async () => {
+      const cursor = request.result
+      if (!cursor || deleted >= COMPACTION_BATCH_SIZE) {
+        resolve(deleted)
+        return
+      }
+      try {
+        if (await shouldDelete(cursor)) {
+          cursor.delete()
+          deleted += 1
+        }
+        if (deleted >= COMPACTION_BATCH_SIZE) resolve(deleted)
+        else cursor.continue()
+      } catch (error) {
+        transaction.abort()
+        reject(error)
+      }
+    }
+  })
+}
+
+function sameRevision(left: LocalRevision, right: LocalRevision): boolean {
+  return JSON.stringify(left) === JSON.stringify(right)
 }

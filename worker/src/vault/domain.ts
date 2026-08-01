@@ -174,8 +174,7 @@ export function cleanupExpired(sql: SqlStorage, now: number): void {
   sql.exec("DELETE FROM auth_challenges WHERE expires_at <= ?", now)
   sql.exec("DELETE FROM recovery_challenges WHERE expires_at <= ?", now)
   sql.exec("DELETE FROM sessions WHERE expires_at <= ?", now)
-  sql.exec(
-    "DELETE FROM pairings WHERE expires_at <= ? AND status NOT IN ('released', 'completed')",
-    now,
-  )
+  // Pairing capabilities are invalid after expiry in every state. Terminal records are operational
+  // receipts, not user history, and retaining them indefinitely leaks coordinator storage.
+  sql.exec("DELETE FROM pairings WHERE expires_at <= ?", now)
 }

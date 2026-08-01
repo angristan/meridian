@@ -261,7 +261,7 @@ export interface RetentionAcknowledgement {
   signature: string
 }
 
-export interface StorageUsage {
+export interface RemoteStorageUsage {
   totalBytes: number
   blobBytes: number
   databaseBytes: number
@@ -274,6 +274,24 @@ export interface StorageUsage {
   acknowledgedDeviceCount: number
   minimumAcknowledgedCursor: number | null
   pruningAvailable: boolean
+}
+
+export type LocalStoragePressure = "unavailable" | "normal" | "warning" | "critical"
+
+export interface LocalStorageUsage {
+  usageBytes: number | null
+  quotaBytes: number | null
+  persisted: boolean | null
+  pressure: LocalStoragePressure
+}
+
+export interface StorageUsage extends RemoteStorageUsage {
+  local: LocalStorageUsage
+}
+
+export interface LocalCompactionResult {
+  completedEntries: number
+  duplicateHistoryRevisions: number
 }
 
 export interface StoragePruneResult {
@@ -691,7 +709,7 @@ export interface RemotePort {
   getChanges(after: number, checkpoint: TrustedCheckpoint | null): Promise<RemoteChanges>
   putBlob(blob: EncryptedBlob): Promise<void>
   getBlob(blobId: string): Promise<ArrayBuffer>
-  getStorageUsage(): Promise<StorageUsage>
+  getStorageUsage(): Promise<RemoteStorageUsage>
   acknowledgeRetention(acknowledgement: RetentionAcknowledgement): Promise<void>
   pruneStorage(): Promise<StoragePruneResult>
   commit(envelope: unknown, idempotencyKey: string): Promise<{ cursor: number; logHash: string }>

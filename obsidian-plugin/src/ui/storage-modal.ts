@@ -64,11 +64,83 @@ export class StorageModal extends Modal {
     )
     storageMetric(grid, "Signed checkpoints", String(usage.checkpointCount), "Retained")
     storageMetric(grid, "Encrypted snapshots", String(usage.snapshotCount), "Retained")
+    storageMetric(
+      grid,
+      "Device retention status",
+      `${usage.acknowledgedDeviceCount}/${usage.activeDeviceCount}`,
+      usage.minimumAcknowledgedCursor === null
+        ? "Waiting for active devices"
+        : `Observed through cursor ${usage.minimumAcknowledgedCursor}`,
+    )
+
+    new Setting(this.contentEl).setName("Local browser storage").setHeading()
+    if (usage.local.usageBytes === null || usage.local.quotaBytes === null) {
+      this.contentEl.createDiv({
+        cls: "setting-item-description",
+        text: "This Obsidian version does not expose local storage estimates.",
+      })
+    } else {
+      const percentage =
+        usage.local.quotaBytes === 0
+          ? 0
+          : Math.round((usage.local.usageBytes / usage.local.quotaBytes) * 100)
+      storageMetric(
+        this.contentEl,
+        "Meridian and Obsidian origin",
+        formatBytes(usage.local.usageBytes),
+        `${percentage}% of the browser quota`,
+      )
+      if (usage.local.pressure === "warning" || usage.local.pressure === "critical") {
+        const warning = this.contentEl.createDiv({
+          cls: `meridian-callout ${usage.local.pressure === "critical" ? "is-error" : "is-warning"}`,
+          text:
+            usage.local.pressure === "critical"
+              ? "Local browser storage is nearly full. Sync will stop safely if IndexedDB cannot commit more data."
+              : "Local browser storage is above 80%. Consider compacting disposable sync records.",
+        })
+        warning.setAttribute("role", "status")
+      }
+    }
+    new Setting(this.contentEl)
+      .setName("Compact local sync records")
+      .setDesc(
+        "Removes completed upload records and exact duplicate history metadata. Pending work, file history, conflicts, checkpoints, and encryption keys are preserved.",
+      )
+      .addButton((button) =>
+        button.setButtonText("Compact").onClick(async () => {
+          button.setDisabled(true).setButtonText("Compacting…")
+          await this.host.compactLocalStorage()
+          await this.render()
+        }),
+      )
+    new Setting(this.contentEl)
+      .setName("Persistent local storage")
+      .setDesc(
+        usage.local.persisted === true
+          ? "The browser reports that local Meridian data is protected from automatic eviction."
+          : "Ask the browser to protect local Meridian data from automatic eviction when supported.",
+      )
+      .addButton((button) =>
+        button
+          .setButtonText(
+            usage.local.persisted === true
+              ? "Granted"
+              : usage.local.persisted === null
+                ? "Unavailable"
+                : "Request",
+          )
+          .setDisabled(usage.local.persisted !== false)
+          .onClick(async () => {
+            button.setDisabled(true).setButtonText("Requesting…")
+            await this.host.requestPersistentStorage()
+            await this.render()
+          }),
+      )
 
     new Setting(this.contentEl).setName("Retention and pruning").setHeading()
     this.contentEl.createDiv({
       cls: "meridian-callout is-warning",
-      text: "Encrypted history is retained indefinitely. Automatic history pruning stays disabled until every active device can acknowledge a signed generation-aware snapshot and safely rebootstrap. Manual cleanup below removes only old uploads that no retained revision uses.",
+      text: "Committed history and every required epoch key are retained forever. Device acknowledgements report sync progress but do not authorize log deletion: no generation-aware rebootstrap archive exists yet. Manual cleanup below removes only old uploads that no retained revision uses.",
     })
     new Setting(this.contentEl)
       .setName("Clean up unused uploads")
@@ -83,9 +155,7 @@ export class StorageModal extends Modal {
       )
     new Setting(this.contentEl)
       .setName("Automatic history pruning")
-      .setDesc(
-        "Unavailable until safe device acknowledgements and snapshot rebootstrap are supported.",
-      )
+      .setDesc("Disabled by the keep-history-forever policy.")
       .addButton((button) => button.setButtonText("Not available").setDisabled(true))
     new Setting(this.contentEl)
       .setName("Refresh usage")

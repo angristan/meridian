@@ -22,6 +22,11 @@ import { INITIAL_STATUS } from "../model"
 import { MeridianHttpError } from "../network/response-parsers"
 import { BackgroundSyncCompute, type SyncComputePort } from "../platform/background-sync"
 import { randomId } from "../platform/bytes"
+import {
+  estimateLocalStorage,
+  isQuotaExceededError,
+  requestLocalStoragePersistence,
+} from "../platform/storage-estimate"
 import type { JournalPort } from "../storage/journal"
 import { normalizeVaultPath } from "../vault/path-policy"
 import { ConflictService } from "./conflict-service"
@@ -128,6 +133,7 @@ export class SyncController {
     this.stopRequested = false
     this.device = device
     await this.journal.open()
+    await this.journal.compactLocalStorage()
     const localCheckpoint = await this.journal.getCheckpoint()
     if (localCheckpoint?.cursor === device.trustedCheckpoint.cursor) {
       const localFormats = {
@@ -286,7 +292,19 @@ export class SyncController {
   async storageUsage() {
     const device = this.requireDevice()
     await this.authenticate(device)
-    return this.remote.getStorageUsage()
+    const [remote, local] = await Promise.all([
+      this.remote.getStorageUsage(),
+      estimateLocalStorage(),
+    ])
+    return { ...remote, local }
+  }
+
+  async compactLocalStorage() {
+    return this.runMaintenance(() => this.journal.compactLocalStorage())
+  }
+
+  requestPersistentStorage(): Promise<boolean | null> {
+    return requestLocalStoragePersistence()
   }
 
   async pruneStorage() {
@@ -758,5 +776,8 @@ function networkAvailable(): boolean {
 }
 
 function errorMessage(error: unknown): string {
+  if (isQuotaExceededError(error)) {
+    return "Local browser storage is full. Pending changes were preserved. Open Meridian storage to free disposable records."
+  }
   return error instanceof Error ? error.message : String(error)
 }

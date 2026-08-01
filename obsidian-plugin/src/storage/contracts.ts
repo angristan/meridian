@@ -5,6 +5,7 @@ import type {
   FileSnapshot,
   JournalEntry,
   JournalState,
+  LocalCompactionResult,
   LocalRevision,
   TrustedCheckpoint,
 } from "../model"
@@ -21,6 +22,7 @@ export interface JournalPort {
   close(): void
   listPending(): Promise<JournalEntry[]>
   invalidatePreparedRevisions(): Promise<void>
+  compactLocalStorage(): Promise<LocalCompactionResult>
   putEntry(entry: JournalEntry): Promise<void>
   updateEntry(id: string, state: JournalState, error?: string | null): Promise<void>
   hasPendingPath(path: string): Promise<boolean>

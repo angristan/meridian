@@ -4,6 +4,7 @@ import type {
   ConflictRecord,
   ConflictResolutionAction,
   DeletedFileRecord,
+  LocalCompactionResult,
   LocalRevision,
   LogFormat,
   MeridianSettings,
@@ -45,6 +46,8 @@ export interface MeridianUiHost {
   getDiagnostics(): SyncDiagnostic[]
   getDebugReport(): string
   getStorageUsage(): Promise<StorageUsage>
+  compactLocalStorage(): Promise<LocalCompactionResult>
+  requestPersistentStorage(): Promise<boolean | null>
   pruneStorage(): Promise<StoragePruneResult>
   previewRevision(revisionId: string): Promise<RevisionPreview>
   compareRevisionToCurrent(revisionId: string): Promise<RevisionComparison>

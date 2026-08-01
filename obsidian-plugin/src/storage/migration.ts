@@ -7,9 +7,12 @@ import type {
   MigratedJournalRecords,
 } from "./types"
 
-export const DATABASE_VERSION = 5
+export const DATABASE_VERSION = 6
 
-export function upgradeJournalSchema(database: IDBDatabase): void {
+export function upgradeJournalSchema(
+  database: IDBDatabase,
+  transaction?: IDBTransaction | null,
+): void {
   if (!database.objectStoreNames.contains("entries")) {
     const store = database.createObjectStore("entries", { keyPath: "id" })
     store.createIndex("state", "state", { unique: false })
@@ -42,6 +45,14 @@ export function upgradeJournalSchema(database: IDBDatabase): void {
   if (!database.objectStoreNames.contains("revocations")) {
     database.createObjectStore("revocations", { keyPath: "deviceId" })
   }
+  if (transaction) {
+    for (const storeName of ["revisions", "history-revisions"]) {
+      const store = transaction.objectStore(storeName)
+      if (!store.indexNames.contains("fileId")) {
+        store.createIndex("fileId", "fileId", { unique: false })
+      }
+    }
+  }
 }
 
 /**
@@ -50,7 +61,15 @@ export function upgradeJournalSchema(database: IDBDatabase): void {
  * assignment is committed and the next open retries it.
  */
 export async function migrateStableFileIds(database: IDBDatabase): Promise<void> {
-  const transaction = database.transaction(["files", "entries", "revisions"], "readwrite")
+  const transaction = database.transaction(["files", "entries", "revisions", "meta"], "readwrite")
+  const metaStore = transaction.objectStore("meta")
+  const marker = await requestResult<{ key: string } | undefined>(
+    metaStore.get("stable-file-ids-v1"),
+  )
+  if (marker) {
+    await transactionDone(transaction)
+    return
+  }
   const filesStore = transaction.objectStore("files")
   const entriesStore = transaction.objectStore("entries")
   const revisionsStore = transaction.objectStore("revisions")
@@ -63,6 +82,7 @@ export async function migrateStableFileIds(database: IDBDatabase): Promise<void>
   for (const file of migrated.files) filesStore.put(file)
   for (const entry of migrated.entries) entriesStore.put(entry)
   for (const revision of migrated.revisions) revisionsStore.put(revision)
+  metaStore.put({ key: "stable-file-ids-v1", value: true })
   await transactionDone(transaction)
 }
 
