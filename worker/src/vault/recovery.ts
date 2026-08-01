@@ -272,6 +272,9 @@ export class VaultRecovery {
         nextRecoveryStateId,
         recoveredAt,
       )
+      // Once a newer recovery succeeds, older claims cannot be valid exact retries because their
+      // predecessor state was replaced. Keep only the current receipt for response-loss recovery.
+      this.sql.exec("DELETE FROM recovery_receipts WHERE recovery_id <> ?", input.recoveryId)
       return {
         receipt: {
           recovery_id: input.recoveryId,
