@@ -607,15 +607,20 @@ export class VaultOperations {
       )
       .toArray()[0]
     assert(
-      !existingClaim || existingClaim.expected_size === expectedSize,
+      !existingClaim ||
+        existingClaim.expected_size === 0 ||
+        existingClaim.expected_size === expectedSize,
       new HttpError(409, "blob_size_conflict", "Blob reservation size changed"),
     )
-    if (!existingClaim) this.assertContentQuota(expectedSize)
+    if (!existingClaim || existingClaim.expected_size === 0) {
+      this.assertContentQuota(expectedSize)
+    }
     this.sql.exec(
       `INSERT INTO blob_claims(blob_id, claimed_at, expected_size, device_id)
        VALUES (?, ?, ?, ?)
        ON CONFLICT(blob_id) DO UPDATE SET
          claimed_at = excluded.claimed_at,
+         expected_size = excluded.expected_size,
          device_id = excluded.device_id`,
       blobId,
       Date.now(),

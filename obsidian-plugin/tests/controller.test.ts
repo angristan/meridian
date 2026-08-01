@@ -110,6 +110,39 @@ describe("SyncController", () => {
     controller.stop()
   })
 
+  it("fails closed when IndexedDB quota is exhausted", async () => {
+    class FullJournal extends MemoryJournal {
+      override async commitReconciliation(): Promise<void> {
+        const error = new Error("IndexedDB full")
+        error.name = "QuotaExceededError"
+        throw error
+      }
+    }
+    const vault = new FakeVault({ "note.md": "still local" })
+    const journal = new FullJournal()
+    const remote = new FakeRemote()
+    const statuses: SyncStatus[] = []
+    const controller = new SyncController(
+      vault,
+      journal,
+      remote,
+      new FakeCrypto(),
+      () => ALL_CATEGORIES,
+      (status) => statuses.push(status),
+    )
+
+    await controller.start(TEST_DEVICE)
+
+    expect(vault.text("note.md")).toBe("still local")
+    expect(await journal.getCursor()).toBe(0)
+    expect(remote.operations).toHaveLength(0)
+    expect(statuses.at(-1)).toMatchObject({
+      phase: "error",
+      error: expect.stringContaining("Local browser storage is full"),
+    })
+    controller.stop()
+  })
+
   it("uses targeted scans for durable file events", async () => {
     class CountingVault extends FakeVault {
       fullScans = 0

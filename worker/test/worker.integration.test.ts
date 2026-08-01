@@ -928,6 +928,56 @@ describe("Meridian Worker integration", () => {
     await expect(rejectedQuotaUpload?.json()).resolves.toMatchObject({
       error: { code: "storage_quota_exceeded" },
     })
+    const pressuredUsageResponse = await SELF.fetch("https://example.test/v1/storage", {
+      headers: authorization,
+    })
+    const pressuredUsage = (await pressuredUsageResponse.json()) as { totalBytes: number }
+    const contentLimit = pressuredUsage.totalBytes + 2 * 1024 * 1024 + 256 * 1024
+    const tightenQuota = await SELF.fetch("https://example.test/v1/storage/policy", {
+      method: "PUT",
+      headers: { ...authorization, "content-type": "application/json" },
+      body: JSON.stringify({ quotaBytes: contentLimit }),
+    })
+    expect(tightenQuota.status).toBe(200)
+    const blockedOperationId = operationId(randomBytes(16))
+    const blockedRevision = signOperation(
+      {
+        type: "revision",
+        operationId: blockedOperationId,
+        vaultId: protocolVaultId(base64UrlDecode(vaultId, 16)),
+        epochId: device.epoch.body.epochId,
+        authorDeviceId: device.deviceId,
+        fileId: fileId(randomBytes(16)),
+        revisionId: revisionId(randomBytes(16)),
+        wrappedRevisionKey: wrappedRevisionKey(randomBytes(40)),
+        metadataNonce: nonce(randomBytes(12)),
+        encryptedMetadata: randomBytes(16),
+        chunks: [],
+        suite: CIPHER_SUITE,
+      },
+      device.signingPrivateKey,
+    )
+    const blockedUnsigned: Operation = {
+      operationId: base64UrlEncode(blockedOperationId),
+      authorDeviceId: deviceId,
+      epochId: base64UrlEncode(device.epoch.body.epochId),
+      type: "revision",
+      envelope: base64UrlEncode(encodeOperation(blockedRevision)),
+      signature: base64UrlEncode(randomBytes(64)),
+    }
+    const blockedCommit = await SELF.fetch("https://example.test/v1/operations", {
+      method: "POST",
+      headers: { ...authorization, "content-type": "application/json" },
+      body: JSON.stringify({
+        ...blockedUnsigned,
+        signature: await sign(signingKey, operationSigningMessage(blockedUnsigned)),
+      }),
+    })
+    expect(blockedCommit.status).toBe(507)
+    await expect(blockedCommit.json()).resolves.toMatchObject({
+      error: { code: "storage_quota_exceeded" },
+    })
+
     const tooSmallQuota = await SELF.fetch("https://example.test/v1/storage/policy", {
       method: "PUT",
       headers: { ...authorization, "content-type": "application/json" },
