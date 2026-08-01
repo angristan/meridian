@@ -1,3 +1,21 @@
+# [1.9.0](https://github.com/angristan/meridian/compare/1.8.0...1.9.0) (2026-08-01)
+
+
+### Bug Fixes
+
+* negotiate log format during rollout ([a279b70](https://github.com/angristan/meridian/commit/a279b70428fcc7eb90b19efd9a02f6e7c6d07f02))
+* prevent stale recovery replacement ([f0a3a15](https://github.com/angristan/meridian/commit/f0a3a156b3df4b97e0c78b007137150ea0260382))
+* reject protocol state substitution ([68f1ecd](https://github.com/angristan/meridian/commit/68f1ecd929271d4c2bb97ff437993d74ffa35c1d))
+* upgrade compatible vaults automatically ([3bdbd0e](https://github.com/angristan/meridian/commit/3bdbd0e8bd70e81f8c53680c706ecaec2871dc3f))
+* verify canonical operation log hashes ([30605c3](https://github.com/angristan/meridian/commit/30605c31492151cee4071b47a32e5223973b5fe1))
+* version recovery claims explicitly ([d795087](https://github.com/angristan/meridian/commit/d795087fa3ae21ca9cea9dc2c320eb39a2ca8e8d))
+
+
+### Features
+
+* add owner-controlled log upgrade ([d931fb5](https://github.com/angristan/meridian/commit/d931fb549813d655e501f2c582906c7484e64ee5))
+* define canonical log transitions ([909f839](https://github.com/angristan/meridian/commit/909f839e5e2bb169db324847bd989040d826e5d4))
+
 # [1.8.0](https://github.com/angristan/meridian/compare/1.7.1...1.8.0) (2026-08-01)
 
 
