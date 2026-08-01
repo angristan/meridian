@@ -88,6 +88,13 @@ export async function loadDevice(serializedKeyBundle: string): Promise<DeviceKey
     vaultId: toBase64Url(bundle.vaultId),
     deviceId: toBase64Url(bundle.deviceId),
     serialized: serializedKeyBundle,
+    epochId: toBase64Url(bundle.epoch.body.epochId),
+    epochSequence: bundle.epoch.body.sequence,
+    epochActivatedAtCursor: bundle.epochActivatedAtCursor,
+    requiredTransitionOperationId:
+      bundle.requiredTransitionOperationId === undefined
+        ? null
+        : toBase64Url(bundle.requiredTransitionOperationId),
     trustedCheckpoint: {
       cursor: bundle.checkpoint.body.cursor,
       logHash: toBase64Url(bundle.checkpoint.body.logHash),

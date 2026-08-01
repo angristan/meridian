@@ -54,6 +54,24 @@ describe("Meridian settings lifecycle", () => {
     ).toBeNull()
   })
 
+  it("restores only well-formed pending epoch transitions", () => {
+    const pendingEpochTransition = {
+      endpoint: "https://example.test",
+      vaultId: "vault-id",
+      deviceId: "device-id",
+      operationId: "operation-id",
+      nextEpochId: "next-epoch-id",
+      envelope: { type: "key-epoch", signature: "signature" },
+    }
+    expect(normalizeSettings({ pendingEpochTransition }).pendingEpochTransition).toEqual(
+      pendingEpochTransition,
+    )
+    expect(
+      normalizeSettings({ pendingEpochTransition: { operationId: "partial" } })
+        .pendingEpochTransition,
+    ).toBeNull()
+  })
+
   it("migrates and bounds normalized selective sync lists", () => {
     expect(
       normalizeSettings({

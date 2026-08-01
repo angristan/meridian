@@ -97,7 +97,7 @@ describe("sync responsiveness budgets", () => {
       }),
     } as unknown as RemotePort
     const applier = {
-      apply: async () => {},
+      apply: async () => TEST_DEVICE,
     } as unknown as OperationApplier
     const journal = new MemoryJournal()
     const heartbeat = startHeartbeat()
@@ -107,7 +107,7 @@ describe("sync responsiveness budgets", () => {
     const elapsed = performance.now() - startedAt
     const heartbeatTicks = heartbeat.stop()
 
-    expect(result).toEqual({ stopped: false })
+    expect(result).toEqual({ stopped: false, device: TEST_DEVICE })
     expect(await journal.getCursor()).toBe(500)
     expect(elapsed).toBeLessThan(RESPONSIVENESS_BUDGET_MS)
     expect(heartbeatTicks).toBeGreaterThan(0)

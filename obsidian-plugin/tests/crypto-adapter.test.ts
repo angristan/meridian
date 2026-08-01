@@ -139,6 +139,65 @@ describe("shared crypto adapter", () => {
     })
   })
 
+  it("applies epoch transitions and retains old revision keys", async () => {
+    const crypto = createPackageCryptoPort()
+    const claim = await crypto.createFirstDevice("setup-session", "claim-challenge")
+    const device = await crypto.loadDevice(claim.keyBundle)
+    const initialDevice = record(record(claim.publicClaim).initialDevice)
+    const oldRevision = await crypto.encryptRevision(device, {
+      operationId: randomId(),
+      revisionId: randomId(),
+      fileId: randomId(),
+      action: "upsert",
+      path: "history.md",
+      previousPath: null,
+      parents: [],
+      bytes: new TextEncoder().encode("old epoch").buffer,
+      chunkSize: 4 * 1024 * 1024,
+    })
+    const material = await crypto.createEpochTransition(
+      device,
+      [
+        {
+          deviceId: device.deviceId,
+          signingPublicKey: stringField(initialDevice, "signingPublicKey"),
+          hpkePublicKey: stringField(initialDevice, "hpkePublicKey"),
+          certificate: stringField(initialDevice, "certificate"),
+          role: "owner",
+          authorizedAt: 0,
+          revokedAt: null,
+          deviceName: "Owner",
+          platform: "Test",
+          supportsCanonicalLog: true,
+          supportsEpochTransitions: true,
+        },
+      ],
+      randomId(32),
+      "migration",
+    )
+    const rotated = await crypto.applyEpochTransition(device, {
+      cursor: 1,
+      logHash: randomId(32),
+      envelope: material.envelope,
+    })
+
+    expect(rotated.epochSequence).toBe(1)
+    expect(rotated.epochId).toBe(material.nextEpochId)
+    const blobs = new Map(oldRevision.blobs.map((blob) => [blob.blobId, blob.bytes]))
+    const decrypted = await crypto.decryptRevision(
+      rotated,
+      { cursor: 2, logHash: randomId(32), envelope: oldRevision.envelope },
+      Number.MAX_SAFE_INTEGER,
+      async (blobId) => {
+        const blob = blobs.get(blobId)
+        if (!blob) throw new Error("Missing retained old-epoch blob")
+        return blob
+      },
+    )
+    if (!decrypted.bytes) throw new Error("Expected old-epoch revision content")
+    expect(new TextDecoder().decode(decrypted.bytes)).toBe("old epoch")
+  })
+
   it("creates signed device revocations bound to their target certificate", async () => {
     const crypto = createPackageCryptoPort()
     const claim = await crypto.createFirstDevice("setup-session", "claim-challenge")

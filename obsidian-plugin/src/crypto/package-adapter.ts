@@ -7,6 +7,7 @@ import type {
   DeviceRevocationMaterial,
   DeviceRevocationRecord,
   EncryptedRevision,
+  EpochTransitionMaterial,
   HistoryRevisionMetadata,
   LogFormat,
   LogFormatUpgradeMaterial,
@@ -32,6 +33,7 @@ import {
   refreshTrustedCheckpoint,
   signChallenge,
 } from "./device-workflows"
+import { applyEpochTransition, createEpochTransition } from "./epoch-workflows"
 import { createLogFormatUpgrade, verifyLogFormatUpgrade } from "./log-format-transition"
 import {
   approvePairing,
@@ -141,6 +143,22 @@ class PackageCryptoPort implements CryptoPort {
     operation: RemoteOperation,
   ): Promise<"canonical-cbor-v1"> {
     return verifyLogFormatUpgrade(device, operation)
+  }
+
+  createEpochTransition(
+    device: DeviceKeyMaterial,
+    recipients: RemoteDevice[],
+    recoveryStateId: string,
+    reason: "scheduled" | "revocation" | "migration",
+  ): Promise<EpochTransitionMaterial> {
+    return createEpochTransition(device, recipients, recoveryStateId, reason)
+  }
+
+  applyEpochTransition(
+    device: DeviceKeyMaterial,
+    operation: RemoteOperation,
+  ): Promise<DeviceKeyMaterial> {
+    return applyEpochTransition(device, operation)
   }
 
   createPairingJoin(

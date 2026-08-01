@@ -20,6 +20,7 @@ export interface JournalPort {
   open(): Promise<void>
   close(): void
   listPending(): Promise<JournalEntry[]>
+  invalidatePreparedRevisions(): Promise<void>
   putEntry(entry: JournalEntry): Promise<void>
   updateEntry(id: string, state: JournalState, error?: string | null): Promise<void>
   hasPendingPath(path: string): Promise<boolean>
@@ -36,6 +37,7 @@ export interface JournalPort {
   getCheckpoint(): Promise<TrustedCheckpoint | null>
   setCheckpoint(checkpoint: TrustedCheckpoint): Promise<void>
   getDeviceRevocation(deviceId: string): Promise<DeviceRevocationRecord | null>
+  listDeviceRevocations(): Promise<DeviceRevocationRecord[]>
   putDeviceRevocation(revocation: DeviceRevocationRecord): Promise<void>
   putRevision(revision: LocalRevision): Promise<void>
   getRevision(revisionId: string): Promise<LocalRevision | null>

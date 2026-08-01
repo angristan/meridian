@@ -115,10 +115,12 @@ describe("Meridian remote client", () => {
 
     expect(JSON.parse(String(transport.requests[1]?.body))).toMatchObject({
       supportedLogFormats: ["legacy-http-v1", "canonical-cbor-v1"],
+      supportedFeatures: ["epoch-transition-v1"],
     })
     expect(JSON.parse(String(transport.requests[2]?.body))).not.toHaveProperty(
       "supportedLogFormats",
     )
+    expect(JSON.parse(String(transport.requests[2]?.body))).not.toHaveProperty("supportedFeatures")
   })
 
   it("parses persistent device log capabilities conservatively", async () => {
@@ -136,6 +138,7 @@ describe("Meridian remote client", () => {
             authorizedAt: 1,
             revokedAt: null,
             supportsCanonicalLog: true,
+            supportsEpochTransitions: true,
           },
           {
             deviceId: "old-device",
@@ -154,7 +157,12 @@ describe("Meridian remote client", () => {
     await client.authenticate(TEST_DEVICE, new FakeCrypto())
     const devices = await client.listDevices()
 
-    expect(devices.map((device) => device.supportsCanonicalLog)).toEqual([true, false])
+    expect(
+      devices.map((device) => [device.supportsCanonicalLog, device.supportsEpochTransitions]),
+    ).toEqual([
+      [true, true],
+      [false, false],
+    ])
   })
 
   it("skips the device registry for an empty change page", async () => {

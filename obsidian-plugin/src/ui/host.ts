@@ -27,6 +27,7 @@ export interface MeridianUiHost {
   syncNow(): Promise<void>
   repairLocalIndex(): Promise<void>
   getLogFormat(): Promise<LogFormat | null>
+  getEpochStatus(): Promise<{ sequence: number; pending: boolean } | null>
   connectFromSetup(
     endpoint: string,
     setupSession: string,

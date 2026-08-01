@@ -70,6 +70,7 @@ export function parseDevice(value: unknown): RemoteDevice {
     deviceName: typeof value.deviceName === "string" ? value.deviceName : null,
     platform: typeof value.platform === "string" ? value.platform : null,
     supportsCanonicalLog: value.supportsCanonicalLog === true,
+    supportsEpochTransitions: value.supportsEpochTransitions === true,
   }
 }
 

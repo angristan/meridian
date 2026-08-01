@@ -44,7 +44,7 @@ export class OperationApplier {
     device: DeviceKeyMaterial,
     operation: RemoteOperation,
     onBlobProgress?: (progress: BlobTransferProgress) => void,
-  ): Promise<void> {
+  ): Promise<DeviceKeyMaterial> {
     const wire = record(operation.envelope)
     const authorDeviceId = typeof wire?.authorDeviceId === "string" ? wire.authorDeviceId : null
     if (authorDeviceId) {
@@ -56,14 +56,16 @@ export class OperationApplier {
     if (wire?.type === "device-revocation") {
       const revocation = await this.crypto.verifyDeviceRevocation(device, operation)
       await this.journal.putDeviceRevocation(revocation)
-      return
+      return device
     }
     if (wire?.type === "log-format-transition") {
       await this.crypto.verifyLogFormatUpgrade(device, operation)
-      return
+      return device
     }
     if (wire?.type === "key-epoch") {
-      throw new Error("Remote epoch transition is not supported by this client")
+      const updated = await this.crypto.applyEpochTransition(device, operation)
+      if (updated.epochId !== device.epochId) await this.journal.invalidatePreparedRevisions()
+      return updated
     }
 
     const revision = await this.crypto.decryptRevision(
@@ -73,7 +75,7 @@ export class OperationApplier {
       (blobId) => this.remote.getBlob(blobId),
       onBlobProgress,
     )
-    if (await this.validateRevisionGraph(revision, operation)) return
+    if (await this.validateRevisionGraph(revision, operation)) return device
 
     const category = configCategoryForPath(revision.path, this.vault.configDir)
     if (isConfigPath(revision.path, this.vault.configDir) && category === null) {
@@ -81,17 +83,18 @@ export class OperationApplier {
     }
     if (category && !this.categories()[category]) {
       await this.recordRevision(revision, operation, false)
-      return
+      return device
     }
     if (!isSelectedForSync(revision.path, this.vault.configDir, this.selection())) {
       await this.recordRevision(revision, operation, false)
-      return
+      return device
     }
     if (!isSyncablePath(revision.path, this.vault.configDir, this.categories())) {
       throw new Error("Remote operation targets an excluded path")
     }
 
     await this.applyFileRevision(device, revision, operation, 1)
+    return device
   }
 
   private async applyFileRevision(

@@ -105,10 +105,23 @@ export class PushEngine {
     shouldStop: () => boolean,
   ): Promise<{ stopped: true } | { stopped: false; checkpoint: TrustedCheckpoint }> {
     let prepared = entry.preparedRevision
-    if (!prepared) {
-      const exists = await this.vault.exists(entry.path)
-      const action = exists ? (entry.action === "restore" ? "restore" : "upsert") : "delete"
-      const bytes = action === "delete" ? null : await this.vault.read(entry.path)
+    if (!prepared || prepared.invalidatedByEpoch) {
+      const invalidated = prepared?.invalidatedByEpoch === true ? prepared : null
+      const exists = invalidated
+        ? invalidated.action !== "delete"
+        : await this.vault.exists(entry.path)
+      const action = invalidated
+        ? invalidated.action
+        : exists
+          ? entry.action === "restore"
+            ? "restore"
+            : "upsert"
+          : "delete"
+      const bytes = invalidated
+        ? invalidated.bytes
+        : action === "delete"
+          ? null
+          : await this.vault.read(entry.path)
       const encrypted = await this.crypto.encryptRevision(device, {
         operationId: entry.id,
         revisionId: entry.revisionId,

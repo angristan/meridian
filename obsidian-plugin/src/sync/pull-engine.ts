@@ -13,6 +13,7 @@ import type { OperationApplier } from "./operation-applier"
 
 export interface PullResult {
   stopped: boolean
+  device: DeviceKeyMaterial
 }
 
 export class PullEngine {
@@ -26,6 +27,7 @@ export class PullEngine {
       previousHash: string,
       logFormat: LogFormat,
     ) => Promise<void>,
+    private readonly persistDevice: (device: DeviceKeyMaterial) => Promise<void> = async () => {},
   ) {}
 
   async pull(
@@ -33,6 +35,7 @@ export class PullEngine {
     onProgress: (progress: PullSyncProgress) => void = () => {},
     shouldStop: () => boolean = () => false,
   ): Promise<PullResult> {
+    let currentDevice = device
     const startCursor = await this.journal.getCursor()
     const startingCheckpoint = await this.journal.getCheckpoint()
     if (startCursor > 0 && startingCheckpoint?.cursor !== startCursor) {
@@ -50,27 +53,33 @@ export class PullEngine {
     let processedSinceYield = 0
     const trustedFloor = device.trustedCheckpoint
     while (true) {
-      if (shouldStop()) return { stopped: true }
+      if (shouldStop()) return { stopped: true, device: currentDevice }
       const changes = await this.remote.getChanges(cursor, await this.journal.getCheckpoint())
       if (changes.latestCursor < cursor || changes.latestCursor < trustedFloor.cursor) {
         throw new Error("Server attempted to roll back the signed checkpoint")
       }
       targetCursor = Math.max(targetCursor, changes.latestCursor)
-      if (shouldStop()) return { stopped: true }
+      if (shouldStop()) return { stopped: true, device: currentDevice }
       onProgress(pullProgress(startCursor, cursor, targetCursor))
       for (const operation of changes.operations) {
-        if (shouldStop()) return { stopped: true }
+        if (shouldStop()) return { stopped: true, device: currentDevice }
         if (operation.cursor !== cursor + 1) {
           throw new Error(`Operation log is discontinuous at cursor ${operation.cursor}`)
         }
-        await this.verifyLogLink(device, operation, previousHash, logFormat)
+        if (
+          currentDevice.requiredTransitionOperationId !== null &&
+          operationType(operation) !== "key-epoch"
+        ) {
+          throw new Error("Recovery state requires an epoch transition at the next log cursor")
+        }
+        await this.verifyLogLink(currentDevice, operation, previousHash, logFormat)
         if (
           operation.cursor === trustedFloor.cursor &&
           operation.logHash !== trustedFloor.logHash
         ) {
           throw new Error("Server history conflicts with the signed checkpoint")
         }
-        await this.applier.apply(device, operation, (blob) =>
+        const nextDevice = await this.applier.apply(currentDevice, operation, (blob) =>
           onProgress({
             ...pullProgress(startCursor, cursor, targetCursor),
             currentChunk: blob.completedChunks,
@@ -79,6 +88,10 @@ export class PullEngine {
             totalBytes: blob.totalBytes,
           }),
         )
+        if (nextDevice.serialized !== currentDevice.serialized) {
+          await this.persistDevice(nextDevice)
+          currentDevice = nextDevice
+        }
         if (operationType(operation) === "log-format-transition") {
           logFormat = "canonical-cbor-v1"
         }
@@ -106,7 +119,7 @@ export class PullEngine {
           await yieldToEventLoop()
         }
       }
-      if (cursor >= targetCursor) return { stopped: false }
+      if (cursor >= targetCursor) return { stopped: false, device: currentDevice }
       if (changes.operations.length === 0) {
         throw new Error("Server omitted operations before its advertised latest cursor")
       }

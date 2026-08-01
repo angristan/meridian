@@ -24,6 +24,15 @@ export interface PendingProtocolUpgrade {
   envelope: unknown
 }
 
+export interface PendingEpochTransition {
+  endpoint: string
+  vaultId: string
+  deviceId: string
+  operationId: string
+  nextEpochId: string
+  envelope: unknown
+}
+
 export interface PendingPairingCompletion {
   endpoint: string
   pairingId: string
@@ -46,6 +55,7 @@ export interface MeridianSettings {
   pendingDeviceRemoval: PendingDeviceRemoval | null
   pendingPairingCompletion: PendingPairingCompletion | null
   pendingProtocolUpgrade: PendingProtocolUpgrade | null
+  pendingEpochTransition: PendingEpochTransition | null
   pollIntervalSeconds: number
   scanIntervalMinutes: number
   maxFileSizeMiB: number
@@ -62,6 +72,7 @@ export const DEFAULT_SETTINGS: MeridianSettings = {
   pendingDeviceRemoval: null,
   pendingPairingCompletion: null,
   pendingProtocolUpgrade: null,
+  pendingEpochTransition: null,
   pollIntervalSeconds: 45,
   scanIntervalMinutes: 5,
   maxFileSizeMiB: 64,
@@ -337,6 +348,10 @@ export interface DeviceKeyMaterial {
   vaultId: string
   deviceId: string
   serialized: string
+  epochId: string
+  epochSequence: number
+  epochActivatedAtCursor: number
+  requiredTransitionOperationId: string | null
   trustedCheckpoint: TrustedCheckpoint
   trustedCheckpointAuthorized: boolean
 }
@@ -380,6 +395,7 @@ export interface PreparedJournalRevision {
   action: JournalAction
   bytes: ArrayBuffer | null
   encrypted: EncryptedRevision
+  invalidatedByEpoch?: true
 }
 
 export interface BlobTransferProgress {
@@ -411,6 +427,12 @@ export interface DeviceRevocationMaterial {
 
 export interface LogFormatUpgradeMaterial {
   operationId: string
+  envelope: unknown
+}
+
+export interface EpochTransitionMaterial {
+  operationId: string
+  nextEpochId: string
   envelope: unknown
 }
 
@@ -539,6 +561,16 @@ export interface CryptoPort {
     device: DeviceKeyMaterial,
     operation: RemoteOperation,
   ): Promise<"canonical-cbor-v1">
+  createEpochTransition(
+    device: DeviceKeyMaterial,
+    recipients: RemoteDevice[],
+    recoveryStateId: string,
+    reason: "scheduled" | "revocation" | "migration",
+  ): Promise<EpochTransitionMaterial>
+  applyEpochTransition(
+    device: DeviceKeyMaterial,
+    operation: RemoteOperation,
+  ): Promise<DeviceKeyMaterial>
   createPairingJoin(
     pairing: PairingCapability,
     descriptor: PairingDeviceDescriptor,
@@ -584,6 +616,7 @@ export interface RemoteDevice {
   deviceName: string | null
   platform: string | null
   supportsCanonicalLog?: boolean
+  supportsEpochTransitions?: boolean
 }
 
 export interface PairingCapability {
@@ -636,6 +669,7 @@ export interface PairingResult {
 
 export interface RemotePort {
   claim(setupSession: string, claim: SetupClaim): Promise<void>
+  getRecoveryPackage(): Promise<RecoveryPackageMaterial>
   authenticate(device: DeviceKeyMaterial, signer: CryptoPort): Promise<void>
   getChanges(after: number, checkpoint: TrustedCheckpoint | null): Promise<RemoteChanges>
   putBlob(blob: EncryptedBlob): Promise<void>

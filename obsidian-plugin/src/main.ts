@@ -242,6 +242,17 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
     return this.controller?.logFormat() ?? null
   }
 
+  async getEpochStatus(): Promise<{ sequence: number; pending: boolean } | null> {
+    if (!this.settings.deviceId) return null
+    const serialized = this.secrets.getDeviceKeyBundle(this.settings.deviceId)
+    if (!serialized) return null
+    const device = await this.cryptoPort.loadDevice(serialized)
+    return {
+      sequence: device.epochSequence,
+      pending: this.settings.pendingEpochTransition !== null,
+    }
+  }
+
   async connectFromSetup(
     endpoint: string,
     setupSession: string,
@@ -1072,6 +1083,48 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
         {
           selection: () => structuredClone(this.settings.selectiveSync),
           compute,
+          persistDevice: async (updatedDevice) => {
+            if (
+              updatedDevice.deviceId !== this.settings.deviceId ||
+              updatedDevice.vaultId !== this.settings.vaultId
+            ) {
+              throw new Error("Updated device secret belongs to another Meridian identity")
+            }
+            this.secrets.setDeviceKeyBundle(updatedDevice.deviceId, updatedDevice.serialized)
+          },
+          epochTransition: {
+            load: () => {
+              const pending = this.settings.pendingEpochTransition
+              if (!pending) return null
+              if (
+                pending.endpoint !== this.settings.endpoint ||
+                pending.vaultId !== this.settings.vaultId ||
+                pending.deviceId !== this.settings.deviceId
+              ) {
+                throw new Error("Pending epoch transition belongs to another Meridian identity")
+              }
+              return {
+                operationId: pending.operationId,
+                nextEpochId: pending.nextEpochId,
+                envelope: pending.envelope,
+              }
+            },
+            save: async (material) => {
+              this.settings.pendingEpochTransition = {
+                endpoint: this.settings.endpoint,
+                vaultId: this.settings.vaultId,
+                deviceId: this.settings.deviceId,
+                operationId: material.operationId,
+                nextEpochId: material.nextEpochId,
+                envelope: material.envelope,
+              }
+              await this.saveSettings()
+            },
+            clear: async () => {
+              this.settings.pendingEpochTransition = null
+              await this.saveSettings()
+            },
+          },
           protocolUpgrade: {
             load: () => {
               const pending = this.settings.pendingProtocolUpgrade
@@ -1131,6 +1184,7 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
       this.settings.pendingPairingCompletion?.pairingId ?? null,
       this.settings.pendingDeviceRemoval?.deviceId ?? null,
       this.settings.pendingProtocolUpgrade?.operationId ?? null,
+      this.settings.pendingEpochTransition?.operationId ?? null,
     ])
   }
 

@@ -9,6 +9,7 @@ import type {
   DeviceRevocationRecord,
   EncryptedBlob,
   EncryptedRevision,
+  EpochTransitionMaterial,
   HistoryRevisionMetadata,
   LogFormat,
   LogFormatUpgradeMaterial,
@@ -20,6 +21,7 @@ import type {
   PairingResult,
   PairingStatus,
   PairingVerificationMaterial,
+  RecoveryPackageMaterial,
   RemoteChanges,
   RemoteDevice,
   RemoteOperation,
@@ -41,6 +43,10 @@ export const TEST_DEVICE: DeviceKeyMaterial = {
   vaultId: "vault-1",
   deviceId: "device-local",
   serialized: "secret",
+  epochId: "epoch-0",
+  epochSequence: 0,
+  epochActivatedAtCursor: 0,
+  requiredTransitionOperationId: null,
   trustedCheckpoint: { cursor: 0, logHash: "hash-0" },
   trustedCheckpointAuthorized: true,
 }
@@ -365,6 +371,35 @@ export class FakeCrypto implements CryptoPort {
     }
   }
 
+  async createEpochTransition(device: DeviceKeyMaterial): Promise<EpochTransitionMaterial> {
+    return {
+      operationId: "epoch-transition",
+      nextEpochId: `epoch-${device.epochSequence + 1}`,
+      envelope: {
+        operationId: "epoch-transition",
+        authorDeviceId: device.deviceId,
+        epochId: device.epochId,
+        type: "key-epoch",
+      },
+    }
+  }
+
+  async applyEpochTransition(
+    device: DeviceKeyMaterial,
+    operation: RemoteOperation,
+  ): Promise<DeviceKeyMaterial> {
+    const sequence = device.epochSequence + 1
+    return {
+      ...device,
+      serialized: `${device.serialized}-epoch-${sequence}`,
+      epochId: `epoch-${sequence}`,
+      epochSequence: sequence,
+      epochActivatedAtCursor: operation.cursor,
+      requiredTransitionOperationId: null,
+      trustedCheckpoint: { ...device.trustedCheckpoint, cursor: operation.cursor },
+    }
+  }
+
   async createLogFormatUpgrade(
     device: DeviceKeyMaterial,
     checkpoint: TrustedCheckpoint,
@@ -420,6 +455,10 @@ export class FakeRemote implements RemotePort {
   private nextBlobUploadBarrier: { started: () => void; resume: Promise<void> } | null = null
 
   async claim(_setupSession: string, _claim: SetupClaim): Promise<void> {}
+
+  async getRecoveryPackage(): Promise<RecoveryPackageMaterial> {
+    return { encryptedRecoveryPackage: "recovery-package", recoveryStateId: "recovery-state" }
+  }
 
   async authenticate(_device: DeviceKeyMaterial, _signer: CryptoPort): Promise<void> {
     this.authenticateCount += 1

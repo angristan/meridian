@@ -46,6 +46,24 @@ export class IndexedDbJournal implements JournalPort {
       .sort((left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id))
   }
 
+  async invalidatePreparedRevisions(): Promise<void> {
+    const database = this.requireDatabase()
+    const transaction = database.transaction("entries", "readwrite")
+    const done = transactionDone(transaction)
+    const store = transaction.objectStore("entries")
+    const entries = await requestResult<JournalEntry[]>(store.getAll())
+    for (const entry of entries) {
+      if (entry.state === "complete" || entry.preparedRevision === null) continue
+      store.put({
+        ...entry,
+        state: "queued",
+        error: null,
+        preparedRevision: { ...entry.preparedRevision, invalidatedByEpoch: true },
+      } satisfies JournalEntry)
+    }
+    await done
+  }
+
   async putEntry(entry: JournalEntry): Promise<void> {
     await this.put("entries", entry)
   }
@@ -173,6 +191,10 @@ export class IndexedDbJournal implements JournalPort {
     )
     await done
     return revocation ?? null
+  }
+
+  async listDeviceRevocations(): Promise<DeviceRevocationRecord[]> {
+    return this.getAll<DeviceRevocationRecord>("revocations")
   }
 
   async putDeviceRevocation(revocation: DeviceRevocationRecord): Promise<void> {

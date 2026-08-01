@@ -108,10 +108,7 @@ export function hasAuthorizedCheckpoint(secret: StoredDeviceSecret): boolean {
     const signer = certificates.find((certificate) =>
       bytesEqual(certificate.body.deviceId, bundle.checkpoint.body.signerDeviceId),
     )
-    if (
-      !signer ||
-      !bytesEqual(signer.body.vaultId, bundle.checkpoint.body.vaultId)
-    ) {
+    if (!signer || !bytesEqual(signer.body.vaultId, bundle.checkpoint.body.vaultId)) {
       return false
     }
     validateDeviceCertificate(signer, {

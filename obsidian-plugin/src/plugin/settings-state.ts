@@ -2,6 +2,7 @@ import {
   DEFAULT_SETTINGS,
   type MeridianSettings,
   type PendingDeviceRemoval,
+  type PendingEpochTransition,
   type PendingPairingCompletion,
   type PendingProtocolUpgrade,
 } from "../model"
@@ -22,6 +23,7 @@ export function normalizeSettings(loaded: unknown): MeridianSettings {
     pendingDeviceRemoval: pendingDeviceRemoval(value.pendingDeviceRemoval),
     pendingPairingCompletion: pendingPairingCompletion(value.pendingPairingCompletion),
     pendingProtocolUpgrade: pendingProtocolUpgrade(value.pendingProtocolUpgrade),
+    pendingEpochTransition: pendingEpochTransition(value.pendingEpochTransition),
     pollIntervalSeconds: boundedNumber(value.pollIntervalSeconds, 15, 300, 45),
     scanIntervalMinutes: boundedNumber(value.scanIntervalMinutes, 1, 30, 5),
     maxFileSizeMiB: boundedNumber(value.maxFileSizeMiB, 16, 128, 64),
@@ -54,6 +56,29 @@ export function withoutMeridianIdentity(settings: MeridianSettings): MeridianSet
     pendingDeviceRemoval: null,
     pendingPairingCompletion: null,
     pendingProtocolUpgrade: null,
+    pendingEpochTransition: null,
+  }
+}
+
+function pendingEpochTransition(value: unknown): PendingEpochTransition | null {
+  if (
+    !isRecord(value) ||
+    typeof value.endpoint !== "string" ||
+    typeof value.vaultId !== "string" ||
+    typeof value.deviceId !== "string" ||
+    typeof value.operationId !== "string" ||
+    typeof value.nextEpochId !== "string" ||
+    !isRecord(value.envelope)
+  ) {
+    return null
+  }
+  return {
+    endpoint: value.endpoint,
+    vaultId: value.vaultId,
+    deviceId: value.deviceId,
+    operationId: value.operationId,
+    nextEpochId: value.nextEpochId,
+    envelope: value.envelope,
   }
 }
 

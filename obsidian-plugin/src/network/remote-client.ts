@@ -486,6 +486,7 @@ export class MeridianRemoteClient implements RemotePort {
           body: {
             ...proof,
             supportedLogFormats: ["legacy-http-v1", "canonical-cbor-v1"],
+            supportedFeatures: ["epoch-transition-v1"],
           },
           authenticated: false,
         })

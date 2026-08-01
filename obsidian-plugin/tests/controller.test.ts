@@ -4,6 +4,7 @@ import type {
   DeviceKeyMaterial,
   EncryptedBlob,
   EncryptedRevision,
+  EpochTransitionMaterial,
   JournalEntry,
   LogFormatUpgradeMaterial,
   RemoteOperation,
@@ -338,6 +339,145 @@ describe("SyncController", () => {
 
     expect(remote.operations).toHaveLength(0)
     expect(await controller.logFormat()).toBe("legacy-http-v1")
+    controller.stop()
+  })
+
+  it("rotates the initial epoch after every active device checks in", async () => {
+    class EpochReadyRemote extends FakeRemote {
+      override async listDevices() {
+        return [
+          {
+            deviceId: TEST_DEVICE.deviceId,
+            signingPublicKey: "owner-signing-key",
+            hpkePublicKey: "owner-hpke-key",
+            certificate: "owner-certificate",
+            role: "owner" as const,
+            authorizedAt: 1,
+            revokedAt: null,
+            deviceName: "Owner",
+            platform: "Test",
+            supportsCanonicalLog: true,
+            supportsEpochTransitions: true,
+          },
+        ]
+      }
+    }
+    const device: DeviceKeyMaterial = {
+      ...TEST_DEVICE,
+      trustedCheckpoint: {
+        ...TEST_DEVICE.trustedCheckpoint,
+        initialLogFormat: "canonical-cbor-v1",
+        logFormat: "canonical-cbor-v1",
+      },
+    }
+    const journal = new MemoryJournal()
+    const remote = new EpochReadyRemote()
+    let pending: EpochTransitionMaterial | null = null
+    const persisted: DeviceKeyMaterial[] = []
+    const controller = new SyncController(
+      new FakeVault(),
+      journal,
+      remote,
+      new FakeCrypto(),
+      () => ALL_CATEGORIES,
+      () => {},
+      undefined,
+      {
+        persistDevice: async (updated) => {
+          persisted.push(updated)
+        },
+        epochTransition: {
+          load: () => pending,
+          save: async (material) => {
+            pending = material
+          },
+          clear: async () => {
+            pending = null
+          },
+        },
+      },
+    )
+
+    await controller.start(device)
+
+    expect(remote.operations).toHaveLength(1)
+    expect(remote.operations[0]?.envelope).toMatchObject({ type: "key-epoch" })
+    expect(persisted.at(-1)).toMatchObject({ epochId: "epoch-1", epochSequence: 1 })
+    expect(await journal.getCursor()).toBe(1)
+    expect(pending).toBeNull()
+    controller.stop()
+  })
+
+  it("does not advance the cursor before the successor secret persists", async () => {
+    class EpochReadyRemote extends FakeRemote {
+      override async listDevices() {
+        return [
+          {
+            deviceId: TEST_DEVICE.deviceId,
+            signingPublicKey: "owner-signing-key",
+            hpkePublicKey: "owner-hpke-key",
+            certificate: "owner-certificate",
+            role: "owner" as const,
+            authorizedAt: 1,
+            revokedAt: null,
+            deviceName: "Owner",
+            platform: "Test",
+            supportsCanonicalLog: true,
+            supportsEpochTransitions: true,
+          },
+        ]
+      }
+    }
+    const device: DeviceKeyMaterial = {
+      ...TEST_DEVICE,
+      trustedCheckpoint: {
+        ...TEST_DEVICE.trustedCheckpoint,
+        initialLogFormat: "canonical-cbor-v1",
+        logFormat: "canonical-cbor-v1",
+      },
+    }
+    const journal = new MemoryJournal()
+    const remote = new EpochReadyRemote()
+    let pending: EpochTransitionMaterial | null = null
+    let failPersistence = true
+    let persistenceCalls = 0
+    const controller = new SyncController(
+      new FakeVault(),
+      journal,
+      remote,
+      new FakeCrypto(),
+      () => ALL_CATEGORIES,
+      () => {},
+      undefined,
+      {
+        persistDevice: async () => {
+          persistenceCalls += 1
+          if (failPersistence && persistenceCalls > 1) {
+            throw new Error("SecretStorage unavailable")
+          }
+        },
+        epochTransition: {
+          load: () => pending,
+          save: async (material) => {
+            pending = material
+          },
+          clear: async () => {
+            pending = null
+          },
+        },
+      },
+    )
+
+    await controller.start(device)
+    expect(await journal.getCursor()).toBe(0)
+    expect(pending).not.toBeNull()
+
+    failPersistence = false
+    await controller.sync("manual")
+
+    expect(await journal.getCursor()).toBe(1)
+    expect(pending).toBeNull()
+    expect(remote.operations).toHaveLength(1)
     controller.stop()
   })
 

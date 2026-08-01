@@ -97,7 +97,8 @@ export class HistoryBackfillService {
       return { revision: null, nextLogFormat }
     }
     if (type === "key-epoch") {
-      throw new Error("Complete history contains a key epoch unsupported by this client")
+      await this.crypto.applyEpochTransition(device, operation)
+      return { revision: null, nextLogFormat: null }
     }
     if (type !== "revision" && type !== "restore" && type !== "tombstone") {
       throw new Error("Complete history contains an unknown operation type")

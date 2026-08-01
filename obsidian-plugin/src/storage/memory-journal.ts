@@ -32,6 +32,18 @@ export class MemoryJournal implements JournalPort {
       .sort((left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id))
   }
 
+  async invalidatePreparedRevisions(): Promise<void> {
+    for (const [id, entry] of this.entries) {
+      if (entry.state === "complete" || entry.preparedRevision === null) continue
+      this.entries.set(id, {
+        ...entry,
+        state: "queued",
+        error: null,
+        preparedRevision: { ...entry.preparedRevision, invalidatedByEpoch: true },
+      })
+    }
+  }
+
   async putEntry(entry: JournalEntry): Promise<void> {
     this.entries.set(entry.id, structuredClone(entry))
   }
@@ -120,6 +132,10 @@ export class MemoryJournal implements JournalPort {
   async getDeviceRevocation(deviceId: string): Promise<DeviceRevocationRecord | null> {
     const revocation = this.revocations.get(deviceId)
     return revocation ? structuredClone(revocation) : null
+  }
+
+  async listDeviceRevocations(): Promise<DeviceRevocationRecord[]> {
+    return [...this.revocations.values()].map((revocation) => structuredClone(revocation))
   }
 
   async putDeviceRevocation(revocation: DeviceRevocationRecord): Promise<void> {

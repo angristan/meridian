@@ -264,6 +264,10 @@ export function renderSettings(container: HTMLElement, host: MeridianUiHost): vo
     .setName("Vault protocol")
     .setDesc("Checking the signed operation log format…")
   configureProtocolUpgrade(protocolUpgrade, host)
+  const epochStatus = new Setting(container)
+    .setName("Encryption epoch")
+    .setDesc("Checking encryption key rotation state…")
+  configureEpochStatus(epochStatus, host)
 
   new Setting(container).setName("Storage and retention").setHeading()
   new Setting(container)
@@ -444,6 +448,13 @@ export function getMeridianSettingDefinitions(
           visible: () => configured,
           render: (setting) => configureProtocolUpgrade(setting, host),
         },
+        {
+          name: "Encryption epoch",
+          desc: "Track automatic vault encryption key rotation.",
+          aliases: ["key rotation", "revocation", "epoch"],
+          visible: () => configured,
+          render: (setting) => configureEpochStatus(setting, host),
+        },
       ],
     },
     {
@@ -501,6 +512,29 @@ function configToggle(
     aliases,
     control: { type: "toggle", key },
   }
+}
+
+function configureEpochStatus(setting: Setting, host: MeridianUiHost): void {
+  void host
+    .getEpochStatus()
+    .then((status) => {
+      if (!status) {
+        setting.setDesc("Connect Meridian to inspect encryption key rotation.")
+        return
+      }
+      if (status.pending) {
+        setting.setDesc(
+          `Epoch ${status.sequence}. A signed key rotation is stored and will retry automatically.`,
+        )
+        return
+      }
+      setting.setDesc(
+        `Epoch ${status.sequence}. Keys rotate automatically after migration, recovery, or device revocation.`,
+      )
+    })
+    .catch((error) => {
+      setting.setDesc(error instanceof Error ? error.message : "Unable to inspect encryption epoch")
+    })
 }
 
 function configureProtocolUpgrade(setting: Setting, host: MeridianUiHost): void {
