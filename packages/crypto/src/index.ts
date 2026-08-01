@@ -1,5 +1,6 @@
 export * from "./aes.js"
 export * from "./authorization.js"
+export * from "./epochs.js"
 export * from "./errors.js"
 export * from "./hash.js"
 export * from "./hpke.js"

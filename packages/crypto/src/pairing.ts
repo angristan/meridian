@@ -632,7 +632,7 @@ export async function consumePairingEpochPackage(
     throw new AuthorizationError("Pairing epoch state does not match the signed transcript")
   }
   return {
-    version: 1,
+    version: 2,
     vaultId: vaultId(state.vaultId),
     deviceId: input.pending.deviceId,
     signingPrivateKey: input.pending.signingPrivateKey,
@@ -643,6 +643,7 @@ export async function consumePairingEpochPackage(
     epoch: context.epoch,
     vaultEpochKey: vaultEpochKey(fixed(state.vaultEpochKey, 32, "vault epoch key")),
     epochKeys,
+    epochActivatedAtCursor: context.checkpoint.body.cursor,
     checkpoint: context.checkpoint,
   }
 }

@@ -124,13 +124,24 @@ export interface DeviceRevocationOperation {
   readonly suite: CipherSuite
 }
 
+export interface EpochKeyPackage {
+  readonly recipientDeviceId: DeviceId
+  readonly transfer: HpkeTransfer
+}
+
 export interface EpochTransitionOperation {
   readonly type: "epoch-transition"
   readonly operationId: OperationId
   readonly vaultId: VaultId
+  /** Epoch authorizing this transition. */
   readonly epochId: EpochId
-  readonly authorDeviceId: DeviceId | "recovery"
+  readonly authorDeviceId: DeviceId
+  readonly previousCursor: number
+  readonly previousLogHash: Hash
   readonly declaration: EpochDeclaration
+  readonly keyPackages: readonly EpochKeyPackage[]
+  readonly previousRecoveryStateId: Hash
+  readonly encryptedRecoveryPackage: Uint8Array
   readonly suite: CipherSuite
 }
 
@@ -215,15 +226,31 @@ export interface RecoveryState {
   readonly epochKeys: readonly EpochKeyMaterial[]
   readonly checkpoint: SignedCheckpoint
   readonly recoverySequence: number
+  /** Transition that must immediately follow the package checkpoint, for owner-updated packages. */
+  readonly requiredTransitionOperationId?: OperationId
 }
 
-export interface EncryptedRecoveryPackage {
+export interface LegacyEncryptedRecoveryPackage {
+  readonly packageVersion?: 1
   readonly protocolGeneration: number
   readonly vaultId: VaultId
   readonly nonce: Nonce
   readonly ciphertext: Uint8Array
   readonly checkpoint: SignedCheckpoint
 }
+
+export interface PublicKeyEncryptedRecoveryPackage {
+  readonly packageVersion: 2
+  readonly protocolGeneration: number
+  readonly vaultId: VaultId
+  readonly encapsulatedKey: Uint8Array
+  readonly ciphertext: Uint8Array
+  readonly checkpoint: SignedCheckpoint
+}
+
+export type EncryptedRecoveryPackage =
+  | LegacyEncryptedRecoveryPackage
+  | PublicKeyEncryptedRecoveryPackage
 
 export interface AuthChallenge {
   readonly challengeId: string

@@ -110,7 +110,6 @@ export function hasAuthorizedCheckpoint(secret: StoredDeviceSecret): boolean {
     )
     if (
       !signer ||
-      !bytesEqual(signer.body.epochId, bundle.checkpoint.body.epochId) ||
       !bytesEqual(signer.body.vaultId, bundle.checkpoint.body.vaultId)
     ) {
       return false

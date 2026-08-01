@@ -1,5 +1,6 @@
 import {
   blobId,
+  bytesEqual,
   certificateId,
   deviceId,
   ed25519Signature,
@@ -214,7 +215,19 @@ export function operationBodyToCbor(body: OperationBody): CborValue {
     return { ...common, certificateId: body.certificateId, reason: body.reason }
   }
   if (body.type === OperationType.EpochTransition) {
-    return { ...common, declaration: encodeEpochDeclaration(body.declaration) }
+    return {
+      ...common,
+      previousCursor: body.previousCursor,
+      previousLogHash: body.previousLogHash,
+      declaration: encodeEpochDeclaration(body.declaration),
+      keyPackages: body.keyPackages.map((keyPackage) => ({
+        recipientDeviceId: keyPackage.recipientDeviceId,
+        encapsulatedKey: keyPackage.transfer.encapsulatedKey,
+        ciphertext: keyPackage.transfer.ciphertext,
+      })),
+      previousRecoveryStateId: body.previousRecoveryStateId,
+      encryptedRecoveryPackage: body.encryptedRecoveryPackage,
+    }
   }
   return {
     ...common,
@@ -374,16 +387,77 @@ function decodeLogFormatTransition(value: Record<string, CborValue>): LogFormatT
 function decodeEpochTransition(value: Record<string, CborValue>): EpochTransitionOperation {
   exact(
     value,
-    ["type", "operationId", "vaultId", "epochId", "authorDeviceId", "suite", "declaration"],
+    [
+      "type",
+      "operationId",
+      "vaultId",
+      "epochId",
+      "authorDeviceId",
+      "suite",
+      "previousCursor",
+      "previousLogHash",
+      "declaration",
+      "keyPackages",
+      "previousRecoveryStateId",
+      "encryptedRecoveryPackage",
+    ],
     "epoch transition operation",
   )
   if (!(value.declaration instanceof Uint8Array)) {
     throw new ProtocolDecodeError("Epoch declaration must be canonical CBOR bytes")
   }
+  if (!Array.isArray(value.keyPackages) || value.keyPackages.length > 1024) {
+    throw new ProtocolDecodeError("Epoch key packages must be a bounded array")
+  }
+  const common = decodeCommon(value)
+  if (common.authorDeviceId === "recovery") {
+    throw new ProtocolDecodeError("Recovery identity cannot author an interactive epoch transition")
+  }
+  const declaration = decodeEpochDeclaration(value.declaration)
+  if (
+    !bytesEqual(declaration.body.vaultId, common.vaultId) ||
+    !bytesEqual(declaration.body.previousEpochId ?? new Uint8Array(), common.epochId) ||
+    declaration.body.createdBy === "recovery" ||
+    !bytesEqual(declaration.body.createdBy, common.authorDeviceId) ||
+    declaration.body.sequence < 1 ||
+    bytesEqual(declaration.body.epochId, common.epochId)
+  ) {
+    throw new ProtocolDecodeError("Epoch declaration does not advance the authorizing epoch")
+  }
+  const keyPackages = value.keyPackages.map((entry) => {
+    const keyPackage = record(entry, "epoch key package")
+    exact(keyPackage, ["recipientDeviceId", "encapsulatedKey", "ciphertext"], "epoch key package")
+    return {
+      recipientDeviceId: deviceId(bytes(keyPackage.recipientDeviceId, 16, "recipient device ID")),
+      transfer: {
+        encapsulatedKey: bytes(keyPackage.encapsulatedKey, 32, "encapsulated epoch key"),
+        ciphertext: boundedBytes(keyPackage.ciphertext, 16, 1024, "encrypted epoch key"),
+      },
+    }
+  })
+  if (
+    new Set(keyPackages.map((entry) => [...entry.recipientDeviceId].join(","))).size !==
+    keyPackages.length
+  ) {
+    throw new ProtocolDecodeError("Epoch key package recipients must be unique")
+  }
   return {
     type: "epoch-transition",
-    ...decodeCommon(value),
-    declaration: decodeEpochDeclaration(value.declaration),
+    ...common,
+    authorDeviceId: common.authorDeviceId,
+    previousCursor: integer(value.previousCursor, "previous log cursor"),
+    previousLogHash: hashBytes(bytes(value.previousLogHash, 32, "previous log hash")),
+    declaration,
+    keyPackages,
+    previousRecoveryStateId: hashBytes(
+      bytes(value.previousRecoveryStateId, 32, "previous recovery state ID"),
+    ),
+    encryptedRecoveryPackage: boundedBytes(
+      value.encryptedRecoveryPackage,
+      32,
+      1024 * 1024,
+      "encrypted recovery package",
+    ),
   }
 }
 

@@ -1,7 +1,6 @@
 import {
   type BlobId,
   blobId,
-  bytesEqual,
   CIPHER_SUITE,
   type DeviceCertificate,
   decodeOperation,
@@ -237,10 +236,6 @@ async function prepareFileRevision(input: InspectFileRevisionInput) {
   if (!input.authorCertificate.body.permissions.includes(Permission.Write)) {
     throw new AuthorizationError("Revision author did not have write permission")
   }
-  if (!bytesEqual(signed.body.epochId, input.authorCertificate.body.epochId)) {
-    throw new AuthorizationError("Revision author certificate does not authorize this epoch")
-  }
-
   const maximumPlaintextBytes = input.maximumPlaintextBytes ?? Number.MAX_SAFE_INTEGER
   if (!Number.isSafeInteger(maximumPlaintextBytes) || maximumPlaintextBytes < 0) {
     throw new RangeError("Maximum revision plaintext size must be a non-negative safe integer")
