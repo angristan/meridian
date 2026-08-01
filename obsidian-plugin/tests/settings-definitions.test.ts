@@ -37,12 +37,13 @@ describe("Obsidian 1.13 setting definitions", () => {
         "Themes and CSS snippets",
         "Polling interval",
         "Attachment size limit",
+        "Vault protocol",
         "Storage usage",
         "Automatic pruning",
         "Recover vault ownership",
         "Rebuild local index",
       ]),
     )
-    expect(definitions).toHaveLength(6)
+    expect(definitions).toHaveLength(7)
   })
 })

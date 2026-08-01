@@ -3,6 +3,8 @@ import type {
   CryptoPort,
   DeviceKeyMaterial,
   LocalRevision,
+  LogFormat,
+  LogFormatUpgradeMaterial,
   PairingApprovalMaterial,
   PairingCapability,
   PairingDeviceDescriptor,
@@ -103,11 +105,22 @@ export class SyncController {
     this.device = device
     await this.journal.open()
     const localCheckpoint = await this.journal.getCheckpoint()
-    if (
-      localCheckpoint?.cursor === device.trustedCheckpoint.cursor &&
-      localCheckpoint.logHash !== device.trustedCheckpoint.logHash
-    ) {
-      throw new Error("Local checkpoint conflicts with the signed device checkpoint")
+    if (localCheckpoint?.cursor === device.trustedCheckpoint.cursor) {
+      const localFormats = {
+        initial: localCheckpoint.initialLogFormat ?? "legacy-http-v1",
+        current: localCheckpoint.logFormat ?? "legacy-http-v1",
+      }
+      const trustedFormats = {
+        initial: device.trustedCheckpoint.initialLogFormat ?? "legacy-http-v1",
+        current: device.trustedCheckpoint.logFormat ?? "legacy-http-v1",
+      }
+      if (
+        localCheckpoint.logHash !== device.trustedCheckpoint.logHash ||
+        localFormats.initial !== trustedFormats.initial ||
+        localFormats.current !== trustedFormats.current
+      ) {
+        throw new Error("Local checkpoint conflicts with the signed device checkpoint")
+      }
     }
     this.updateStatus({
       phase: "idle",
@@ -238,6 +251,43 @@ export class SyncController {
       message: "Conflict resolved",
       queued: (await this.journal.listPending()).length,
     })
+  }
+
+  async logFormat(): Promise<LogFormat> {
+    const checkpoint =
+      (await this.journal.getCheckpoint()) ?? this.requireDevice().trustedCheckpoint
+    return checkpoint.logFormat ?? "legacy-http-v1"
+  }
+
+  async prepareLogFormatUpgrade(): Promise<LogFormatUpgradeMaterial> {
+    return this.runMaintenance(async () => {
+      const device = this.requireDevice()
+      await this.authenticate(device)
+      const pending = await this.journal.listPending()
+      if (pending.length > 0) {
+        throw new Error("Sync all queued changes before upgrading the vault protocol")
+      }
+      const current = (await this.remote.listDevices()).find(
+        (candidate) => candidate.deviceId === device.deviceId,
+      )
+      if (!current || current.revokedAt !== null || current.role !== "owner") {
+        throw new Error("Only the vault owner can upgrade the vault protocol")
+      }
+      const checkpoint = (await this.journal.getCheckpoint()) ?? device.trustedCheckpoint
+      return this.crypto.createLogFormatUpgrade(device, checkpoint)
+    })
+  }
+
+  async completeLogFormatUpgrade(material: LogFormatUpgradeMaterial): Promise<void> {
+    await this.runMaintenance(async () => {
+      const device = this.requireDevice()
+      await this.authenticate(device)
+      await this.remote.commit(material.envelope, material.operationId)
+    })
+    await this.sync("notification")
+    if ((await this.logFormat()) !== "canonical-cbor-v1") {
+      throw new Error("Vault protocol upgrade was not confirmed by the operation log")
+    }
   }
 
   async storageUsage() {

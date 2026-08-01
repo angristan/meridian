@@ -8,6 +8,7 @@ import {
   type DeletedFileRecord,
   INITIAL_STATUS,
   type LocalRevision,
+  type LogFormat,
   type MeridianSettings,
   type PairingInvitation,
   type PairingStatus,
@@ -183,7 +184,19 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
           }),
         )
       } else if (this.settings.enabled) {
-        void this.initializeExistingConnection()
+        void this.initializeExistingConnection().then(async () => {
+          if (!this.settings.pendingProtocolUpgrade) return
+          try {
+            await this.completePendingProtocolUpgrade()
+            new Notice("Meridian vault protocol upgraded")
+          } catch (error) {
+            this.updateStatus({
+              phase: "error",
+              message: "Protocol upgrade needs attention",
+              error: error instanceof Error ? error.message : String(error),
+            })
+          }
+        })
       } else {
         this.updateStatus({ phase: "disconnected", message: "Sync is paused", progress: null })
       }
@@ -235,6 +248,57 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
   async repairLocalIndex(): Promise<void> {
     if (!this.controller) throw new Error("Meridian is not connected")
     await this.controller.repairLocalIndex()
+  }
+
+  async getLogFormat(): Promise<LogFormat | null> {
+    return this.controller?.logFormat() ?? null
+  }
+
+  async upgradeVaultProtocol(): Promise<void> {
+    if (!this.controller) throw new Error("Meridian is not connected")
+    if (this.settings.pendingProtocolUpgrade) {
+      await this.completePendingProtocolUpgrade()
+      return
+    }
+    await this.syncNow()
+    const material = await this.controller.prepareLogFormatUpgrade()
+    this.settings.pendingProtocolUpgrade = {
+      endpoint: this.settings.endpoint,
+      vaultId: this.settings.vaultId,
+      deviceId: this.settings.deviceId,
+      operationId: material.operationId,
+      envelope: material.envelope,
+    }
+    await this.saveSettings()
+    await this.completePendingProtocolUpgrade()
+  }
+
+  async completePendingProtocolUpgrade(): Promise<void> {
+    const pending = this.settings.pendingProtocolUpgrade
+    if (!pending) return
+    if (
+      pending.endpoint !== this.settings.endpoint ||
+      pending.vaultId !== this.settings.vaultId ||
+      pending.deviceId !== this.settings.deviceId
+    ) {
+      throw new Error("Pending protocol upgrade belongs to another Meridian identity")
+    }
+    if (!this.controller) throw new Error("Meridian is not connected")
+    try {
+      await this.controller.completeLogFormatUpgrade({
+        operationId: pending.operationId,
+        envelope: pending.envelope,
+      })
+    } catch (error) {
+      if (error instanceof MeridianHttpError && error.code === "log_transition_conflict") {
+        this.settings.pendingProtocolUpgrade = null
+        await this.saveSettings()
+        throw new Error("The vault changed before the upgrade. Choose Upgrade vault again.")
+      }
+      throw error
+    }
+    this.settings.pendingProtocolUpgrade = null
+    await this.saveSettings()
   }
 
   async connectFromSetup(
@@ -1092,6 +1156,7 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
       this.settings.deviceId,
       this.settings.pendingPairingCompletion?.pairingId ?? null,
       this.settings.pendingDeviceRemoval?.deviceId ?? null,
+      this.settings.pendingProtocolUpgrade?.operationId ?? null,
     ])
   }
 

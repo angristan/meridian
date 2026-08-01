@@ -37,6 +37,23 @@ describe("Meridian settings lifecycle", () => {
     ).toBeNull()
   })
 
+  it("restores only well-formed pending protocol upgrades", () => {
+    const pendingProtocolUpgrade = {
+      endpoint: "https://example.test",
+      vaultId: "vault-id",
+      deviceId: "device-id",
+      operationId: "operation-id",
+      envelope: { type: "log-format-transition", signature: "signature" },
+    }
+    expect(normalizeSettings({ pendingProtocolUpgrade }).pendingProtocolUpgrade).toEqual(
+      pendingProtocolUpgrade,
+    )
+    expect(
+      normalizeSettings({ pendingProtocolUpgrade: { operationId: "partial" } })
+        .pendingProtocolUpgrade,
+    ).toBeNull()
+  })
+
   it("migrates and bounds normalized selective sync lists", () => {
     expect(
       normalizeSettings({
@@ -102,6 +119,13 @@ describe("Meridian settings lifecycle", () => {
         deviceId: "device-id",
         expiresAt: 1_000,
       },
+      pendingProtocolUpgrade: {
+        endpoint: "https://example.test",
+        vaultId: "vault-id",
+        deviceId: "device-id",
+        operationId: "operation-id",
+        envelope: { signature: "signature" },
+      },
     }
 
     expect(withoutMeridianIdentity(settings)).toMatchObject({
@@ -111,6 +135,7 @@ describe("Meridian settings lifecycle", () => {
       deviceId: "",
       pendingDeviceRemoval: null,
       pendingPairingCompletion: null,
+      pendingProtocolUpgrade: null,
       deviceName: "My iPhone",
       pollIntervalSeconds: 90,
     })

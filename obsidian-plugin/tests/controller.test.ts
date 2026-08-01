@@ -150,6 +150,50 @@ describe("SyncController", () => {
     controller.stop()
   })
 
+  it("prepares and completes an owner-confirmed log upgrade", async () => {
+    class OwnerRemote extends FakeRemote {
+      override async listDevices() {
+        return [
+          {
+            deviceId: TEST_DEVICE.deviceId,
+            signingPublicKey: "signing-key",
+            hpkePublicKey: "hpke-key",
+            certificate: "certificate",
+            role: "owner" as const,
+            authorizedAt: 1,
+            revokedAt: null,
+            deviceName: "Owner",
+            platform: "Test",
+          },
+        ]
+      }
+    }
+    const vault = new FakeVault()
+    const journal = new MemoryJournal()
+    const remote = new OwnerRemote()
+    const controller = new SyncController(
+      vault,
+      journal,
+      remote,
+      new FakeCrypto(),
+      () => ALL_CATEGORIES,
+      () => {},
+    )
+    await controller.start(TEST_DEVICE)
+
+    const material = await controller.prepareLogFormatUpgrade()
+    await controller.completeLogFormatUpgrade(material)
+
+    expect(material.operationId).toBe("log-format-transition")
+    expect(await controller.logFormat()).toBe("canonical-cbor-v1")
+    expect(await journal.getCheckpoint()).toMatchObject({
+      cursor: 1,
+      initialLogFormat: "legacy-http-v1",
+      logFormat: "canonical-cbor-v1",
+    })
+    controller.stop()
+  })
+
   it("switches formats only after applying a signed log transition", async () => {
     const vault = new FakeVault()
     const journal = new MemoryJournal()

@@ -3,6 +3,7 @@ import {
   type MeridianSettings,
   type PendingDeviceRemoval,
   type PendingPairingCompletion,
+  type PendingProtocolUpgrade,
 } from "../model"
 import { normalizeExcludedExtension, normalizeExcludedFolder } from "../vault/path-policy"
 
@@ -20,6 +21,7 @@ export function normalizeSettings(loaded: unknown): MeridianSettings {
     deviceName: typeof value.deviceName === "string" ? value.deviceName : "",
     pendingDeviceRemoval: pendingDeviceRemoval(value.pendingDeviceRemoval),
     pendingPairingCompletion: pendingPairingCompletion(value.pendingPairingCompletion),
+    pendingProtocolUpgrade: pendingProtocolUpgrade(value.pendingProtocolUpgrade),
     pollIntervalSeconds: boundedNumber(value.pollIntervalSeconds, 15, 300, 45),
     scanIntervalMinutes: boundedNumber(value.scanIntervalMinutes, 1, 30, 5),
     maxFileSizeMiB: boundedNumber(value.maxFileSizeMiB, 16, 128, 64),
@@ -51,6 +53,27 @@ export function withoutMeridianIdentity(settings: MeridianSettings): MeridianSet
     deviceId: "",
     pendingDeviceRemoval: null,
     pendingPairingCompletion: null,
+    pendingProtocolUpgrade: null,
+  }
+}
+
+function pendingProtocolUpgrade(value: unknown): PendingProtocolUpgrade | null {
+  if (
+    !isRecord(value) ||
+    typeof value.endpoint !== "string" ||
+    typeof value.vaultId !== "string" ||
+    typeof value.deviceId !== "string" ||
+    typeof value.operationId !== "string" ||
+    !isRecord(value.envelope)
+  ) {
+    return null
+  }
+  return {
+    endpoint: value.endpoint,
+    vaultId: value.vaultId,
+    deviceId: value.deviceId,
+    operationId: value.operationId,
+    envelope: value.envelope,
   }
 }
 

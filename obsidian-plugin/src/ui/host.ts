@@ -5,6 +5,7 @@ import type {
   ConflictResolutionAction,
   DeletedFileRecord,
   LocalRevision,
+  LogFormat,
   MeridianSettings,
   PairingInvitation,
   PairingStatus,
@@ -25,6 +26,8 @@ export interface MeridianUiHost {
   openSettings(): void
   syncNow(): Promise<void>
   repairLocalIndex(): Promise<void>
+  getLogFormat(): Promise<LogFormat | null>
+  upgradeVaultProtocol(): Promise<void>
   connectFromSetup(endpoint: string, setupSession: string, claimChallenge: string): Promise<void>
   recoverVault(endpoint: string, recoveryCode: string): Promise<void>
   disconnect(): Promise<void>
