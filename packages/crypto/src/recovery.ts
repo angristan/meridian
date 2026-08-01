@@ -149,6 +149,7 @@ export async function computeRecoveryStateId(
 }
 
 export interface RecoveryClaimSigningInput {
+  readonly claimVersion: 2
   readonly recoveryId: RecoveryId
   readonly previousRecoveryStateId: Hash
   readonly challengeId: string
@@ -164,6 +165,7 @@ export interface RecoveryClaimSigningInput {
 export function recoveryClaimSigningBytes(input: RecoveryClaimSigningInput): Uint8Array {
   return encodeCanonical({
     domain: "meridian/v1/recovery-claim-v2",
+    claimVersion: input.claimVersion,
     recoveryId: input.recoveryId,
     previousRecoveryStateId: input.previousRecoveryStateId,
     challengeId: input.challengeId,

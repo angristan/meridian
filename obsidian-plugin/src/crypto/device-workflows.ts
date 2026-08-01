@@ -180,6 +180,7 @@ export async function recoverDevice(
   const nextPackage = serializeEncryptedRecoveryPackage(recovered.encryptedRecoveryPackage)
   const recoveryIdentifier = randomId()
   const proof = await signRecoveryClaim(recoveryCode, {
+    claimVersion: 2,
     recoveryId: recoveryId(fromBase64Url(recoveryIdentifier, 16)),
     previousRecoveryStateId: hashBytes(fromBase64Url(recoveryStateId, 32)),
     challengeId: challenge.challengeId,
@@ -196,6 +197,7 @@ export async function recoverDevice(
     deviceId: toBase64Url(device.deviceId),
     keyBundle: serializeStoredDeviceSecret(device, recovered.recoveryPublicKey),
     publicClaim: {
+      claimVersion: 2,
       recoveryId: recoveryIdentifier,
       previousRecoveryStateId: recoveryStateId,
       challengeId: challenge.challengeId,

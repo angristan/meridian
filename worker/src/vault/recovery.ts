@@ -102,7 +102,9 @@ export class VaultRecovery {
   async recover(request: Request): Promise<Response> {
     const input = decode(RecoveryClaimSchema, await requestJson(request))
     assert(
-      input.recoveryId !== undefined && input.previousRecoveryStateId !== undefined,
+      input.claimVersion === 2 &&
+        input.recoveryId !== undefined &&
+        input.previousRecoveryStateId !== undefined,
       new HttpError(426, "protocol_upgrade_required", "Update Meridian to recover this vault"),
     )
     const recoveryIdentifier = input.recoveryId
@@ -150,6 +152,7 @@ export class VaultRecovery {
     )
 
     const signingBytes = recoveryClaimSigningBytes({
+      claimVersion: 2,
       recoveryId: recoveryId(base64UrlDecode(input.recoveryId, 16)),
       previousRecoveryStateId: hashBytes(base64UrlDecode(input.previousRecoveryStateId, 32)),
       challengeId: input.challengeId,
@@ -336,6 +339,7 @@ async function recoveryRequestHash(input: RecoveryClaim): Promise<string> {
     await sha256(
       encodeCanonical({
         domain: "meridian/v1/recovery-receipt",
+        claimVersion: input.claimVersion ?? 0,
         recoveryId: input.recoveryId ?? "",
         previousRecoveryStateId: input.previousRecoveryStateId ?? "",
         challengeId: input.challengeId,

@@ -105,6 +105,7 @@ it("recovers ownership into a fresh device using only the recovery code", async 
   const certificate = encodeDeviceCertificate(replacement.device.certificate)
   const recoveryIdentifier = recoveryId(new Uint8Array(16).fill(9))
   const proof = await signRecoveryClaim(first.recoveryCode, {
+    claimVersion: 2,
     recoveryId: recoveryIdentifier,
     previousRecoveryStateId: hashBytes(base64UrlDecode(packagePayload.recoveryStateId, 32)),
     challengeId: challenge.challengeId,
@@ -117,6 +118,7 @@ it("recovers ownership into a fresh device using only the recovery code", async 
     encryptedRecoveryPackage: replacementPackage,
   })
   const recoveryClaim: RecoveryClaim = {
+    claimVersion: 2,
     recoveryId: base64UrlEncode(recoveryIdentifier),
     previousRecoveryStateId: packagePayload.recoveryStateId,
     challengeId: challenge.challengeId,
@@ -130,6 +132,7 @@ it("recovers ownership into a fresh device using only the recovery code", async 
     proof: base64UrlEncode(proof),
   }
   const {
+    claimVersion: _claimVersion,
     recoveryId: _recoveryId,
     previousRecoveryStateId: _predecessor,
     ...legacyClaim
@@ -171,6 +174,7 @@ it("recovers ownership into a fresh device using only the recovery code", async 
   const staleCertificate = encodeDeviceCertificate(staleReplacement.device.certificate)
   const staleIdentifier = recoveryId(new Uint8Array(16).fill(10))
   const staleProof = await signRecoveryClaim(first.recoveryCode, {
+    claimVersion: 2,
     recoveryId: staleIdentifier,
     previousRecoveryStateId: hashBytes(base64UrlDecode(packagePayload.recoveryStateId, 32)),
     challengeId: staleChallenge.challengeId,
@@ -186,6 +190,7 @@ it("recovers ownership into a fresh device using only the recovery code", async 
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
+      claimVersion: 2,
       recoveryId: base64UrlEncode(staleIdentifier),
       previousRecoveryStateId: packagePayload.recoveryStateId,
       challengeId: staleChallenge.challengeId,

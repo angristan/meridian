@@ -118,6 +118,7 @@ describe("shared crypto adapter", () => {
     expect(recoveredDevice.deviceId).toBe(recovered.deviceId)
     expect(recoveredDevice.trustedCheckpointAuthorized).toBe(true)
     expect(record(recovered.publicClaim)).toMatchObject({
+      claimVersion: 2,
       previousRecoveryStateId: recoveryStateId,
       challengeId: "recovery-challenge",
     })

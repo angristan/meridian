@@ -132,6 +132,7 @@ describe("plugin-facing cryptography workflows", () => {
     expect(bytesEqual(replacement.device.vaultId, claim.device.vaultId)).toBe(true)
     expect(bytesEqual(replacement.device.deviceId, claim.device.deviceId)).toBe(false)
     const recoveryClaim = {
+      claimVersion: 2 as const,
       recoveryId: recoveryId(new Uint8Array(16).fill(8)),
       previousRecoveryStateId: await computeRecoveryStateId(
         claim.device.vaultId,
