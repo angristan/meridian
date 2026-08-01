@@ -534,6 +534,9 @@ export class FakeRemote implements RemotePort {
       blobBytes,
       databaseBytes: 0,
       blobCount: this.blobs.size,
+      reservedBlobBytes: 0,
+      storageQuotaBytes: null,
+      storagePressure: "unlimited",
       operationCount: this.operations.length,
       checkpointCount: 0,
       snapshotCount: 0,
@@ -548,6 +551,8 @@ export class FakeRemote implements RemotePort {
   async acknowledgeRetention(acknowledgement: RetentionAcknowledgement): Promise<void> {
     this.retentionAcknowledgements.push(structuredClone(acknowledgement))
   }
+
+  async setStorageQuota(_quotaBytes: number | null): Promise<void> {}
 
   async pruneStorage(): Promise<StoragePruneResult> {
     return { deletedBytes: 0, deletedCount: 0, graceDays: 7 }

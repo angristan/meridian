@@ -47,6 +47,7 @@ export interface MeridianUiHost {
   getDebugReport(): string
   getStorageUsage(): Promise<StorageUsage>
   compactLocalStorage(): Promise<LocalCompactionResult>
+  setStorageQuota(quotaBytes: number | null): Promise<void>
   requestPersistentStorage(): Promise<boolean | null>
   pruneStorage(): Promise<StoragePruneResult>
   previewRevision(revisionId: string): Promise<RevisionPreview>

@@ -6,7 +6,13 @@ import type { WorkerApp } from "./types"
 import { callVaultEffect } from "./vault-proxy"
 
 interface CoordinatorStorage {
+  totalBytes: number
+  blobBytes: number
+  blobCount: number
+  reservedBlobBytes: number
   databaseBytes: number
+  storageQuotaBytes: number | null
+  storagePressure: "unlimited" | "normal" | "warning" | "critical" | "exceeded"
   operationCount: number
   checkpointCount: number
   snapshotCount: number
@@ -22,7 +28,7 @@ export function registerStorageRoutes(app: WorkerApp): void {
     runResponse(
       Effect.gen(function* () {
         const token = sessionToken(c)
-        const auth = yield* validateSessionEffect(c.env, token)
+        yield* validateSessionEffect(c.env, token)
         const response = yield* callVaultEffect(c.env, "/v1/storage", "GET", undefined, token)
         const coordinator = yield* Effect.tryPromise({
           try: () => parseCoordinatorStorage(response),
@@ -31,14 +37,9 @@ export function registerStorageRoutes(app: WorkerApp): void {
               ? error
               : new HttpError(503, "vault_unavailable", "Storage statistics are unavailable"),
         })
-        const blobs = yield* Effect.tryPromise({
-          try: () => encryptedBlobUsage(c.env.BLOBS, auth.vaultId),
-          catch: () => new HttpError(503, "blob_store_unavailable", "Blob usage is unavailable"),
+        return Response.json(coordinator, {
+          headers: { "cache-control": "private, no-store" },
         })
-        return Response.json(
-          { ...coordinator, ...blobs, totalBytes: coordinator.databaseBytes + blobs.blobBytes },
-          { headers: { "cache-control": "private, no-store" } },
-        )
       }),
     ),
   )
@@ -54,25 +55,6 @@ export function registerStorageRoutes(app: WorkerApp): void {
   )
 }
 
-async function encryptedBlobUsage(
-  bucket: R2Bucket,
-  vaultId: string,
-): Promise<{ blobBytes: number; blobCount: number }> {
-  const prefix = `vaults/${vaultId}/blobs/`
-  let cursor: string | undefined
-  let blobBytes = 0
-  let blobCount = 0
-  do {
-    const page = await bucket.list({ prefix, ...(cursor ? { cursor } : {}), limit: 1_000 })
-    for (const object of page.objects) {
-      blobBytes += object.size
-      blobCount += 1
-    }
-    cursor = page.truncated ? page.cursor : undefined
-  } while (cursor !== undefined)
-  return { blobBytes, blobCount }
-}
-
 async function parseCoordinatorStorage(response: Response): Promise<CoordinatorStorage> {
   if (!response.ok) {
     throw new HttpError(response.status, "vault_unavailable", "Storage statistics are unavailable")
@@ -80,7 +62,16 @@ async function parseCoordinatorStorage(response: Response): Promise<CoordinatorS
   const value: unknown = await response.json()
   if (!isRecord(value)) throw new Error("Coordinator returned invalid storage statistics")
   return {
+    totalBytes: nonNegativeNumber(value.totalBytes, "totalBytes"),
+    blobBytes: nonNegativeNumber(value.blobBytes, "blobBytes"),
+    blobCount: nonNegativeNumber(value.blobCount, "blobCount"),
+    reservedBlobBytes: nonNegativeNumber(value.reservedBlobBytes, "reservedBlobBytes"),
     databaseBytes: nonNegativeNumber(value.databaseBytes, "databaseBytes"),
+    storageQuotaBytes:
+      value.storageQuotaBytes === null
+        ? null
+        : nonNegativeNumber(value.storageQuotaBytes, "storageQuotaBytes"),
+    storagePressure: quotaPressure(value.storagePressure),
     operationCount: nonNegativeNumber(value.operationCount, "operationCount"),
     checkpointCount: nonNegativeNumber(value.checkpointCount, "checkpointCount"),
     snapshotCount: nonNegativeNumber(value.snapshotCount, "snapshotCount"),
@@ -96,6 +87,21 @@ async function parseCoordinatorStorage(response: Response): Promise<CoordinatorS
         : nonNegativeNumber(value.minimumAcknowledgedCursor, "minimumAcknowledgedCursor"),
     canPrune: boolean(value.canPrune, "canPrune"),
   }
+}
+
+function quotaPressure(
+  value: unknown,
+): "unlimited" | "normal" | "warning" | "critical" | "exceeded" {
+  if (
+    value !== "unlimited" &&
+    value !== "normal" &&
+    value !== "warning" &&
+    value !== "critical" &&
+    value !== "exceeded"
+  ) {
+    throw new Error("Coordinator storage pressure is invalid")
+  }
+  return value
 }
 
 function literalForever(value: unknown): "forever" {

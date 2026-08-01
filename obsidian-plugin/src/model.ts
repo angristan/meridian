@@ -266,6 +266,9 @@ export interface RemoteStorageUsage {
   blobBytes: number
   databaseBytes: number
   blobCount: number
+  reservedBlobBytes: number
+  storageQuotaBytes: number | null
+  storagePressure: "unlimited" | "normal" | "warning" | "critical" | "exceeded"
   operationCount: number
   checkpointCount: number
   snapshotCount: number
@@ -711,6 +714,7 @@ export interface RemotePort {
   getBlob(blobId: string): Promise<ArrayBuffer>
   getStorageUsage(): Promise<RemoteStorageUsage>
   acknowledgeRetention(acknowledgement: RetentionAcknowledgement): Promise<void>
+  setStorageQuota(quotaBytes: number | null): Promise<void>
   pruneStorage(): Promise<StoragePruneResult>
   commit(envelope: unknown, idempotencyKey: string): Promise<{ cursor: number; logHash: string }>
   listDevices(): Promise<RemoteDevice[]>

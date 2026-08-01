@@ -62,12 +62,22 @@ export function registerBlobRoutes(app: WorkerApp): void {
         }
         const claim = yield* callVaultEffect(
           c.env,
-          `/internal/blobs/${encodeURIComponent(blobId)}/claim`,
+          `/internal/blobs/${encodeURIComponent(blobId)}/claim?size=${length}`,
           "POST",
           undefined,
           token,
         )
         if (!claim.ok) return claim
+        const claimBody = yield* Effect.tryPromise({
+          try: () => claim.json<unknown>(),
+          catch: () => new HttpError(503, "vault_unavailable", "Blob reservation was invalid"),
+        })
+        if (!isRecord(claimBody) || typeof claimBody.exists !== "boolean") {
+          return yield* Effect.fail(
+            new HttpError(503, "vault_unavailable", "Blob reservation was invalid"),
+          )
+        }
+        if (claimBody.exists) return new Response(null, { status: 204 })
 
         const key = `vaults/${auth.vaultId}/blobs/${blobId}`
         const stored = yield* Effect.tryPromise({
@@ -84,6 +94,14 @@ export function registerBlobRoutes(app: WorkerApp): void {
             return new HttpError(503, "blob_store_unavailable", "Blob upload failed")
           },
         })
+        const finalized = yield* callVaultEffect(
+          c.env,
+          `/internal/blobs/${encodeURIComponent(blobId)}/finalize?size=${length}`,
+          "POST",
+          undefined,
+          token,
+        )
+        if (!finalized.ok) return finalized
         return new Response(null, {
           status: stored === null ? 204 : 201,
           headers: { "cache-control": "no-store" },
@@ -132,4 +150,8 @@ export function registerBlobRoutes(app: WorkerApp): void {
       }),
     ),
   )
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
 }

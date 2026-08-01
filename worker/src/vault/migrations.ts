@@ -392,5 +392,41 @@ export function migrateVaultSchema(sql: SqlStorage, transactionSync: Transaction
       `)
       sql.exec("INSERT INTO _sql_schema_migrations (id, applied_at) VALUES (9, ?)", Date.now())
     })
+    version = 9
+  }
+
+  if (version < 10) {
+    transactionSync(() => {
+      const vaultDefinition =
+        sql
+          .exec<{ sql: string | null }>(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'vault_state'",
+          )
+          .one().sql ?? ""
+      if (!vaultDefinition.includes("storage_quota_bytes")) {
+        sql.exec("ALTER TABLE vault_state ADD COLUMN storage_quota_bytes INTEGER")
+      }
+      const claimsDefinition =
+        sql
+          .exec<{ sql: string | null }>(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'blob_claims'",
+          )
+          .one().sql ?? ""
+      if (!claimsDefinition.includes("expected_size")) {
+        sql.exec("ALTER TABLE blob_claims ADD COLUMN expected_size INTEGER NOT NULL DEFAULT 0")
+      }
+      if (!claimsDefinition.includes("device_id")) {
+        sql.exec("ALTER TABLE blob_claims ADD COLUMN device_id TEXT")
+      }
+      sql.exec(`
+        CREATE TABLE IF NOT EXISTS blob_catalog (
+          blob_id TEXT PRIMARY KEY,
+          size INTEGER NOT NULL CHECK (size > 0),
+          observed_at INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS blob_catalog_observed ON blob_catalog(observed_at);
+      `)
+      sql.exec("INSERT INTO _sql_schema_migrations (id, applied_at) VALUES (10, ?)", Date.now())
+    })
   }
 }

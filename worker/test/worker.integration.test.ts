@@ -26,6 +26,7 @@ import {
   operationSigningBytes,
   pairingCandidateConfirmationSigningBytes,
   pairingCompletionSigningBytes,
+  blobId as protocolBlobId,
   deviceId as protocolDeviceId,
   vaultId as protocolVaultId,
   revisionId,
@@ -246,7 +247,7 @@ describe("Meridian Worker integration", () => {
       const migration = state.storage.sql
         .exec<{ version: number }>("SELECT MAX(id) AS version FROM _sql_schema_migrations")
         .one()
-      expect(migration.version).toBe(9)
+      expect(migration.version).toBe(10)
       const tables = state.storage.sql
         .exec<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table'")
         .toArray()
@@ -256,6 +257,7 @@ describe("Meridian Worker integration", () => {
       expect(tables).toContain("snapshots")
       expect(tables).toContain("blob_claims")
       expect(tables).toContain("retention_acknowledgements")
+      expect(tables).toContain("blob_catalog")
       const pairingsDefinition = state.storage.sql
         .exec<{ sql: string }>(
           "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'pairings'",
@@ -285,7 +287,7 @@ describe("Meridian Worker integration", () => {
       const migration = state.storage.sql
         .exec<{ version: number }>("SELECT MAX(id) AS version FROM _sql_schema_migrations")
         .one()
-      expect(migration.version).toBe(9)
+      expect(migration.version).toBe(10)
       expect(
         state.storage.sql
           .exec<{ name: string }>(
@@ -678,6 +680,52 @@ describe("Meridian Worker integration", () => {
       platform: "macOS",
     })
 
+    const missingBlobOperationId = operationId(randomBytes(16))
+    const missingBlobRevision = signOperation(
+      {
+        type: "revision",
+        operationId: missingBlobOperationId,
+        vaultId: protocolVaultId(base64UrlDecode(vaultId, 16)),
+        epochId: device.epoch.body.epochId,
+        authorDeviceId: device.deviceId,
+        fileId: fileId(randomBytes(16)),
+        revisionId: revisionId(randomBytes(16)),
+        wrappedRevisionKey: wrappedRevisionKey(randomBytes(40)),
+        metadataNonce: nonce(randomBytes(12)),
+        encryptedMetadata: randomBytes(16),
+        chunks: [
+          {
+            blobId: protocolBlobId(randomBytes(16)),
+            chunkIndex: 0,
+            plaintextLength: 1,
+            nonce: nonce(randomBytes(12)),
+          },
+        ],
+        suite: CIPHER_SUITE,
+      },
+      device.signingPrivateKey,
+    )
+    const missingBlobUnsigned: Operation = {
+      operationId: base64UrlEncode(missingBlobOperationId),
+      authorDeviceId: deviceId,
+      epochId: base64UrlEncode(device.epoch.body.epochId),
+      type: "revision",
+      envelope: base64UrlEncode(encodeOperation(missingBlobRevision)),
+      signature: base64UrlEncode(randomBytes(64)),
+    }
+    const missingBlob = await SELF.fetch("https://example.test/v1/operations", {
+      method: "POST",
+      headers: { ...authorization, "content-type": "application/json" },
+      body: JSON.stringify({
+        ...missingBlobUnsigned,
+        signature: await sign(signingKey, operationSigningMessage(missingBlobUnsigned)),
+      }),
+    })
+    expect(missingBlob.status).toBe(409)
+    await expect(missingBlob.json()).resolves.toMatchObject({
+      error: { code: "blob_not_stored" },
+    })
+
     const operationIdentifier = operationId(randomBytes(16))
     const signedRevision = signOperation(
       {
@@ -857,6 +905,41 @@ describe("Meridian Worker integration", () => {
     expect(storage.blobBytes).toBe(2048)
     expect(storage.databaseBytes).toBeGreaterThan(0)
     expect(storage.totalBytes).toBe(storage.blobBytes + storage.databaseBytes)
+
+    const blobSize = 2 * 1024 * 1024
+    const quotaBytes = storage.totalBytes + 6 * 1024 * 1024
+    const configured = await SELF.fetch("https://example.test/v1/storage/policy", {
+      method: "PUT",
+      headers: { ...authorization, "content-type": "application/json" },
+      body: JSON.stringify({ quotaBytes }),
+    })
+    expect(configured.status).toBe(200)
+    const quotaUploads = await Promise.all(
+      [randomToken(18), randomToken(18)].map((quotaBlobId) =>
+        SELF.fetch(`https://example.test/v1/blobs/${quotaBlobId}`, {
+          method: "PUT",
+          headers: { ...authorization, "content-type": "application/octet-stream" },
+          body: new Uint8Array(blobSize),
+        }),
+      ),
+    )
+    expect(quotaUploads.map((response) => response.status).sort()).toEqual([201, 507])
+    const rejectedQuotaUpload = quotaUploads.find((response) => response.status === 507)
+    await expect(rejectedQuotaUpload?.json()).resolves.toMatchObject({
+      error: { code: "storage_quota_exceeded" },
+    })
+    const tooSmallQuota = await SELF.fetch("https://example.test/v1/storage/policy", {
+      method: "PUT",
+      headers: { ...authorization, "content-type": "application/json" },
+      body: JSON.stringify({ quotaBytes: 1 }),
+    })
+    expect(tooSmallQuota.status).toBe(409)
+    const unlimited = await SELF.fetch("https://example.test/v1/storage/policy", {
+      method: "PUT",
+      headers: { ...authorization, "content-type": "application/json" },
+      body: JSON.stringify({ quotaBytes: null }),
+    })
+    expect(unlimited.status).toBe(200)
 
     const unsafePrune = await SELF.fetch("https://example.test/v1/storage/prune-orphans", {
       method: "POST",
