@@ -2,6 +2,7 @@ import { env, runInDurableObject, SELF } from "cloudflare:test"
 import {
   createFirstDeviceClaimBundle,
   type DeviceKeyBundle,
+  prepareEpochTransition,
   serializeEncryptedRecoveryPackage,
   sign as signBytes,
   signOperation,
@@ -11,6 +12,7 @@ import {
   certificateId,
   epochId as deviceEpochId,
   type Ed25519PrivateKey,
+  type Ed25519PublicKey,
   ed25519Signature,
   encodeDeviceCertificate,
   encodeOperation,
@@ -151,6 +153,7 @@ async function authenticateDevice(
     challengeId: challenge.challengeId,
     signature: base64UrlEncode(randomBytes(64)),
     supportedLogFormats: ["legacy-http-v1", "canonical-cbor-v1"],
+    supportedFeatures: ["epoch-transition-v1"],
   }
   authInput.signature = await sign(
     signingKey,
@@ -175,6 +178,7 @@ async function setupAndAuthenticate(
   readonly signingKey: Ed25519PrivateKey
   readonly vaultId: string
   readonly device: DeviceKeyBundle
+  readonly recoveryPublicKey: Ed25519PublicKey
 }> {
   const first = await createFirstDeviceClaimBundle()
   const signingKey = first.device.signingPrivateKey
@@ -221,7 +225,14 @@ async function setupAndAuthenticate(
   expect(claimResponse.status).toBe(201)
 
   const sessionToken = await authenticateDevice(vaultId, deviceId, signingKey, fetcher)
-  return { deviceId, sessionToken, signingKey, vaultId, device: first.device }
+  return {
+    deviceId,
+    sessionToken,
+    signingKey,
+    vaultId,
+    device: first.device,
+    recoveryPublicKey: first.recoveryPublicKey,
+  }
 }
 
 describe("Meridian Worker integration", () => {
@@ -233,7 +244,7 @@ describe("Meridian Worker integration", () => {
       const migration = state.storage.sql
         .exec<{ version: number }>("SELECT MAX(id) AS version FROM _sql_schema_migrations")
         .one()
-      expect(migration.version).toBe(7)
+      expect(migration.version).toBe(8)
       const tables = state.storage.sql
         .exec<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table'")
         .toArray()
@@ -271,7 +282,7 @@ describe("Meridian Worker integration", () => {
       const migration = state.storage.sql
         .exec<{ version: number }>("SELECT MAX(id) AS version FROM _sql_schema_migrations")
         .one()
-      expect(migration.version).toBe(7)
+      expect(migration.version).toBe(8)
       expect(
         state.storage.sql
           .exec<{ name: string }>(
@@ -433,6 +444,137 @@ describe("Meridian Worker integration", () => {
     await expect(oldClient.json()).resolves.toMatchObject({
       error: { code: "protocol_upgrade_required" },
     })
+  })
+
+  it("advances epoch and recovery state atomically while rejecting stale writes", async () => {
+    const primaryStub = env.VAULT.get(env.VAULT.idFromName("epoch-transition-test"))
+    const directFetch: TestFetch = (url, init) => primaryStub.fetch(new Request(url, init))
+    const { deviceId, sessionToken, signingKey, device, recoveryPublicKey } =
+      await setupAndAuthenticate(directFetch, "/internal/setup/session")
+    const authorization = { authorization: `Bearer ${sessionToken}` }
+    const recoveryResponse = await directFetch("https://example.test/v1/recovery/package")
+    expect(recoveryResponse.status).toBe(200)
+    const recovery = (await recoveryResponse.json()) as {
+      recoverySigningPublicKey: string
+      recoveryStateId: string
+    }
+    const prepared = await prepareEpochTransition({
+      device,
+      recipients: [{ deviceId: device.deviceId, hpkePublicKey: device.hpkePublicKey }],
+      recoverySigningPublicKey: recoveryPublicKey,
+      recoveryStateId: hashBytes(base64UrlDecode(recovery.recoveryStateId, 32)),
+      checkpointAuthorizationChain: [device.certificate],
+      reason: "migration",
+    })
+    const epochUnsigned: Operation = {
+      operationId: base64UrlEncode(prepared.operation.body.operationId),
+      authorDeviceId: deviceId,
+      epochId: base64UrlEncode(device.epoch.body.epochId),
+      type: "key-epoch",
+      envelope: base64UrlEncode(encodeOperation(prepared.operation)),
+      signature: base64UrlEncode(randomBytes(64)),
+    }
+    const epochOperation: Operation = {
+      ...epochUnsigned,
+      signature: await sign(signingKey, operationSigningMessage(epochUnsigned)),
+    }
+    await runInDurableObject(primaryStub, async (_instance, state) => {
+      state.storage.sql.exec("UPDATE devices SET supports_epoch_transitions = 0")
+    })
+    const blocked = await directFetch("https://example.test/v1/operations", {
+      method: "POST",
+      headers: { ...authorization, "content-type": "application/json" },
+      body: JSON.stringify(epochOperation),
+    })
+    expect(blocked.status).toBe(409)
+    await expect(blocked.json()).resolves.toMatchObject({
+      error: { code: "epoch_recipient_conflict" },
+    })
+    await runInDurableObject(primaryStub, async (_instance, state) => {
+      state.storage.sql.exec("UPDATE devices SET supports_epoch_transitions = 1")
+    })
+
+    const committed = await directFetch("https://example.test/v1/operations", {
+      method: "POST",
+      headers: { ...authorization, "content-type": "application/json" },
+      body: JSON.stringify(epochOperation),
+    })
+    expect(committed.status).toBe(201)
+    const committedBody = (await committed.json()) as { cursor: number }
+    expect(committedBody.cursor).toBe(1)
+
+    const duplicate = await directFetch("https://example.test/v1/operations", {
+      method: "POST",
+      headers: { ...authorization, "content-type": "application/json" },
+      body: JSON.stringify(epochOperation),
+    })
+    expect(duplicate.status).toBe(200)
+    await expect(duplicate.json()).resolves.toMatchObject({ duplicate: true, cursor: 1 })
+
+    await runInDurableObject(primaryStub, async (_instance, state) => {
+      const vault = state.storage.sql
+        .exec<{
+          current_epoch_id: string
+          epoch_sequence: number
+          epoch_transition_cursor: number
+          recovery_state_id: string
+        }>(
+          `SELECT current_epoch_id, epoch_sequence, epoch_transition_cursor, recovery_state_id
+           FROM vault_state WHERE singleton = 1`,
+        )
+        .one()
+      expect(vault).toMatchObject({
+        current_epoch_id: base64UrlEncode(prepared.nextEpochId),
+        epoch_sequence: 1,
+        epoch_transition_cursor: 1,
+      })
+      expect(vault.recovery_state_id).not.toBe(recovery.recoveryStateId)
+    })
+
+    const staleIdentifier = operationId(randomBytes(16))
+    const staleSigned = signOperation(
+      {
+        type: "revision",
+        operationId: staleIdentifier,
+        vaultId: device.vaultId,
+        epochId: device.epoch.body.epochId,
+        authorDeviceId: device.deviceId,
+        fileId: fileId(randomBytes(16)),
+        revisionId: revisionId(randomBytes(16)),
+        wrappedRevisionKey: wrappedRevisionKey(randomBytes(40)),
+        metadataNonce: nonce(randomBytes(12)),
+        encryptedMetadata: randomBytes(16),
+        chunks: [],
+        suite: CIPHER_SUITE,
+      },
+      device.signingPrivateKey,
+    )
+    const staleUnsigned: Operation = {
+      operationId: base64UrlEncode(staleIdentifier),
+      authorDeviceId: deviceId,
+      epochId: base64UrlEncode(device.epoch.body.epochId),
+      type: "revision",
+      envelope: base64UrlEncode(encodeOperation(staleSigned)),
+      signature: base64UrlEncode(randomBytes(64)),
+    }
+    const staleResponse = await directFetch("https://example.test/v1/operations", {
+      method: "POST",
+      headers: { ...authorization, "content-type": "application/json" },
+      body: JSON.stringify({
+        ...staleUnsigned,
+        signature: await sign(signingKey, operationSigningMessage(staleUnsigned)),
+      }),
+    })
+    expect(staleResponse.status).toBe(409)
+    await expect(staleResponse.json()).resolves.toMatchObject({ error: { code: "stale_epoch" } })
+
+    await runInDurableObject(primaryStub, async (_instance, state) => {
+      state.storage.sql.exec("UPDATE sessions SET supports_epoch_transitions = 0")
+    })
+    const oldClient = await directFetch("https://example.test/v1/changes?after=1", {
+      headers: authorization,
+    })
+    expect(oldClient.status).toBe(426)
   })
 
   it("claims once, authenticates, appends idempotently, and proxies private blobs", async () => {

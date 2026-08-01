@@ -123,6 +123,7 @@ export class VaultPairing {
         deviceName: device.device_name,
         platform: device.platform,
         supportsCanonicalLog: device.supports_canonical_log === 1,
+        supportsEpochTransitions: device.supports_epoch_transitions === 1,
       }))
     return json({ devices })
   }

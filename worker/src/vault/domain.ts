@@ -5,6 +5,7 @@ import type { Operation } from "../schemas"
 
 export const MAX_CHANGE_PAGE_SIZE = 500
 export const MAX_ENVELOPE_BYTES = 256 * 1024
+export const MAX_EPOCH_ENVELOPE_BYTES = 2 * 1024 * 1024
 export const MAX_CERTIFICATE_BYTES = 64 * 1024
 export const MAX_HPKE_TRANSFER_BYTES = 256 * 1024
 export const MAX_RECOVERY_PACKAGE_BYTES = 1024 * 1024
@@ -19,6 +20,9 @@ export type VaultStateRow = {
   head_hash: string
   log_format: "legacy-http-v1" | "canonical-cbor-v1"
   log_transition_cursor: number | null
+  current_epoch_id: string | null
+  epoch_sequence: number | null
+  epoch_transition_cursor: number | null
 }
 
 export type DeviceRow = {
@@ -34,6 +38,7 @@ export type DeviceRow = {
   device_name: string | null
   platform: string | null
   supports_canonical_log: number
+  supports_epoch_transitions: number
 }
 
 export type SessionContext = {
@@ -132,10 +137,13 @@ export async function authenticate(sql: SqlStorage, request: Request): Promise<S
       vault_id: string
       expires_at: number
       supports_canonical_log: number
+      supports_epoch_transitions: number
       log_format: "legacy-http-v1" | "canonical-cbor-v1"
+      epoch_transition_cursor: number | null
     }>(
       `SELECT s.device_id, d.role, v.vault_id, s.expires_at,
-              s.supports_canonical_log, v.log_format
+              s.supports_canonical_log, s.supports_epoch_transitions,
+              v.log_format, v.epoch_transition_cursor
        FROM sessions s
        JOIN devices d ON d.device_id = s.device_id
        JOIN vault_state v ON v.singleton = 1
@@ -147,6 +155,10 @@ export async function authenticate(sql: SqlStorage, request: Request): Promise<S
   assert(row, new HttpError(401, "invalid_session", "Device session is invalid or expired"))
   assert(
     row.log_format !== "canonical-cbor-v1" || row.supports_canonical_log === 1,
+    new HttpError(426, "protocol_upgrade_required", "Update Meridian to continue syncing"),
+  )
+  assert(
+    row.epoch_transition_cursor === null || row.supports_epoch_transitions === 1,
     new HttpError(426, "protocol_upgrade_required", "Update Meridian to continue syncing"),
   )
   return {

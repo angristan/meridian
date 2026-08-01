@@ -328,5 +328,49 @@ export function migrateVaultSchema(sql: SqlStorage, transactionSync: Transaction
       }
       sql.exec("INSERT INTO _sql_schema_migrations (id, applied_at) VALUES (7, ?)", Date.now())
     })
+    version = 7
+  }
+
+  if (version < 8) {
+    transactionSync(() => {
+      const vaultDefinition =
+        sql
+          .exec<{ sql: string | null }>(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'vault_state'",
+          )
+          .one().sql ?? ""
+      if (!vaultDefinition.includes("current_epoch_id")) {
+        sql.exec("ALTER TABLE vault_state ADD COLUMN current_epoch_id TEXT")
+      }
+      if (!vaultDefinition.includes("epoch_sequence")) {
+        sql.exec("ALTER TABLE vault_state ADD COLUMN epoch_sequence INTEGER")
+      }
+      if (!vaultDefinition.includes("epoch_transition_cursor")) {
+        sql.exec("ALTER TABLE vault_state ADD COLUMN epoch_transition_cursor INTEGER")
+      }
+      const devicesDefinition =
+        sql
+          .exec<{ sql: string | null }>(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'devices'",
+          )
+          .one().sql ?? ""
+      if (!devicesDefinition.includes("supports_epoch_transitions")) {
+        sql.exec(
+          "ALTER TABLE devices ADD COLUMN supports_epoch_transitions INTEGER NOT NULL DEFAULT 0",
+        )
+      }
+      const sessionsDefinition =
+        sql
+          .exec<{ sql: string | null }>(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'sessions'",
+          )
+          .one().sql ?? ""
+      if (!sessionsDefinition.includes("supports_epoch_transitions")) {
+        sql.exec(
+          "ALTER TABLE sessions ADD COLUMN supports_epoch_transitions INTEGER NOT NULL DEFAULT 0",
+        )
+      }
+      sql.exec("INSERT INTO _sql_schema_migrations (id, applied_at) VALUES (8, ?)", Date.now())
+    })
   }
 }

@@ -1,5 +1,6 @@
 import { computeRecoveryStateId, recoveryClaimSigningBytes } from "@meridian/crypto"
 import {
+  decodeDeviceCertificate,
   deviceId,
   ed25519PublicKey,
   encodeCanonical,
@@ -138,6 +139,10 @@ export class VaultRecovery {
       vault.recovery_signing_public_key,
       vault.cursor,
     )
+    const replacementCertificate = decodeDeviceCertificate(
+      base64UrlDecode(input.newDevice.certificate, MAX_CERTIFICATE_BYTES),
+    )
+    const replacementEpochId = base64UrlEncode(replacementCertificate.body.epochId)
     const now = Date.now()
     const challenge = this.sql
       .exec<{ challenge: string; expires_at: number; consumed_at: number | null }>(
@@ -250,9 +255,12 @@ export class VaultRecovery {
         recoveredAt,
       )
       this.sql.exec(
-        `UPDATE vault_state SET recovery_package = ?, recovery_state_id = ? WHERE singleton = 1`,
+        `UPDATE vault_state
+         SET recovery_package = ?, recovery_state_id = ?, current_epoch_id = ?, epoch_sequence = NULL
+         WHERE singleton = 1`,
         input.encryptedRecoveryPackage,
         nextRecoveryStateId,
+        replacementEpochId,
       )
       this.sql.exec(
         `INSERT INTO recovery_receipts(

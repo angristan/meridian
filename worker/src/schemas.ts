@@ -35,6 +35,7 @@ export const AuthSessionSchema = Schema.Struct({
   challengeId: Schema.String,
   signature: Schema.String,
   supportedLogFormats: Schema.optionalKey(Schema.Array(Schema.String)),
+  supportedFeatures: Schema.optionalKey(Schema.Array(Schema.String)),
 })
 
 export type AuthSession = typeof AuthSessionSchema.Type

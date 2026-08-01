@@ -75,8 +75,14 @@ export class VaultSessions {
     const vault = vaultState(this.sql)
     assert(vault, new HttpError(409, "not_claimed", "This deployment has not been claimed"))
     const supportsCanonicalLog = input.supportedLogFormats?.includes("canonical-cbor-v1") === true
+    const supportsEpochTransitions =
+      input.supportedFeatures?.includes("epoch-transition-v1") === true
     assert(
       vault.log_format !== "canonical-cbor-v1" || supportsCanonicalLog,
+      new HttpError(426, "protocol_upgrade_required", "Update Meridian to continue syncing"),
+    )
+    assert(
+      vault.epoch_transition_cursor === null || supportsEpochTransitions,
       new HttpError(426, "protocol_upgrade_required", "Update Meridian to continue syncing"),
     )
     const device = activeDevice(this.sql, input.deviceId)
@@ -126,22 +132,28 @@ export class VaultSessions {
         consumed.rowsWritten === 1,
         new HttpError(401, "invalid_challenge", "Challenge was already used"),
       )
-      if (supportsCanonicalLog) {
+      if (supportsCanonicalLog || supportsEpochTransitions) {
         this.sql.exec(
-          `UPDATE devices SET supports_canonical_log = 1
+          `UPDATE devices
+           SET supports_canonical_log = CASE WHEN ? THEN 1 ELSE supports_canonical_log END,
+               supports_epoch_transitions = CASE WHEN ? THEN 1 ELSE supports_epoch_transitions END
            WHERE device_id = ? AND revoked_at IS NULL`,
+          supportsCanonicalLog ? 1 : 0,
+          supportsEpochTransitions ? 1 : 0,
           input.deviceId,
         )
       }
       this.sql.exec(
         `INSERT INTO sessions(
-          token_hash, device_id, created_at, expires_at, supports_canonical_log
-        ) VALUES (?, ?, ?, ?, ?)`,
+          token_hash, device_id, created_at, expires_at,
+          supports_canonical_log, supports_epoch_transitions
+        ) VALUES (?, ?, ?, ?, ?, ?)`,
         sessionHash,
         input.deviceId,
         committedAt,
         committedAt + AUTH_SESSION_TTL_MS,
         supportsCanonicalLog ? 1 : 0,
+        supportsEpochTransitions ? 1 : 0,
       )
     })
     return json({

@@ -1,10 +1,15 @@
+import { computeRecoveryStateId, deserializeEncryptedRecoveryPackage } from "@meridian/crypto"
 import {
+  bytesEqual,
+  decodeDeviceCertificate,
   decodeOperation,
+  epochSigningBytes,
   hashBytes,
   LogFormat,
   logChainSigningBytes,
   logEntryHashInput,
   operationSigningBytes,
+  Permission,
   type SignedOperation,
   vaultId,
 } from "@meridian/protocol"
@@ -26,6 +31,8 @@ import {
   json,
   MAX_CHANGE_PAGE_SIZE,
   MAX_ENVELOPE_BYTES,
+  MAX_EPOCH_ENVELOPE_BYTES,
+  MAX_RECOVERY_PACKAGE_BYTES,
   type OperationRow,
   requestJson,
   type SessionContext,
@@ -83,7 +90,12 @@ export class VaultOperations {
   ): Promise<SignedOperation> {
     let signed: SignedOperation
     try {
-      signed = decodeOperation(base64UrlDecode(operation.envelope, MAX_ENVELOPE_BYTES))
+      signed = decodeOperation(
+        base64UrlDecode(
+          operation.envelope,
+          operation.type === "key-epoch" ? MAX_EPOCH_ENVELOPE_BYTES : MAX_ENVELOPE_BYTES,
+        ),
+      )
     } catch {
       throw new HttpError(
         400,
@@ -141,7 +153,11 @@ export class VaultOperations {
     assertIdentifier(operation.epochId, "epochId")
     if (operation.subjectDeviceId !== undefined)
       assertIdentifier(operation.subjectDeviceId, "subjectDeviceId")
-    validateOpaqueData(operation.envelope, MAX_ENVELOPE_BYTES, "envelope")
+    validateOpaqueData(
+      operation.envelope,
+      operation.type === "key-epoch" ? MAX_EPOCH_ENVELOPE_BYTES : MAX_ENVELOPE_BYTES,
+      "envelope",
+    )
     validateSignature(operation.signature)
     assert(
       operation.authorDeviceId === session.deviceId,
@@ -195,6 +211,68 @@ export class VaultOperations {
       session.vaultId,
       author.signing_public_key,
     )
+    const epochTransition =
+      signedOperation.body.type === "epoch-transition" ? signedOperation.body : null
+    let nextRecoveryStateId: string | null = null
+    if (epochTransition) {
+      let certificate: ReturnType<typeof decodeDeviceCertificate>
+      try {
+        certificate = decodeDeviceCertificate(base64UrlDecode(author.certificate))
+      } catch {
+        throw new HttpError(
+          409,
+          "invalid_device_certificate",
+          "Stored owner certificate is invalid",
+        )
+      }
+      assert(
+        certificate.body.permissions.includes(Permission.RotateEpoch) &&
+          bytesEqual(certificate.body.deviceId, epochTransition.authorDeviceId) &&
+          (await verifyEd25519(
+            author.signing_public_key,
+            base64UrlEncode(epochTransition.declaration.signature),
+            epochSigningBytes(epochTransition.declaration.body),
+          )),
+        new HttpError(403, "epoch_rotation_forbidden", "Epoch rotation authorization is invalid"),
+      )
+      let recoveryPackage: ReturnType<typeof deserializeEncryptedRecoveryPackage>
+      try {
+        recoveryPackage = deserializeEncryptedRecoveryPackage(
+          epochTransition.encryptedRecoveryPackage,
+        )
+      } catch {
+        throw new HttpError(
+          400,
+          "invalid_recovery_package",
+          "Epoch transition recovery package is invalid",
+        )
+      }
+      assert(
+        base64UrlEncode(recoveryPackage.vaultId) === session.vaultId,
+        new HttpError(400, "invalid_recovery_package", "Recovery package targets another vault"),
+      )
+      nextRecoveryStateId = base64UrlEncode(
+        await computeRecoveryStateId(
+          vaultId(base64UrlDecode(session.vaultId, 16)),
+          epochTransition.encryptedRecoveryPackage,
+        ),
+      )
+      const state = vaultState(this.sql)
+      assert(state, new HttpError(409, "not_claimed", "This deployment has not been claimed"))
+      if (state.recovery_state_id === null) {
+        const currentRecoveryStateId = base64UrlEncode(
+          await computeRecoveryStateId(
+            vaultId(base64UrlDecode(state.vault_id, 16)),
+            base64UrlDecode(state.recovery_package, MAX_RECOVERY_PACKAGE_BYTES),
+          ),
+        )
+        this.sql.exec(
+          `UPDATE vault_state SET recovery_state_id = ?
+           WHERE singleton = 1 AND recovery_state_id IS NULL`,
+          currentRecoveryStateId,
+        )
+      }
+    }
     const requestHash = await this.operationRequestHash(operation)
 
     for (let attempt = 0; attempt < 5; attempt += 1) {
@@ -235,6 +313,43 @@ export class VaultOperations {
             "log_transition_conflict",
             "Log transition does not match the current legacy head",
           ),
+        )
+      }
+      if (epochTransition) {
+        const currentEpochId = state.current_epoch_id ?? operation.epochId
+        const previousEpochId = epochTransition.declaration.body.previousEpochId
+        assert(
+          previousEpochId !== null &&
+            state.log_format === LogFormat.CanonicalCborV1 &&
+            operation.epochId === currentEpochId &&
+            epochTransition.previousCursor === state.cursor &&
+            base64UrlEncode(epochTransition.previousLogHash) === state.head_hash &&
+            base64UrlEncode(previousEpochId) === currentEpochId &&
+            state.recovery_state_id === base64UrlEncode(epochTransition.previousRecoveryStateId) &&
+            (state.epoch_sequence === null ||
+              epochTransition.declaration.body.sequence === state.epoch_sequence + 1),
+          new HttpError(
+            409,
+            "epoch_transition_conflict",
+            "Epoch transition does not match current vault security state",
+          ),
+        )
+        assert(
+          unsupportedEpochDeviceIds(this.sql).length === 0 &&
+            sameDeviceSet(
+              epochTransition.keyPackages.map((entry) => base64UrlEncode(entry.recipientDeviceId)),
+              activeDeviceIds(this.sql),
+            ),
+          new HttpError(
+            409,
+            "epoch_recipient_conflict",
+            "Epoch transition recipients do not match active devices",
+          ),
+        )
+      } else if (state.current_epoch_id !== null) {
+        assert(
+          operation.epochId === state.current_epoch_id,
+          new HttpError(409, "stale_epoch", "Operation uses a stale vault epoch"),
         )
       }
       const previousHashBytes = base64UrlDecode(state.head_hash, 32)
@@ -285,9 +400,31 @@ export class VaultOperations {
             !freshState ||
             freshState.cursor !== state.cursor ||
             freshState.head_hash !== state.head_hash ||
-            freshState.log_format !== state.log_format
+            freshState.log_format !== state.log_format ||
+            freshState.current_epoch_id !== state.current_epoch_id ||
+            freshState.epoch_sequence !== state.epoch_sequence ||
+            freshState.recovery_state_id !== state.recovery_state_id
           ) {
             throw new RetryAppend()
+          }
+
+          if (epochTransition) {
+            assert(
+              unsupportedEpochDeviceIds(this.sql).length === 0 &&
+                sameDeviceSet(
+                  epochTransition.keyPackages.map((entry) =>
+                    base64UrlEncode(entry.recipientDeviceId),
+                  ),
+                  activeDeviceIds(this.sql),
+                ) &&
+                freshState.recovery_state_id ===
+                  base64UrlEncode(epochTransition.previousRecoveryStateId),
+              new HttpError(
+                409,
+                "epoch_transition_conflict",
+                "Active devices or recovery state changed during epoch rotation",
+              ),
+            )
           }
 
           this.sql.exec(
@@ -310,13 +447,25 @@ export class VaultOperations {
           )
           this.sql.exec(
             `UPDATE vault_state
-             SET cursor = ?, head_hash = ?, log_format = ?, log_transition_cursor = ?
+             SET cursor = ?, head_hash = ?, log_format = ?, log_transition_cursor = ?,
+                 current_epoch_id = ?, epoch_sequence = ?, epoch_transition_cursor = ?,
+                 recovery_package = ?, recovery_state_id = ?
              WHERE singleton = 1`,
             cursor,
             chainHash,
             nextLogFormat,
             transitionCursor,
+            epochTransition
+              ? base64UrlEncode(epochTransition.declaration.body.epochId)
+              : (state.current_epoch_id ?? operation.epochId),
+            epochTransition ? epochTransition.declaration.body.sequence : state.epoch_sequence,
+            epochTransition ? cursor : state.epoch_transition_cursor,
+            epochTransition
+              ? base64UrlEncode(epochTransition.encryptedRecoveryPackage)
+              : state.recovery_package,
+            epochTransition ? nextRecoveryStateId : state.recovery_state_id,
           )
+          if (epochTransition) this.sql.exec("DELETE FROM pairings")
 
           if (operation.type === "device-revocation") {
             const target = activeDevice(this.sql, operation.subjectDeviceId as string)
@@ -570,6 +719,32 @@ export class VaultOperations {
       hasMore: operations.length === limit,
     })
   }
+}
+
+function activeDeviceIds(sql: SqlStorage): string[] {
+  return sql
+    .exec<{ device_id: string }>(
+      "SELECT device_id FROM devices WHERE revoked_at IS NULL ORDER BY device_id",
+    )
+    .toArray()
+    .map((row) => row.device_id)
+}
+
+function unsupportedEpochDeviceIds(sql: SqlStorage): string[] {
+  return sql
+    .exec<{ device_id: string }>(
+      `SELECT device_id FROM devices
+       WHERE revoked_at IS NULL AND supports_epoch_transitions = 0 ORDER BY device_id`,
+    )
+    .toArray()
+    .map((row) => row.device_id)
+}
+
+function sameDeviceSet(left: readonly string[], right: readonly string[]): boolean {
+  if (left.length !== right.length) return false
+  const sortedLeft = [...left].sort()
+  const sortedRight = [...right].sort()
+  return sortedLeft.every((value, index) => value === sortedRight[index])
 }
 
 export function isSafeOrphanCandidate(
