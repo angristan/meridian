@@ -126,6 +126,13 @@ export class VaultSessions {
         consumed.rowsWritten === 1,
         new HttpError(401, "invalid_challenge", "Challenge was already used"),
       )
+      if (supportsCanonicalLog) {
+        this.sql.exec(
+          `UPDATE devices SET supports_canonical_log = 1
+           WHERE device_id = ? AND revoked_at IS NULL`,
+          input.deviceId,
+        )
+      }
       this.sql.exec(
         `INSERT INTO sessions(
           token_hash, device_id, created_at, expires_at, supports_canonical_log

@@ -33,6 +33,7 @@ export type DeviceRow = {
   revoked_operation_id: string | null
   device_name: string | null
   platform: string | null
+  supports_canonical_log: number
 }
 
 export type SessionContext = {

@@ -240,8 +240,9 @@ export class VaultRecovery {
       this.sql.exec("DELETE FROM pairings")
       this.sql.exec(
         `INSERT INTO devices(
-          device_id, signing_public_key, hpke_public_key, certificate, role, authorized_at, authorized_by
-        ) VALUES (?, ?, ?, ?, 'owner', ?, NULL)`,
+          device_id, signing_public_key, hpke_public_key, certificate, role, authorized_at,
+          authorized_by, supports_canonical_log
+        ) VALUES (?, ?, ?, ?, 'owner', ?, NULL, 1)`,
         input.newDevice.deviceId,
         input.newDevice.signingPublicKey,
         input.newDevice.hpkePublicKey,

@@ -312,5 +312,21 @@ export function migrateVaultSchema(sql: SqlStorage, transactionSync: Transaction
       `)
       sql.exec("INSERT INTO _sql_schema_migrations (id, applied_at) VALUES (6, ?)", Date.now())
     })
+    version = 6
+  }
+
+  if (version < 7) {
+    transactionSync(() => {
+      const devicesDefinition =
+        sql
+          .exec<{ sql: string | null }>(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'devices'",
+          )
+          .one().sql ?? ""
+      if (!devicesDefinition.includes("supports_canonical_log")) {
+        sql.exec("ALTER TABLE devices ADD COLUMN supports_canonical_log INTEGER NOT NULL DEFAULT 0")
+      }
+      sql.exec("INSERT INTO _sql_schema_migrations (id, applied_at) VALUES (7, ?)", Date.now())
+    })
   }
 }

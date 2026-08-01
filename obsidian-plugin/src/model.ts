@@ -583,6 +583,7 @@ export interface RemoteDevice {
   revokedAt: number | null
   deviceName: string | null
   platform: string | null
+  supportsCanonicalLog?: boolean
 }
 
 export interface PairingCapability {

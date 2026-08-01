@@ -121,6 +121,42 @@ describe("Meridian remote client", () => {
     )
   })
 
+  it("parses persistent device log capabilities conservatively", async () => {
+    const transport = new QueueTransport([
+      response({ challengeId: "challenge-id", challenge: "challenge" }),
+      response({ sessionToken: "session-token", expiresAt: Number.MAX_SAFE_INTEGER }),
+      response({
+        devices: [
+          {
+            deviceId: "current-device",
+            signingPublicKey: "signing-key",
+            hpkePublicKey: "hpke-key",
+            certificate: "certificate",
+            role: "owner",
+            authorizedAt: 1,
+            revokedAt: null,
+            supportsCanonicalLog: true,
+          },
+          {
+            deviceId: "old-device",
+            signingPublicKey: "old-signing-key",
+            hpkePublicKey: "old-hpke-key",
+            certificate: "old-certificate",
+            role: "member",
+            authorizedAt: 2,
+            revokedAt: null,
+          },
+        ],
+      }),
+    ])
+    const client = new MeridianRemoteClient("https://example.test", transport)
+
+    await client.authenticate(TEST_DEVICE, new FakeCrypto())
+    const devices = await client.listDevices()
+
+    expect(devices.map((device) => device.supportsCanonicalLog)).toEqual([true, false])
+  })
+
   it("skips the device registry for an empty change page", async () => {
     const transport = new QueueTransport([
       response({ challengeId: "challenge-id", challenge: "challenge" }),

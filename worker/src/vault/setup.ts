@@ -164,8 +164,9 @@ export class VaultSetup {
       )
       this.sql.exec(
         `INSERT INTO devices(
-          device_id, signing_public_key, hpke_public_key, certificate, role, authorized_at, authorized_by
-        ) VALUES (?, ?, ?, ?, 'owner', ?, NULL)`,
+          device_id, signing_public_key, hpke_public_key, certificate, role, authorized_at,
+          authorized_by, supports_canonical_log
+        ) VALUES (?, ?, ?, ?, 'owner', ?, NULL, 1)`,
         claim.initialDevice.deviceId,
         claim.initialDevice.signingPublicKey,
         claim.initialDevice.hpkePublicKey,

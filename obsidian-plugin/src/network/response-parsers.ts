@@ -69,6 +69,7 @@ export function parseDevice(value: unknown): RemoteDevice {
     revokedAt: value.revokedAt === null ? null : requiredNumber(value, "revokedAt"),
     deviceName: typeof value.deviceName === "string" ? value.deviceName : null,
     platform: typeof value.platform === "string" ? value.platform : null,
+    supportsCanonicalLog: value.supportsCanonicalLog === true,
   }
 }
 

@@ -122,6 +122,7 @@ export class VaultPairing {
         revokedOperationId: device.revoked_operation_id,
         deviceName: device.device_name,
         platform: device.platform,
+        supportsCanonicalLog: device.supports_canonical_log === 1,
       }))
     return json({ devices })
   }

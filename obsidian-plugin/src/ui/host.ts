@@ -27,7 +27,6 @@ export interface MeridianUiHost {
   syncNow(): Promise<void>
   repairLocalIndex(): Promise<void>
   getLogFormat(): Promise<LogFormat | null>
-  upgradeVaultProtocol(): Promise<void>
   connectFromSetup(
     endpoint: string,
     setupSession: string,

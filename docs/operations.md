@@ -16,17 +16,16 @@ Use Workers Logs and Traces to diagnose request classes, latency, binding failur
 
 ## Vault protocol upgrade
 
-New vaults start with canonical operation-log hashes. An existing vault keeps its deployed legacy chain until the owner upgrades it:
+New vaults start with canonical operation-log hashes. Existing vaults upgrade automatically:
 
 1. Update Meridian on every active device.
-2. On the owner device, open **Settings → Meridian → Security and protocol**.
-3. Select **Upgrade vault** and confirm the irreversible change.
-4. Wait for the setting to show **Upgraded**.
-5. Open each other device and confirm that sync completes.
+2. Open each device once and let sync complete.
+3. Keep or reopen the owner device. Meridian upgrades after every non-revoked device has authenticated with canonical-log support.
+4. Open **Settings → Meridian → Security and protocol** to confirm that the vault protocol is upgraded.
 
-The signed transition is the last legacy-hashed log entry. Existing history stays unchanged, and every later entry uses canonical generation-1 hashing. A crash or lost response leaves the exact signed transition available for retry. If another device writes before the transition commits, Meridian discards the stale attempt and asks the owner to start again.
+The signed transition is the last legacy-hashed log entry. Existing history stays unchanged, and every later entry uses canonical generation-1 hashing. A crash or lost response leaves the exact signed transition available for retry. If another device writes first, Meridian discards the stale attempt, pulls the new entry, and tries again automatically.
 
-An old client stops with **Update Meridian to continue** after the transition. It cannot append another legacy entry. Downgrading Meridian for that vault is not supported.
+A device that is no longer used must be revoked before Meridian can stop waiting for it. An old client stops with **Update Meridian to continue** after the transition. It cannot append another legacy entry. Downgrading Meridian for that vault is not supported.
 
 ## Device replacement
 

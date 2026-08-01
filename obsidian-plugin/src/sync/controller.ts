@@ -18,6 +18,7 @@ import type {
   VaultPort,
 } from "../model"
 import { INITIAL_STATUS } from "../model"
+import { MeridianHttpError } from "../network/response-parsers"
 import { BackgroundSyncCompute, type SyncComputePort } from "../platform/background-sync"
 import { randomId } from "../platform/bytes"
 import type { JournalPort } from "../storage/journal"
@@ -31,11 +32,18 @@ import { PushEngine } from "./push-engine"
 import { Reconciler } from "./reconciler"
 import { RevisionLoader } from "./revision-loader"
 
+export interface ProtocolUpgradeStore {
+  load(): LogFormatUpgradeMaterial | null
+  save(material: LogFormatUpgradeMaterial): Promise<void>
+  clear(): Promise<void>
+}
+
 export interface SyncControllerOptions {
   progressThrottleMs?: number
   now?: () => number
   selection?: () => SelectiveSyncSettings
   compute?: SyncComputePort
+  protocolUpgrade?: ProtocolUpgradeStore
 }
 
 export class SyncController {
@@ -57,6 +65,7 @@ export class SyncController {
   private readonly now: () => number
   private readonly compute: SyncComputePort
   private readonly selection: () => SelectiveSyncSettings
+  private readonly protocolUpgrade: ProtocolUpgradeStore | undefined
   private status: SyncStatus = { ...INITIAL_STATUS }
 
   constructor(
@@ -76,6 +85,7 @@ export class SyncController {
     this.now = options.now ?? Date.now
     this.selection = options.selection ?? (() => ({ excludedFolders: [], excludedExtensions: [] }))
     this.compute = options.compute ?? new BackgroundSyncCompute()
+    this.protocolUpgrade = options.protocolUpgrade
     const revisionLoader = new RevisionLoader(remote, crypto, () => vault.maxFileBytes())
     const applier = new OperationApplier(
       vault,
@@ -257,37 +267,6 @@ export class SyncController {
     const checkpoint =
       (await this.journal.getCheckpoint()) ?? this.requireDevice().trustedCheckpoint
     return checkpoint.logFormat ?? "legacy-http-v1"
-  }
-
-  async prepareLogFormatUpgrade(): Promise<LogFormatUpgradeMaterial> {
-    return this.runMaintenance(async () => {
-      const device = this.requireDevice()
-      await this.authenticate(device)
-      const pending = await this.journal.listPending()
-      if (pending.length > 0) {
-        throw new Error("Sync all queued changes before upgrading the vault protocol")
-      }
-      const current = (await this.remote.listDevices()).find(
-        (candidate) => candidate.deviceId === device.deviceId,
-      )
-      if (!current || current.revokedAt !== null || current.role !== "owner") {
-        throw new Error("Only the vault owner can upgrade the vault protocol")
-      }
-      const checkpoint = (await this.journal.getCheckpoint()) ?? device.trustedCheckpoint
-      return this.crypto.createLogFormatUpgrade(device, checkpoint)
-    })
-  }
-
-  async completeLogFormatUpgrade(material: LogFormatUpgradeMaterial): Promise<void> {
-    await this.runMaintenance(async () => {
-      const device = this.requireDevice()
-      await this.authenticate(device)
-      await this.remote.commit(material.envelope, material.operationId)
-    })
-    await this.sync("notification")
-    if ((await this.logFormat()) !== "canonical-cbor-v1") {
-      throw new Error("Vault protocol upgrade was not confirmed by the operation log")
-    }
   }
 
   async storageUsage() {
@@ -492,6 +471,7 @@ export class SyncController {
       () => this.stopRequested,
     )
     if (pull.stopped || this.stopRequested) return
+    if (await this.retryPendingProtocolUpgrade()) return
 
     this.updateStatus({ phase: "pushing", message: "Uploading local changes", progress: null })
     const push = await this.pushEngine.push(
@@ -513,6 +493,7 @@ export class SyncController {
       this.rerunReason = mergeSyncReasons(this.rerunReason, "notification")
     }
     if (push.error) throw push.error
+    if (!push.committed && (await this.startAutomaticProtocolUpgrade(device))) return
 
     this.updateStatus({
       phase: "idle",
@@ -523,6 +504,58 @@ export class SyncController {
       error: null,
       progress: null,
     })
+  }
+
+  private async retryPendingProtocolUpgrade(): Promise<boolean> {
+    const pending = this.protocolUpgrade?.load()
+    if (!pending) return false
+    if ((await this.logFormat()) === "canonical-cbor-v1") {
+      await this.protocolUpgrade?.clear()
+      return false
+    }
+    return this.commitAutomaticProtocolUpgrade(pending)
+  }
+
+  private async startAutomaticProtocolUpgrade(device: DeviceKeyMaterial): Promise<boolean> {
+    if (!this.protocolUpgrade || (await this.logFormat()) !== "legacy-http-v1") return false
+    if ((await this.journal.listPending()).length > 0) return false
+    const devices = await this.remote.listDevices()
+    const current = devices.find((candidate) => candidate.deviceId === device.deviceId)
+    const active = devices.filter((candidate) => candidate.revokedAt === null)
+    if (
+      current?.role !== "owner" ||
+      active.length === 0 ||
+      active.some((candidate) => !candidate.supportsCanonicalLog)
+    ) {
+      return false
+    }
+    const checkpoint = (await this.journal.getCheckpoint()) ?? device.trustedCheckpoint
+    const material = await this.crypto.createLogFormatUpgrade(device, checkpoint)
+    await this.protocolUpgrade.save(material)
+    return this.commitAutomaticProtocolUpgrade(material)
+  }
+
+  private async commitAutomaticProtocolUpgrade(
+    material: LogFormatUpgradeMaterial,
+  ): Promise<boolean> {
+    this.updateStatus({
+      phase: "pushing",
+      message: "Upgrading vault security",
+      error: null,
+      progress: null,
+    })
+    try {
+      await this.remote.commit(material.envelope, material.operationId)
+    } catch (error) {
+      if (error instanceof MeridianHttpError && error.code === "log_transition_conflict") {
+        await this.protocolUpgrade?.clear()
+        this.rerunReason = mergeSyncReasons(this.rerunReason, "notification")
+        return true
+      }
+      throw error
+    }
+    this.rerunReason = mergeSyncReasons(this.rerunReason, "notification")
+    return true
   }
 
   private async authenticate(device: DeviceKeyMaterial): Promise<void> {

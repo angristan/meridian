@@ -263,7 +263,7 @@ export function renderSettings(container: HTMLElement, host: MeridianUiHost): vo
   const protocolUpgrade = new Setting(container)
     .setName("Vault protocol")
     .setDesc("Checking the signed operation log format…")
-  configureProtocolUpgrade(protocolUpgrade, host, () => renderSettings(container, host))
+  configureProtocolUpgrade(protocolUpgrade, host)
 
   new Setting(container).setName("Storage and retention").setHeading()
   new Setting(container)
@@ -439,10 +439,10 @@ export function getMeridianSettingDefinitions(
       items: [
         {
           name: "Vault protocol",
-          desc: "Upgrade the signed operation log to canonical generation-1 hashes.",
+          desc: "Track the automatic upgrade to canonical generation-1 log hashes.",
           aliases: ["log hash", "security migration", "canonical log"],
           visible: () => configured,
-          render: (setting) => configureProtocolUpgrade(setting, host, refresh),
+          render: (setting) => configureProtocolUpgrade(setting, host),
         },
       ],
     },
@@ -503,42 +503,24 @@ function configToggle(
   }
 }
 
-function configureProtocolUpgrade(
-  setting: Setting,
-  host: MeridianUiHost,
-  refresh: () => void,
-): void {
+function configureProtocolUpgrade(setting: Setting, host: MeridianUiHost): void {
   if (host.settings.pendingProtocolUpgrade) {
-    setting
-      .setDesc("A signed protocol upgrade is safely stored and needs to be retried.")
-      .addButton((button) =>
-        button
-          .setButtonText("Retry upgrade")
-          .setWarning()
-          .onClick(() => new ProtocolUpgradeModal(host, refresh).open()),
-      )
+    setting.setDesc(
+      "The signed automatic upgrade is safely stored and will retry during the next sync.",
+    )
     return
   }
   void host
     .getLogFormat()
     .then((format) => {
       if (format === "canonical-cbor-v1") {
-        setting
-          .setDesc("This vault uses verified canonical generation-1 operation log hashes.")
-          .addButton((button) => button.setButtonText("Upgraded").setDisabled(true))
+        setting.setDesc("This vault uses verified canonical generation-1 operation log hashes.")
         return
       }
       if (format === "legacy-http-v1") {
-        setting
-          .setDesc(
-            "Upgrade this vault after updating Meridian on every device. Older clients will stop syncing safely.",
-          )
-          .addButton((button) =>
-            button
-              .setButtonText("Upgrade vault")
-              .setWarning()
-              .onClick(() => new ProtocolUpgradeModal(host, refresh).open()),
-          )
+        setting.setDesc(
+          "Waiting for every active device to update and check in. Meridian will then upgrade the vault automatically.",
+        )
         return
       }
       setting.setDesc("Connect Meridian to inspect the vault protocol.")
@@ -546,50 +528,6 @@ function configureProtocolUpgrade(
     .catch((error) => {
       setting.setDesc(error instanceof Error ? error.message : "Unable to inspect vault protocol")
     })
-}
-
-class ProtocolUpgradeModal extends Modal {
-  constructor(
-    private readonly host: MeridianUiHost,
-    private readonly onComplete: () => void,
-  ) {
-    super(host.app)
-  }
-
-  override onOpen(): void {
-    this.setTitle("Upgrade vault protocol?")
-    this.contentEl.createEl("p", {
-      text: "This creates a signed bridge to canonical log hashes. Update Meridian on every device first.",
-    })
-    this.contentEl.createEl("p", {
-      text: "The change cannot be undone. Older clients will stop syncing and ask for an update. Vault files and existing history are kept.",
-    })
-    new Setting(this.contentEl)
-      .addButton((button) => button.setButtonText("Cancel").onClick(() => this.close()))
-      .addButton((button) =>
-        button
-          .setButtonText("Upgrade vault")
-          .setWarning()
-          .onClick(async () => {
-            button.setDisabled(true)
-            try {
-              await this.host.upgradeVaultProtocol()
-              this.close()
-              this.onComplete()
-              new Notice("Meridian vault protocol upgraded")
-            } catch (error) {
-              new Notice(
-                error instanceof Error ? error.message : "Unable to upgrade vault protocol",
-              )
-              button.setDisabled(false)
-            }
-          }),
-      )
-  }
-
-  override onClose(): void {
-    this.contentEl.empty()
-  }
 }
 
 function configureConnection(setting: Setting, host: MeridianUiHost, refresh: () => void): void {

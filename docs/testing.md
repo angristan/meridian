@@ -72,9 +72,10 @@ Automated responsiveness tests use generous wall-clock ceilings to detect pathol
 ### Protocol migration and recovery CAS
 
 - Open an existing legacy vault with the new client; verify normal legacy sync still works before upgrade.
-- Upgrade from the owner settings. Verify the transition is legacy-hashed, the next operation is canonical-hashed, and old history is unchanged.
-- Lose the upgrade response and restart before and after pull; verify the exact transition retries and the setting reaches **Upgraded**.
-- Write from another device between preparation and commit; verify the stale transition fails and can be prepared again.
+- Check in only some active devices; verify the vault remains legacy without preparing a transition.
+- Check in every non-revoked device, then sync the owner; verify the automatic transition is legacy-hashed, the next operation is canonical-hashed, and old history is unchanged.
+- Lose the upgrade response and restart before and after pull; verify the exact transition retries automatically and the setting reports the canonical format.
+- Write from another device between preparation and commit; verify the stale transition is discarded, pulled, and prepared again automatically.
 - Try an old client after upgrade; it must stop with **Update Meridian to continue** and append nothing.
 - Alter, omit, reorder, or fork a canonical log entry; reject it before decrypting or changing the vault.
 - Submit two recovery claims from the same predecessor; exactly one may replace the package.

@@ -233,7 +233,7 @@ describe("Meridian Worker integration", () => {
       const migration = state.storage.sql
         .exec<{ version: number }>("SELECT MAX(id) AS version FROM _sql_schema_migrations")
         .one()
-      expect(migration.version).toBe(6)
+      expect(migration.version).toBe(7)
       const tables = state.storage.sql
         .exec<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table'")
         .toArray()
@@ -250,6 +250,12 @@ describe("Meridian Worker integration", () => {
       expect(pairingsDefinition).toContain("candidate_request_proof")
       expect(pairingsDefinition).toContain("verification_preview")
       expect(pairingsDefinition).toContain("'completed'")
+      const devicesDefinition = state.storage.sql
+        .exec<{ sql: string }>(
+          "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'devices'",
+        )
+        .one().sql
+      expect(devicesDefinition).toContain("supports_canonical_log")
     })
   })
 
@@ -265,7 +271,7 @@ describe("Meridian Worker integration", () => {
       const migration = state.storage.sql
         .exec<{ version: number }>("SELECT MAX(id) AS version FROM _sql_schema_migrations")
         .one()
-      expect(migration.version).toBe(6)
+      expect(migration.version).toBe(7)
       expect(
         state.storage.sql
           .exec<{ name: string }>(
@@ -279,15 +285,24 @@ describe("Meridian Worker integration", () => {
   it("bridges a migrated legacy log and blocks old sessions", async () => {
     const primaryStub = env.VAULT.get(env.VAULT.idFromName("log-transition-test"))
     const directFetch: TestFetch = (url, init) => primaryStub.fetch(new Request(url, init))
-    const { deviceId, sessionToken, signingKey, vaultId, device } = await setupAndAuthenticate(
+    const { deviceId, signingKey, vaultId, device } = await setupAndAuthenticate(
       directFetch,
       "/internal/setup/session",
     )
-    const authorization = { authorization: `Bearer ${sessionToken}` }
     await runInDurableObject(primaryStub, async (_instance, state) => {
       state.storage.sql.exec(
         "UPDATE vault_state SET log_format = 'legacy-http-v1', log_transition_cursor = NULL",
       )
+      state.storage.sql.exec("UPDATE devices SET supports_canonical_log = 0")
+    })
+    const sessionToken = await authenticateDevice(vaultId, deviceId, signingKey, directFetch)
+    const authorization = { authorization: `Bearer ${sessionToken}` }
+    const registryResponse = await directFetch("https://example.test/v1/devices", {
+      headers: authorization,
+    })
+    expect(registryResponse.status).toBe(200)
+    expect(await registryResponse.json()).toMatchObject({
+      devices: [{ deviceId, supportsCanonicalLog: true }],
     })
 
     const transitionIdentifier = operationId(randomBytes(16))
