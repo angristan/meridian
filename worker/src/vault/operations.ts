@@ -1,4 +1,8 @@
-import { computeRecoveryStateId, deserializeEncryptedRecoveryPackage } from "@meridian/crypto"
+import {
+  computeRecoveryStateId,
+  deserializeEncryptedRecoveryPackage,
+  verifyCheckpoint,
+} from "@meridian/crypto"
 import {
   bytesEqual,
   decodeDeviceCertificate,
@@ -248,8 +252,18 @@ export class VaultOperations {
         )
       }
       assert(
-        base64UrlEncode(recoveryPackage.vaultId) === session.vaultId,
-        new HttpError(400, "invalid_recovery_package", "Recovery package targets another vault"),
+        recoveryPackage.packageVersion === 2 &&
+          base64UrlEncode(recoveryPackage.vaultId) === session.vaultId &&
+          recoveryPackage.checkpoint.body.cursor === epochTransition.previousCursor &&
+          base64UrlEncode(recoveryPackage.checkpoint.body.logHash) ===
+            base64UrlEncode(epochTransition.previousLogHash) &&
+          base64UrlEncode(recoveryPackage.checkpoint.body.epochId) === operation.epochId &&
+          verifyCheckpoint(recoveryPackage.checkpoint, certificate),
+        new HttpError(
+          400,
+          "invalid_recovery_package",
+          "Recovery package does not match the epoch predecessor",
+        ),
       )
       nextRecoveryStateId = base64UrlEncode(
         await computeRecoveryStateId(

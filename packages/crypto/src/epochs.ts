@@ -216,6 +216,18 @@ export async function applyEpochTransition(
     const retained = input.device.epochKeys.some((entry) =>
       bytesEqual(entry.epochId, body.declaration.body.epochId),
     )
+    if (
+      required !== undefined &&
+      !bytesEqual(
+        input.device.epoch.body.previousEpochId ?? new Uint8Array(),
+        body.declaration.body.epochId,
+      )
+    ) {
+      throw new CryptoError(
+        "RECOVERY_TRANSITION_MISMATCH",
+        "Required transition is not the recovered epoch predecessor",
+      )
+    }
     if (!retained) {
       throw new CryptoError("EPOCH_KEY_MISSING", "Historical epoch transition key is not retained")
     }

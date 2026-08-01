@@ -553,7 +553,11 @@ function validateRecoveryStateAuthorization(
   const checkpointSigner = certificates.find((certificate) =>
     bytesEqual(certificate.body.deviceId, state.checkpoint.body.signerDeviceId),
   )
-  if (!checkpointSigner || !verifyCheckpoint(state.checkpoint, checkpointSigner)) {
+  if (
+    !checkpointSigner ||
+    !bytesEqual(checkpointSigner.body.deviceId, signerDeviceId) ||
+    !verifyCheckpoint(state.checkpoint, checkpointSigner)
+  ) {
     throw new AuthenticationError("Recovery state checkpoint signature is invalid")
   }
 }
