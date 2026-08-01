@@ -466,6 +466,14 @@ describe("Meridian Worker integration", () => {
       checkpointAuthorizationChain: [device.certificate],
       reason: "migration",
     })
+    const concurrentPrepared = await prepareEpochTransition({
+      device,
+      recipients: [{ deviceId: device.deviceId, hpkePublicKey: device.hpkePublicKey }],
+      recoverySigningPublicKey: recoveryPublicKey,
+      recoveryStateId: hashBytes(base64UrlDecode(recovery.recoveryStateId, 32)),
+      checkpointAuthorizationChain: [device.certificate],
+      reason: "migration",
+    })
     const epochUnsigned: Operation = {
       operationId: base64UrlEncode(prepared.operation.body.operationId),
       authorDeviceId: deviceId,
@@ -510,6 +518,27 @@ describe("Meridian Worker integration", () => {
     })
     expect(duplicate.status).toBe(200)
     await expect(duplicate.json()).resolves.toMatchObject({ duplicate: true, cursor: 1 })
+
+    const concurrentUnsigned: Operation = {
+      operationId: base64UrlEncode(concurrentPrepared.operation.body.operationId),
+      authorDeviceId: deviceId,
+      epochId: base64UrlEncode(device.epoch.body.epochId),
+      type: "key-epoch",
+      envelope: base64UrlEncode(encodeOperation(concurrentPrepared.operation)),
+      signature: base64UrlEncode(randomBytes(64)),
+    }
+    const concurrent = await directFetch("https://example.test/v1/operations", {
+      method: "POST",
+      headers: { ...authorization, "content-type": "application/json" },
+      body: JSON.stringify({
+        ...concurrentUnsigned,
+        signature: await sign(signingKey, operationSigningMessage(concurrentUnsigned)),
+      }),
+    })
+    expect(concurrent.status).toBe(409)
+    await expect(concurrent.json()).resolves.toMatchObject({
+      error: { code: "epoch_transition_conflict" },
+    })
 
     await runInDurableObject(primaryStub, async (_instance, state) => {
       const vault = state.storage.sql

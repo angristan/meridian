@@ -479,7 +479,9 @@ export class VaultOperations {
               : state.recovery_package,
             epochTransition ? nextRecoveryStateId : state.recovery_state_id,
           )
-          if (epochTransition) this.sql.exec("DELETE FROM pairings")
+          if (epochTransition) {
+            this.sql.exec("DELETE FROM pairings WHERE status NOT IN ('completed', 'canceled')")
+          }
 
           if (operation.type === "device-revocation") {
             const target = activeDevice(this.sql, operation.subjectDeviceId as string)

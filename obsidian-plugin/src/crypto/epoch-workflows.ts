@@ -23,6 +23,7 @@ import type {
 import { fromBase64Url, toBase64Url } from "../platform/bytes"
 import {
   deviceBundle,
+  hasAuthorizedCheckpoint,
   parseStoredSecret,
   serializeStoredDeviceSecret,
   trustedAuthorCertificate,
@@ -42,7 +43,11 @@ export async function createEpochTransition(
 ): Promise<EpochTransitionMaterial> {
   const bundle = deviceBundle(device)
   const stored = parseStoredSecret(device.serialized)
-  if (!stored.recoveryPublicKey || stored.checkpointAuthorizationChain.length === 0) {
+  if (
+    !stored.recoveryPublicKey ||
+    stored.checkpointAuthorizationChain.length === 0 ||
+    !hasAuthorizedCheckpoint(stored)
+  ) {
     throw new Error("Device secret lacks recovery authorization for epoch rotation")
   }
   const prepared = await preparePackageEpochTransition({
