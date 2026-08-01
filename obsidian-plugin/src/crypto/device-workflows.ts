@@ -1,4 +1,5 @@
 import {
+  computeRecoveryStateId,
   createFirstDeviceClaimBundle,
   deserializeEncryptedRecoveryPackage,
   recoverDeviceFromPackage,
@@ -175,10 +176,15 @@ export async function recoverDevice(
   recoveryStateId: string,
   challenge: { challengeId: string; challenge: string },
 ): Promise<RecoveryDeviceMaterial> {
-  const recovered = await recoverDeviceFromPackage(
-    recoveryCode,
-    deserializeEncryptedRecoveryPackage(fromBase64Url(encryptedRecoveryPackage, 1024 * 1024)),
+  const serializedPackage = fromBase64Url(encryptedRecoveryPackage, 1024 * 1024)
+  const encryptedPackage = deserializeEncryptedRecoveryPackage(serializedPackage)
+  const computedStateId = toBase64Url(
+    await computeRecoveryStateId(encryptedPackage.vaultId, serializedPackage),
   )
+  if (computedStateId !== recoveryStateId) {
+    throw new Error("Recovery state ID does not match the encrypted package")
+  }
+  const recovered = await recoverDeviceFromPackage(recoveryCode, encryptedPackage)
   const device = recovered.device
   const certificate = encodeDeviceCertificate(device.certificate)
   const nextPackage = serializeEncryptedRecoveryPackage(recovered.encryptedRecoveryPackage)

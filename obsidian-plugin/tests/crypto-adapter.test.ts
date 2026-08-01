@@ -1,6 +1,7 @@
+import { computeRecoveryStateId, deserializeEncryptedRecoveryPackage } from "@meridian/crypto"
 import { describe, expect, it } from "vitest"
 import { createPackageCryptoPort } from "../src/crypto/package-adapter"
-import { randomId } from "../src/platform/bytes"
+import { fromBase64Url, randomId, toBase64Url } from "../src/platform/bytes"
 
 function record(value: unknown): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -105,7 +106,21 @@ describe("shared crypto adapter", () => {
     ).rejects.toThrow(/mobile-safe file size limit/)
     expect(oversizedLoadCalls).toBe(0)
 
-    const recoveryStateId = randomId(32)
+    const serializedRecoveryPackage = fromBase64Url(
+      stringField(claim.publicClaim, "encryptedRecoveryPackage"),
+    )
+    const encryptedRecoveryPackage = deserializeEncryptedRecoveryPackage(serializedRecoveryPackage)
+    const recoveryStateId = toBase64Url(
+      await computeRecoveryStateId(encryptedRecoveryPackage.vaultId, serializedRecoveryPackage),
+    )
+    await expect(
+      crypto.recoverDevice(
+        claim.recoveryCode,
+        stringField(claim.publicClaim, "encryptedRecoveryPackage"),
+        randomId(32),
+        { challengeId: "recovery-challenge", challenge: randomId(32) },
+      ),
+    ).rejects.toThrow(/state ID does not match/)
     const recovered = await crypto.recoverDevice(
       claim.recoveryCode,
       stringField(claim.publicClaim, "encryptedRecoveryPackage"),

@@ -106,6 +106,14 @@ describe("remote operation log verification", () => {
     ).resolves.toBeUndefined()
   })
 
+  it("rejects altered canonical entries", async () => {
+    const valid = await canonicalOperation()
+
+    await expect(
+      assertRemoteLogLink(VAULT_ID, { ...valid, cursor: 2 }, ZERO_HASH, LogFormat.CanonicalCborV1),
+    ).rejects.toThrow(/verification failed/)
+  })
+
   it("rejects discontinuous and altered operations", async () => {
     const valid = await legacyOperation()
     await expect(

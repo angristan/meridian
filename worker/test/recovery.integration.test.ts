@@ -43,6 +43,23 @@ it("recovers ownership into a fresh device using only the recovery code", async 
     },
     proof: "",
   }
+  const { logFormat: _logFormat, ...legacyUnsignedClaim } = unsignedClaim
+  const legacySetupClaim: SetupClaim = {
+    ...legacyUnsignedClaim,
+    proof: base64UrlEncode(
+      sign(
+        setupClaimSigningMessage(legacyUnsignedClaim, setup.claimChallenge),
+        first.device.signingPrivateKey,
+      ),
+    ),
+  }
+  const legacyClaimResponse = await SELF.fetch("https://example.test/v1/setup/claim", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(legacySetupClaim),
+  })
+  expect(legacyClaimResponse.status).toBe(426)
+
   const claim: SetupClaim = {
     ...unsignedClaim,
     proof: base64UrlEncode(
@@ -136,12 +153,12 @@ it("recovers ownership into a fresh device using only the recovery code", async 
     claimVersion: _claimVersion,
     recoveryId: _recoveryId,
     previousRecoveryStateId: _predecessor,
-    ...legacyClaim
+    ...legacyRecoveryClaim
   } = recoveryClaim
   const legacyResponse = await SELF.fetch("https://example.test/v1/recovery/claim", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify(legacyClaim),
+    body: JSON.stringify(legacyRecoveryClaim),
   })
   expect(legacyResponse.status).toBe(426)
 

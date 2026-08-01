@@ -79,6 +79,10 @@ export class VaultSetup {
     )
     validateOpaqueData(claim.initialDevice.certificate, MAX_CERTIFICATE_BYTES, "certificate")
     validateSignature(claim.proof)
+    assert(
+      claim.logFormat === "canonical-cbor-v1",
+      new HttpError(426, "protocol_upgrade_required", "Update Meridian and use a new setup link"),
+    )
     validateRecoveryRootedIdentity(
       claim.initialDevice,
       claim.vaultId,
@@ -110,7 +114,6 @@ export class VaultSetup {
       new HttpError(401, "invalid_proof", "First-device proof of possession is invalid"),
     )
 
-    const initialLogFormat = claim.logFormat ?? "legacy-http-v1"
     const recoveryStateId = base64UrlEncode(
       await computeRecoveryStateId(
         vaultId(base64UrlDecode(claim.vaultId, 16)),
@@ -157,7 +160,7 @@ export class VaultSetup {
         claim.encryptedRecoveryPackage,
         recoveryStateId,
         ZERO_HASH,
-        initialLogFormat,
+        claim.logFormat,
       )
       this.sql.exec(
         `INSERT INTO devices(

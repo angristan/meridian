@@ -45,7 +45,12 @@ export class ConnectionModal extends Modal {
         .onClick(async () => {
           button.setDisabled(true)
           try {
-            await this.host.connectFromSetup(endpoint, setupSession, claimChallenge)
+            await this.host.connectFromSetup(
+              endpoint,
+              setupSession,
+              claimChallenge,
+              "canonical-cbor-v1",
+            )
             this.close()
           } catch (error) {
             new Notice(error instanceof Error ? error.message : String(error), 10_000)
