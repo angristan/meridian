@@ -113,7 +113,7 @@ Local vault use remains available offline. Push/pull is idempotent and resumable
 | Stolen session | short expiry, exact authorization checks | bearer can act until expiry, bounded by certificate permissions |
 | Pairing MITM/substitution | signed device descriptor, ciphertext-free verification preview, two explicit phrase confirmations, owner-local HPKE transfer withholding, full signed transcript, certificate chain, 40-bit phrase, short expiry | user can confirm a mismatched phrase or attacker can guess at 1 in 2^40 per attempt |
 | Lost device | revoke certificate, reject later operations/sessions, rotate epoch | downloaded history and old keys cannot be erased |
-| Malicious recovery package | AES-GCM, vault-bound AAD, signed epoch/checkpoint, recovery sequence | all-device-loss rollback newer than independent checkpoint may go undetected |
+| Malicious or stale recovery package | AES-GCM, vault-bound AAD, signed epoch/checkpoint, public recovery state ID, predecessor CAS | a malicious server can still roll back its complete stored state; an independent checkpoint is needed to detect all-device-loss rollback |
 | Server rollback | persisted cursor/hash/generation, signed transferred checkpoints | isolated split views are not fully detectable |
 | Downgrade | complete suite in signed epoch; durable highest generation/sequence | a compromised endpoint can alter its own local floor |
 | Parser bombs | closed schemas, strict canonical subset, bounded bytes/depth/collections/chunks | host memory pressure still requires platform testing |
@@ -149,7 +149,7 @@ SecretStorage improves at-rest handling but is not a hardware-backed isolation b
 
 The recovery seed is a random 256-bit root capability. It must be stored outside the synchronized vault and preferably in more than one physically separate secure location. A screenshot, plaintext note in the vault, low-entropy replacement, or cloud clipboard defeats the model.
 
-The server-stored package is authenticated but can be old. If one trusted device survives, its persisted checkpoint detects this rollback. If every device and every independent checkpoint is lost, the recovery seed proves ownership and decrypts the package but cannot reveal whether the server withheld a newer valid package/history. The recovered user must treat the server's checkpoint as the newest available, not cryptographic proof that no later state existed.
+The server-stored package is authenticated but can be old. Recovery predecessor CAS prevents a client holding a stale package from replacing a newer package. It cannot stop a malicious server from rolling back the package, its public state ID, and history together. If one trusted device survives, its persisted checkpoint detects this rollback. If every device and every independent checkpoint is lost, the recovery seed proves ownership and decrypts the package but cannot reveal whether the server withheld a newer valid package/history. The recovered user must treat the server's checkpoint as the newest available, not cryptographic proof that no later state existed.
 
 A password may only add Argon2id wrapping around high-entropy recovery material. Password-only recovery is excluded because an attacker with the server package could perform offline guessing.
 

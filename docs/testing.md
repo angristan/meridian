@@ -69,6 +69,18 @@ Until the repository and a release are public, the build produces `obsidian-plug
 
 Automated responsiveness tests use generous wall-clock ceilings to detect pathological regressions and assert that cooperative fallbacks and batch pulls yield to timer heartbeats. They are not hardware performance claims.
 
+### Protocol migration and recovery CAS
+
+- Open an existing legacy vault with the new client; verify normal legacy sync still works before upgrade.
+- Upgrade from the owner settings. Verify the transition is legacy-hashed, the next operation is canonical-hashed, and old history is unchanged.
+- Lose the upgrade response and restart before and after pull; verify the exact transition retries and the setting reaches **Upgraded**.
+- Write from another device between preparation and commit; verify the stale transition fails and can be prepared again.
+- Try an old client after upgrade; it must stop with **Update Meridian to continue** and append nothing.
+- Alter, omit, reorder, or fork a canonical log entry; reject it before decrypting or changing the vault.
+- Submit two recovery claims from the same predecessor; exactly one may replace the package.
+- Retry the successful recovery request exactly; return the same result without a second replacement.
+- Submit a legacy or stale recovery claim; reject it without consuming valid newer state.
+
 ### Security lifecycle
 
 - Pair a second device and verify the automatically displayed phrase on both screens.

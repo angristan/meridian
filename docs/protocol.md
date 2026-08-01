@@ -172,9 +172,13 @@ SHA-256(canonical-cbor({
 }))
 ```
 
-Cursor 0 has the all-zero 32-byte hash. Each returned entry MUST match the caller's prior hash. A signed checkpoint binds vault, epoch, cursor, log hash, signer device, and protocol generation.
+Cursor 0 has the all-zero 32-byte hash. Each returned entry MUST match the caller's prior hash. A signed checkpoint binds vault, epoch, cursor, log hash, signer device, protocol generation, initial log format, and the format used after that checkpoint.
 
-Before acknowledging or advertising a newly applied cursor, a client durably persists its high-water mark. It rejects a lower cursor, lower generation, or a different hash at the same cursor. Pairing includes a signed trusted checkpoint. Recovery includes a public checkpoint commitment and the same checkpoint inside authenticated ciphertext.
+Deployments created before canonical log verification use `legacy-http-v1`, which hashes the previous hash, the outer HTTP operation signing bytes, and the outer signature with the deployed length-prefixed `log-chain/v1` framing. Legacy checkpoints omit log-format fields and decode as legacy from cursor zero.
+
+An owner may append one `log-format-transition` operation as the last legacy-hashed entry. Its canonical signed body commits to the exact previous cursor and hash and selects `canonical-cbor-v1`. The Durable Object checks that predecessor and changes formats in the same transaction that appends the transition. The next entry uses the canonical formula above; old history is never rewritten. New vaults negotiate canonical hashing during setup. Clients that do not advertise canonical support receive `protocol_upgrade_required` after a transition and cannot write old-format entries.
+
+Before acknowledging or advertising a newly applied cursor, a client durably persists its high-water mark and current log format. It rejects a lower cursor, lower generation, a format downgrade, or a different hash or format at the same cursor. Pairing includes a signed trusted checkpoint. Recovery includes a public checkpoint commitment and the same checkpoint inside authenticated ciphertext.
 
 This detects rollback and forks relative to locally retained state. It does not prove that two isolated devices see one global history; see the threat model.
 
@@ -206,7 +210,9 @@ The recovery code encodes 256 random seed bits plus a 32-bit checksum in a versi
 
 The AES-GCM recovery package includes vault, current signed epoch and key, the bounded historical epoch keyring, signed checkpoint, and monotonic recovery sequence. Associated data binds the recovery domain, vault, generation, KDF, and AEAD. A clear signed checkpoint is stored beside it and MUST match the authenticated inner checkpoint.
 
-Recovery derives keys locally, authenticates and decrypts the package, verifies its signatures/checkpoint, proves possession against a server challenge, registers a replacement owner device, revokes lost certificates, and creates a new recovery-signed epoch. If all devices are gone, the user should compare the checkpoint with an independently retained copy before proceeding.
+The public recovery state ID is SHA-256 of canonical, domain-separated bytes containing the vault ID and the exact serialized encrypted recovery package. Recovery claim version 2 signs a stable recovery attempt ID, the previous recovery state ID, the challenge, replacement identity, and replacement package.
+
+Recovery derives keys locally, authenticates and decrypts the package, verifies its signatures/checkpoint, proves possession against a server challenge, registers a replacement owner device, revokes lost certificates, and creates a new recovery-signed epoch. The Durable Object replaces the package only when its current state ID matches the signed predecessor. Package replacement, device replacement, challenge consumption, and an exact-retry receipt commit in one transaction. A stale claim fails without consuming its challenge; an exact retry returns its original result. If all devices are gone, the user should compare the checkpoint with an independently retained copy before proceeding.
 
 An optional password MAY encrypt the already high-entropy recovery material only with a separately specified, versioned Argon2id profile. Generation 1 deliberately exposes no password-only recovery API; a low-entropy password never replaces the seed.
 
