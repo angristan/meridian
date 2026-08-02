@@ -1,3 +1,10 @@
+## [1.11.3](https://github.com/angristan/meridian/compare/1.11.2...1.11.3) (2026-08-02)
+
+
+### Bug Fixes
+
+* repair paired device certificate chains ([2ff44d1](https://github.com/angristan/meridian/commit/2ff44d10e4d30025d2afac2644bd12550125959c))
+
 ## [1.11.2](https://github.com/angristan/meridian/compare/1.11.1...1.11.2) (2026-08-02)
 
 
