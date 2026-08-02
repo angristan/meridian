@@ -77,67 +77,9 @@ export class StorageModal extends Modal {
         grid,
         "Uploads in progress",
         formatBytes(usage.reservedBlobBytes),
-        "Reserved against the quota",
+        "Awaiting upload confirmation",
       )
     }
-
-    new Setting(this.contentEl).setName("Remote storage limit").setHeading()
-    if (
-      usage.storagePressure === "warning" ||
-      usage.storagePressure === "critical" ||
-      usage.storagePressure === "exceeded"
-    ) {
-      const pressure = this.contentEl.createDiv({
-        cls: `meridian-callout ${usage.storagePressure === "warning" ? "is-warning" : "is-error"}`,
-        text:
-          usage.storagePressure === "warning"
-            ? "Remote storage is above 80% of your configured limit."
-            : "Remote storage is near or above its limit. New content will stop safely without deleting history.",
-      })
-      pressure.setAttribute("role", "status")
-    }
-    let quotaInput =
-      usage.storageQuotaBytes === null
-        ? ""
-        : String(Math.round((usage.storageQuotaBytes / (1024 * 1024)) * 10) / 10)
-    new Setting(this.contentEl)
-      .setName("Maximum remote storage")
-      .setDesc(
-        "Optional MiB limit. Leave blank for unlimited retention. Security operations keep reserved emergency space.",
-      )
-      .addText((text) =>
-        text
-          .setPlaceholder("Unlimited")
-          .setValue(quotaInput)
-          .onChange((value) => {
-            quotaInput = value
-          }),
-      )
-      .addButton((button) =>
-        button
-          .setButtonText(usage.pruningAvailable ? "Apply" : "Owner only")
-          .setDisabled(!usage.pruningAvailable)
-          .onClick(async () => {
-            const trimmed = quotaInput.trim()
-            const mebibytes = trimmed === "" ? null : Number(trimmed)
-            if (mebibytes !== null && (!Number.isFinite(mebibytes) || mebibytes <= 0)) {
-              this.showActionError("Enter a positive storage limit in MiB, or leave it blank.")
-              return
-            }
-            button.setDisabled(true).setButtonText("Applying…")
-            try {
-              await this.host.setStorageQuota(
-                mebibytes === null ? null : Math.floor(mebibytes * 1024 * 1024),
-              )
-              await this.render()
-            } catch (error) {
-              button.setDisabled(false).setButtonText("Retry")
-              this.showActionError(
-                error instanceof Error ? error.message : "Unable to update storage limit",
-              )
-            }
-          }),
-      )
 
     new Setting(this.contentEl).setName("Local browser storage").setHeading()
     if (usage.local.usageBytes === null || usage.local.quotaBytes === null) {

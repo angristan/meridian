@@ -92,8 +92,6 @@ export class VaultDurableObject extends DurableObject<VaultDurableObjectEnv> {
         return await this.operations.changes(request)
       if (request.method === "GET" && pathname === "/v1/storage")
         return await this.operations.storageStats(request)
-      if (request.method === "PUT" && pathname === "/v1/storage/policy")
-        return await this.operations.configureStorage(request)
       if (request.method === "POST" && pathname === "/v1/storage/prune-orphans") {
         return await this.ctx.blockConcurrencyWhile(async () => {
           try {

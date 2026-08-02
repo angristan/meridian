@@ -151,8 +151,6 @@ export class MeridianRemoteClient implements RemotePort {
       databaseBytes: requiredNumber(result, "databaseBytes"),
       blobCount: requiredNumber(result, "blobCount"),
       reservedBlobBytes: requiredNumber(result, "reservedBlobBytes"),
-      storageQuotaBytes: requiredNullableNumber(result, "storageQuotaBytes"),
-      storagePressure: requiredStoragePressure(result, "storagePressure"),
       operationCount: requiredNumber(result, "operationCount"),
       checkpointCount: requiredNumber(result, "checkpointCount"),
       snapshotCount: requiredNumber(result, "snapshotCount"),
@@ -168,14 +166,6 @@ export class MeridianRemoteClient implements RemotePort {
     await this.jsonRequest("/v1/retention/acknowledgement", {
       method: "PUT",
       body: acknowledgement,
-      authenticated: true,
-    })
-  }
-
-  async setStorageQuota(quotaBytes: number | null): Promise<void> {
-    await this.jsonRequest("/v1/storage/policy", {
-      method: "PUT",
-      body: { quotaBytes },
       authenticated: true,
     })
   }
@@ -567,24 +557,6 @@ export class MeridianRemoteClient implements RemotePort {
   private url(path: string): string {
     return `${this.endpoint}${path}`
   }
-}
-
-function requiredStoragePressure(
-  value: unknown,
-  field: string,
-): "unlimited" | "normal" | "warning" | "critical" | "exceeded" {
-  if (!isRecord(value)) throw new Error(`Server response field ${field} is invalid`)
-  const pressure = value[field]
-  if (
-    pressure !== "unlimited" &&
-    pressure !== "normal" &&
-    pressure !== "warning" &&
-    pressure !== "critical" &&
-    pressure !== "exceeded"
-  ) {
-    throw new Error(`Server response field ${field} is invalid`)
-  }
-  return pressure
 }
 
 function requiredNullableNumber(value: unknown, field: string): number | null {

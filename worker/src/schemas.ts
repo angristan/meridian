@@ -155,10 +155,4 @@ export const RetentionAcknowledgementSchema = Schema.Struct({
 
 export type RetentionAcknowledgement = typeof RetentionAcknowledgementSchema.Type
 
-export const StoragePolicySchema = Schema.Struct({
-  quotaBytes: Schema.NullOr(Schema.Number),
-})
-
-export type StoragePolicy = typeof StoragePolicySchema.Type
-
 export const EmptyObjectSchema = Schema.Struct({})

@@ -94,18 +94,16 @@ Automated responsiveness tests use generous wall-clock ceilings to detect pathol
 - Recover from a version-2 owner-updated package; verify its owner authorization, required transition, checkpoint, keyring, and recovery CAS before writing.
 - Try a client without epoch support after activation; it must receive **Update Meridian to continue** and append nothing.
 
-### Retention and quota safety
+### Retention and storage safety
 
 - Leave one active device offline while another advances; verify all operations, referenced blobs, epoch keys, and history remain available and acknowledgement status shows the lagging device.
 - Submit an acknowledgement with a wrong signature, device, cursor/hash, stale epoch, or lower cursor; verify the Worker rejects it and no retention state moves backward.
-- Upload concurrently near a configured remote limit; reservations must admit only the writes that fit and return `507 storage_quota_exceeded` for the rest.
-- Lose responses before R2 PUT, after R2 PUT, and before Durable Object confirmation; exact retry must reconcile the immutable object and quota reservation without double counting.
+- Lose responses before R2 PUT, after R2 PUT, and before Durable Object confirmation; exact retry must reconcile the immutable object and upload claim without duplicating catalog entries.
 - Commit an operation whose chunk is absent from R2; it must fail before the authoritative cursor advances.
 - Run orphan cleanup during upload and after interrupted upload; recent claims survive, while old unreferenced objects are removed idempotently.
 - Fill IndexedDB and inject quota errors at entry, revision, conflict, and checkpoint writes; transactions abort, prepared work remains exact, and the cursor never passes unavailable local state.
 - Crash between local compaction batches; reopening and rerunning removes only completed entries and exact duplicate history rows. Pending work, dirty tokens, DAG parents, tombstones, conflicts, checkpoints, revocations, and old-epoch history remain usable.
 - Test missing `navigator.storage` APIs on mobile, warning at 80%, critical pressure at 90%, and user-gesture persistent-storage requests.
-- Set retention to unlimited; verify storage can grow, warnings remain visible, and no committed history is deleted automatically.
 
 ### Security lifecycle
 

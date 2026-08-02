@@ -16,7 +16,6 @@ import {
   RetentionAcknowledgementSchema,
   RevokeDeviceSchema,
   SnapshotSchema,
-  StoragePolicySchema,
 } from "../schemas"
 import { runResponse } from "./effect-boundary"
 import { proxyJson } from "./json-proxy"
@@ -188,13 +187,6 @@ export function registerApiRoutes(app: WorkerApp): void {
       callVaultEffect(c.env, `/v1/snapshot${query}`, "GET", undefined, sessionToken(c)),
     )
   })
-  app.put(
-    "/v1/storage/policy",
-    proxyJson(StoragePolicySchema, () => "/v1/storage/policy", {
-      authenticated: true,
-      method: "PUT",
-    }),
-  )
   app.get("/v1/changes", (c) => {
     const query = new URL(c.req.url).search
     return runResponse(

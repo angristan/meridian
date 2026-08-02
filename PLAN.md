@@ -598,7 +598,7 @@ The sync engine must be proven in simulation before touching an important vault.
 ### Phase 7: retention, stable distribution, and optional UI
 
 - Design acknowledgement-aware retention and idempotent R2 garbage collection.
-- Add pinned revisions, quotas, and bulk-deletion protection.
+- Add pinned revisions and bulk-deletion protection.
 - Complete Obsidian policy, submission, and public-repository requirements.
 - Submit a tested release to the Obsidian Community Plugins directory.
 - Consider a web operational dashboard only if the plugin UI is insufficient.

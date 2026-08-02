@@ -11,8 +11,6 @@ interface CoordinatorStorage {
   blobCount: number
   reservedBlobBytes: number
   databaseBytes: number
-  storageQuotaBytes: number | null
-  storagePressure: "unlimited" | "normal" | "warning" | "critical" | "exceeded"
   operationCount: number
   checkpointCount: number
   snapshotCount: number
@@ -67,11 +65,6 @@ async function parseCoordinatorStorage(response: Response): Promise<CoordinatorS
     blobCount: nonNegativeNumber(value.blobCount, "blobCount"),
     reservedBlobBytes: nonNegativeNumber(value.reservedBlobBytes, "reservedBlobBytes"),
     databaseBytes: nonNegativeNumber(value.databaseBytes, "databaseBytes"),
-    storageQuotaBytes:
-      value.storageQuotaBytes === null
-        ? null
-        : nonNegativeNumber(value.storageQuotaBytes, "storageQuotaBytes"),
-    storagePressure: quotaPressure(value.storagePressure),
     operationCount: nonNegativeNumber(value.operationCount, "operationCount"),
     checkpointCount: nonNegativeNumber(value.checkpointCount, "checkpointCount"),
     snapshotCount: nonNegativeNumber(value.snapshotCount, "snapshotCount"),
@@ -87,21 +80,6 @@ async function parseCoordinatorStorage(response: Response): Promise<CoordinatorS
         : nonNegativeNumber(value.minimumAcknowledgedCursor, "minimumAcknowledgedCursor"),
     canPrune: boolean(value.canPrune, "canPrune"),
   }
-}
-
-function quotaPressure(
-  value: unknown,
-): "unlimited" | "normal" | "warning" | "critical" | "exceeded" {
-  if (
-    value !== "unlimited" &&
-    value !== "normal" &&
-    value !== "warning" &&
-    value !== "critical" &&
-    value !== "exceeded"
-  ) {
-    throw new Error("Coordinator storage pressure is invalid")
-  }
-  return value
 }
 
 function literalForever(value: unknown): "forever" {

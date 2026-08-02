@@ -304,14 +304,6 @@ export class SyncController {
     return this.runMaintenance(() => this.journal.compactLocalStorage())
   }
 
-  async setStorageQuota(quotaBytes: number | null): Promise<void> {
-    await this.runMaintenance(async () => {
-      const device = this.requireDevice()
-      await this.authenticate(device)
-      await this.remote.setStorageQuota(quotaBytes)
-    })
-  }
-
   requestPersistentStorage(): Promise<boolean | null> {
     return requestLocalStoragePersistence()
   }

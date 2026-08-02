@@ -385,11 +385,6 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
     return this.controller.compactLocalStorage()
   }
 
-  async setStorageQuota(quotaBytes: number | null): Promise<void> {
-    if (!this.controller) throw new Error("Meridian is not connected")
-    return this.controller.setStorageQuota(quotaBytes)
-  }
-
   async requestPersistentStorage(): Promise<boolean | null> {
     if (!this.controller) throw new Error("Meridian is not connected")
     return this.controller.requestPersistentStorage()

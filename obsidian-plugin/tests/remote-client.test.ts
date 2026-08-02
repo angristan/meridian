@@ -195,8 +195,6 @@ describe("Meridian remote client", () => {
         databaseBytes: 500,
         blobCount: 4,
         reservedBlobBytes: 200,
-        storageQuotaBytes: 10_000,
-        storagePressure: "normal",
         operationCount: 7,
         checkpointCount: 2,
         snapshotCount: 1,
@@ -216,8 +214,6 @@ describe("Meridian remote client", () => {
       databaseBytes: 500,
       blobCount: 4,
       reservedBlobBytes: 200,
-      storageQuotaBytes: 10_000,
-      storagePressure: "normal",
       operationCount: 7,
       checkpointCount: 2,
       snapshotCount: 1,
@@ -228,29 +224,6 @@ describe("Meridian remote client", () => {
       pruningAvailable: true,
     })
     expect(transport.requests.at(-1)?.url).toBe("https://example.test/v1/storage")
-  })
-
-  it("updates the owner storage quota", async () => {
-    const transport = new QueueTransport([
-      response({ challengeId: "challenge-id", challenge: "challenge" }),
-      response({ sessionToken: "session-token", expiresAt: Number.MAX_SAFE_INTEGER }),
-      response({ quotaBytes: 50_000 }),
-      response({ quotaBytes: null }),
-    ])
-    const client = new MeridianRemoteClient("https://example.test", transport)
-
-    await client.authenticate(TEST_DEVICE, new FakeCrypto())
-    await client.setStorageQuota(50_000)
-    await client.setStorageQuota(null)
-
-    expect(
-      transport.requests
-        .slice(-2)
-        .map((request) => [request.method, JSON.parse(String(request.body))]),
-    ).toEqual([
-      ["PUT", { quotaBytes: 50_000 }],
-      ["PUT", { quotaBytes: null }],
-    ])
   })
 
   it("publishes a signed retention acknowledgement", async () => {

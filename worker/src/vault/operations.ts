@@ -27,12 +27,7 @@ import {
   ZERO_HASH,
 } from "../encoding"
 import { assert, HttpError } from "../errors"
-import {
-  type Operation,
-  OperationSchema,
-  RevokeDeviceSchema,
-  StoragePolicySchema,
-} from "../schemas"
+import { type Operation, OperationSchema, RevokeDeviceSchema } from "../schemas"
 import {
   activeDevice,
   authenticate,
@@ -58,7 +53,6 @@ type RevisionEnvelopeRow = Pick<OperationRow, "cursor" | "envelope">
 const ORPHAN_GRACE_MS = 7 * 24 * 60 * 60 * 1_000
 const BLOB_RESERVATION_MS = 24 * 60 * 60 * 1_000
 const PRUNE_PAGE_SIZE = 1_000
-const SECURITY_STORAGE_RESERVE_BYTES = MAX_EPOCH_ENVELOPE_BYTES + 256 * 1024
 
 class RetryAppend extends Error {}
 
@@ -295,8 +289,6 @@ export class VaultOperations {
       }
     }
     const requestHash = await this.operationRequestHash(operation)
-    const contentWrite = signedOperation.body.type === "revision" && operation.type !== "tombstone"
-    const operationStorageBytes = operation.envelope.length + operation.signature.length + 4_096
 
     for (let attempt = 0; attempt < 5; attempt += 1) {
       const duplicate = this.sql
@@ -320,7 +312,6 @@ export class VaultOperations {
       if (signedOperation.body.type === "revision") {
         await this.ensureStoredRevisionBlobs(session.vaultId, signedOperation.body.chunks)
       }
-      if (contentWrite) this.assertContentQuota(operationStorageBytes)
 
       const state = vaultState(this.sql)
       assert(state, new HttpError(409, "not_claimed", "This deployment has not been claimed"))
@@ -455,7 +446,6 @@ export class VaultOperations {
             )
           }
 
-          if (contentWrite) this.assertContentQuota(operationStorageBytes)
           this.sql.exec(
             `INSERT INTO operations(
               cursor, operation_id, author_device_id, epoch_id, operation_type, subject_device_id,
@@ -612,9 +602,6 @@ export class VaultOperations {
         existingClaim.expected_size === expectedSize,
       new HttpError(409, "blob_size_conflict", "Blob reservation size changed"),
     )
-    if (!existingClaim || existingClaim.expected_size === 0) {
-      this.assertContentQuota(expectedSize)
-    }
     this.sql.exec(
       `INSERT INTO blob_claims(blob_id, claimed_at, expected_size, device_id)
        VALUES (?, ?, ?, ?)
@@ -662,36 +649,6 @@ export class VaultOperations {
     this.rememberStoredBlob(blobId, expectedSize)
     this.sql.exec("DELETE FROM blob_claims WHERE blob_id = ?", blobId)
     return new Response(null, { status: 204 })
-  }
-
-  async configureStorage(request: Request): Promise<Response> {
-    const session = await authenticate(this.sql, request)
-    assert(
-      session.role === "owner",
-      new HttpError(403, "owner_required", "Only the owner device can change storage limits"),
-    )
-    const input = decode(StoragePolicySchema, await requestJson(request))
-    const usage = await this.reconcileBlobCatalog(session.vaultId)
-    if (input.quotaBytes !== null) {
-      assert(
-        Number.isSafeInteger(input.quotaBytes) && input.quotaBytes > 0,
-        new HttpError(400, "invalid_quota", "Storage quota must be a positive byte count"),
-      )
-      assert(
-        input.quotaBytes >=
-          this.sql.databaseSize + usage.blobBytes + SECURITY_STORAGE_RESERVE_BYTES,
-        new HttpError(
-          409,
-          "quota_below_usage",
-          "Storage quota must leave room for retained data and security operations",
-        ),
-      )
-    }
-    this.sql.exec(
-      "UPDATE vault_state SET storage_quota_bytes = ? WHERE singleton = 1",
-      input.quotaBytes,
-    )
-    return json({ quotaBytes: input.quotaBytes })
   }
 
   async pruneOrphanBlobs(request: Request): Promise<Response> {
@@ -779,31 +736,6 @@ export class VaultOperations {
       blobId,
       size,
       Date.now(),
-    )
-  }
-
-  private assertContentQuota(additionalBytes: number): void {
-    const state = vaultState(this.sql)
-    if (!state?.storage_quota_bytes) return
-    this.sql.exec("DELETE FROM blob_claims WHERE claimed_at <= ?", Date.now() - BLOB_RESERVATION_MS)
-    const blobBytes = this.sql
-      .exec<{ total: number }>("SELECT COALESCE(SUM(size), 0) AS total FROM blob_catalog")
-      .one().total
-    const reservedBytes = this.sql
-      .exec<{ total: number }>("SELECT COALESCE(SUM(expected_size), 0) AS total FROM blob_claims")
-      .one().total
-    assert(
-      this.sql.databaseSize +
-        blobBytes +
-        reservedBytes +
-        additionalBytes +
-        SECURITY_STORAGE_RESERVE_BYTES <=
-        state.storage_quota_bytes,
-      new HttpError(
-        507,
-        "storage_quota_exceeded",
-        "Vault storage quota is full; retained history was not deleted",
-      ),
     )
   }
 
@@ -931,8 +863,6 @@ export class VaultOperations {
       blobCount: blobs.blobCount,
       reservedBlobBytes,
       databaseBytes: this.sql.databaseSize,
-      storageQuotaBytes: state.storage_quota_bytes,
-      storagePressure: storagePressure(totalBytes, state.storage_quota_bytes),
       operationCount,
       checkpointCount,
       snapshotCount,
@@ -990,18 +920,6 @@ export class VaultOperations {
       hasMore: operations.length === limit,
     })
   }
-}
-
-function storagePressure(
-  totalBytes: number,
-  quotaBytes: number | null,
-): "unlimited" | "normal" | "warning" | "critical" | "exceeded" {
-  if (quotaBytes === null) return "unlimited"
-  const ratio = totalBytes / quotaBytes
-  if (ratio >= 1) return "exceeded"
-  if (ratio >= 0.9) return "critical"
-  if (ratio >= 0.8) return "warning"
-  return "normal"
 }
 
 function activeDeviceIds(sql: SqlStorage): string[] {

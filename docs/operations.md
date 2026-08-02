@@ -80,7 +80,7 @@ Pause synchronization on another device before opening it. Use immutable history
 
 Synchronization is not a backup. Keep a separate backup of the plaintext vault and offline recovery material. The Worker code version does not snapshot Durable Object SQLite or R2. R2 history retention protects application revisions only while their chunks remain retained.
 
-## Retention and storage limits
+## Retention and storage safety
 
 Meridian uses **Keep committed history forever**. It never automatically removes committed operations, revision metadata, referenced R2 blobs, conflicts, checkpoints, snapshots, device/revocation history, or epoch keys required by history. A long-offline active device can therefore replay from its prior signed cursor. Log truncation and finite history remain disabled because current acknowledgements do not bind a generation-aware rebootstrap archive.
 
@@ -96,11 +96,7 @@ Every blob upload reserves its byte size in the Durable Object before R2 streami
 
 The storage view reports remote SQLite/R2 usage, active-device acknowledgement progress, in-flight reservations, local browser quota pressure, and whether browser persistence was granted. Device acknowledgements are signed telemetry over the exact cursor, hash, epoch, and forever policy. They do not authorize deletion.
 
-### Optional remote quota
-
-The owner may set a per-vault limit in MiB or leave it blank for unlimited retention. Setting a limit first reconciles the R2 catalog and must leave emergency space for recovery and security operations. Concurrent uploads reserve space atomically. At the limit, new content fails with `storage_quota_exceeded`; existing history, downloads, recovery, revocation, epoch rotation, tombstones, and cleanup remain available. Meridian never deletes history to make room.
-
-Cloudflare account limits and browser quotas remain external hard limits. If IndexedDB is full, its transaction aborts, the cursor does not advance, and pending work or vault files remain available. Use **Meridian storage → Compact local sync records**, request persistent browser storage when offered, raise/remove the remote limit, or free origin storage. Keep an independent backup.
+Cloudflare account limits and browser quotas remain external hard limits. If IndexedDB is full, its transaction aborts, the cursor does not advance, and pending work or vault files remain available. Use **Meridian storage → Compact local sync records**, request persistent browser storage when offered, or free origin storage. Keep an independent backup.
 
 ## Privacy-safe support bundle
 

@@ -464,7 +464,7 @@ export function getMeridianSettingDefinitions(
         {
           name: "Storage usage",
           desc: "Review encrypted blob, operation, checkpoint, and snapshot storage.",
-          aliases: ["quota", "space", "R2", "database"],
+          aliases: ["space", "R2", "database"],
           visible: () => configured,
           action: () => new StorageModal(host).open(),
         },

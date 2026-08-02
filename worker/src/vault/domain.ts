@@ -23,7 +23,6 @@ export type VaultStateRow = {
   current_epoch_id: string | null
   epoch_sequence: number | null
   epoch_transition_cursor: number | null
-  storage_quota_bytes: number | null
 }
 
 export type DeviceRow = {

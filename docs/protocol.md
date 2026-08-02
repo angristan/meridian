@@ -236,7 +236,7 @@ Revision parent sets define the DAG. For concurrent heads:
 
 When platform path constraints make the deterministic name unavailable, the engine appends an increasing deterministic suffix derived from sorted revision IDs. No branch is deleted merely because another branch wins a path.
 
-## Retention and storage pressure
+## Retention and upload safety
 
 Generation 1 retains committed history indefinitely. Operations, referenced ciphertext, revision DAG metadata, conflicts, checkpoints, encrypted snapshots, revoked-device authorization records, and all epoch keys needed to decrypt retained revisions are not age-pruned.
 
@@ -244,13 +244,11 @@ After a complete sync, a device signs a `retention-acknowledgement/v1` message o
 
 Blob upload uses a three-step lease:
 
-1. The authenticated client supplies the exact ciphertext length. The Durable Object records or refreshes a reservation and atomically checks the optional per-vault quota.
+1. The authenticated client supplies the exact ciphertext length. The Durable Object records or refreshes an upload claim.
 2. The Worker streams immutable ciphertext to private R2.
-3. The Durable Object confirms the R2 object and size, catalogs it, and releases the reservation.
+3. The Durable Object confirms the R2 object and size, catalogs it, and releases the claim.
 
-A revision operation is accepted only after every public blob ID in its canonical body resolves to a stored R2 object. Exact operation retries bypass new quota allocation. Expired reservations are disposable after 24 hours. Unreferenced objects are eligible for owner-triggered deletion only after seven days; every deletion re-derives reachability from all retained canonical revision operations.
-
-The default quota is unlimited. An owner-configured quota counts reconciled R2 bytes, Durable Object SQLite, and live reservations, with separate emergency headroom. `507 storage_quota_exceeded` rejects new content before authority advances. Reads and security/recovery operations remain available. Neither quota pressure nor local IndexedDB exhaustion permits silent history deletion.
+A revision operation is accepted only after every public blob ID in its canonical body resolves to a stored R2 object. Exact retries do not duplicate catalog entries. Expired claims are disposable after 24 hours. Unreferenced objects are eligible for owner-triggered deletion only after seven days; every deletion re-derives reachability from all retained canonical revision operations.
 
 ## Transport and limits
 

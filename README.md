@@ -9,7 +9,7 @@ Meridian is a self-hosted, end-to-end encrypted synchronization system for Obsid
 
 - Local-first Markdown and attachment synchronization
 - End-to-end encryption before bytes leave Obsidian
-- Immutable per-file revision history with infinite retention, safe compaction, and optional storage limits
+- Immutable per-file revision history with infinite retention and safe compaction
 - Offline edits with resumable cursor-based catch-up
 - Device pairing, revocation, recovery, and signed key epochs
 - Hibernating WebSocket notifications with polling fallback
