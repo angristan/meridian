@@ -527,6 +527,7 @@ export class SyncController {
     )
     this.device = pull.device
     if (pull.stopped || this.stopRequested) return
+    await this.conflictService.resolveEquivalent()
     if (await this.retryPendingProtocolUpgrade()) return
     if (await this.retryPendingEpochTransition()) return
 

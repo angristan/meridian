@@ -9,6 +9,15 @@ export async function fingerprint(bytes: ArrayBuffer): Promise<string> {
   return toBase64Url(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)))
 }
 
+export async function equalBytes(left: ArrayBuffer, right: ArrayBuffer): Promise<boolean> {
+  if (left.byteLength !== right.byteLength) return false
+  const [leftFingerprint, rightFingerprint] = await Promise.all([
+    fingerprint(left),
+    fingerprint(right),
+  ])
+  return leftFingerprint === rightFingerprint
+}
+
 export function toBase64Url(bytes: Uint8Array): string {
   let binary = ""
   for (let offset = 0; offset < bytes.length; offset += 0x8000) {

@@ -13,7 +13,7 @@ import type {
   TrustedCheckpoint,
   VaultPort,
 } from "../model"
-import { fingerprint, randomId } from "../platform/bytes"
+import { equalBytes, fingerprint, randomId } from "../platform/bytes"
 import type { JournalPort } from "../storage/journal"
 import {
   configCategoryForPath,
@@ -152,6 +152,10 @@ export class OperationApplier {
         await this.recordRevision(effectiveRevision, operation, false)
         return
       }
+      if (await this.tryAcceptEquivalentPending(effectiveRevision, pending)) {
+        await this.recordRevision(effectiveRevision, operation, false)
+        return
+      }
       if (await this.tryMergeText(device, effectiveRevision, operation, pending)) return
       await this.materializeConflict(effectiveRevision)
       await this.recordRevision(effectiveRevision, operation, true)
@@ -167,6 +171,10 @@ export class OperationApplier {
       ) &&
       (await this.vault.exists(effectiveRevision.path))
     ) {
+      if (!identitySnapshot && (await this.tryAdoptEquivalentContent(effectiveRevision))) {
+        await this.recordRevision(effectiveRevision, operation, false)
+        return
+      }
       await this.materializeConflict(effectiveRevision)
       await this.recordRevision(effectiveRevision, operation, true)
       return
@@ -224,11 +232,67 @@ export class OperationApplier {
         await this.applyFileRevision(device, revision, operation, retriesRemaining - 1)
         return
       }
+      if (
+        identitySnapshot?.path === effectiveRevision.path &&
+        (await this.tryAdoptEquivalentContent(effectiveRevision))
+      ) {
+        await this.recordRevision(effectiveRevision, operation, false)
+        return
+      }
       await this.materializeConflict(effectiveRevision)
       await this.recordRevision(effectiveRevision, operation, true)
       return
     }
     await this.recordRevision(effectiveRevision, operation, false)
+  }
+
+  private async tryAcceptEquivalentPending(
+    revision: DecryptedRevision,
+    pending: JournalEntry,
+  ): Promise<boolean> {
+    if (
+      revision.action !== "upsert" ||
+      !revision.bytes ||
+      pending.action !== "upsert" ||
+      pending.fileId !== revision.fileId ||
+      pending.path !== revision.path
+    ) {
+      return false
+    }
+    const current = await this.readCurrentFile(revision.path)
+    if (!current || !(await equalBytes(current, revision.bytes))) return false
+    if (pending.preparedRevision) return true
+
+    const parents = [...new Set([...pending.parentRevisionIds, revision.revisionId])].sort()
+    await this.journal.putEntry({
+      ...pending,
+      baseRevisionId: parents.length === 1 ? revision.revisionId : null,
+      parentRevisionIds: parents,
+      state: "queued",
+      error: null,
+      preparedRevision: null,
+    })
+    return true
+  }
+
+  private async tryAdoptEquivalentContent(revision: DecryptedRevision): Promise<boolean> {
+    if (revision.action !== "upsert" || !revision.bytes) return false
+    const current = await this.readCurrentFile(revision.path)
+    if (!current || !(await equalBytes(current, revision.bytes))) return false
+    await this.journal.putSnapshot(
+      await snapshotFor(revision.path, revision.fileId, current, this.vault.configDir),
+    )
+    return true
+  }
+
+  private async readCurrentFile(path: string): Promise<ArrayBuffer | null> {
+    if (!(await this.vault.exists(path))) return null
+    try {
+      return await this.vault.read(path)
+    } catch (error) {
+      if (await this.vault.exists(path)) throw error
+      return null
+    }
   }
 
   private async inspectTrackedFile(snapshot: {

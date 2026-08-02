@@ -1261,6 +1261,7 @@ describe("SyncController", () => {
     expect(remote.blobAttempts).toHaveLength(2)
     expect(remote.blobAttempts[1]).toEqual(remote.blobAttempts[0])
     expect(await journal.listPending()).toEqual([])
+    expect(await journal.listConflicts(true)).toEqual([])
     expect(await journal.getCursor()).toBe(1)
     controller.stop()
   })
@@ -2179,6 +2180,70 @@ describe("SyncController", () => {
     )
     expect(vault.text("shared.md")).toBe("occupied content")
     expect(await journal.listPending()).toEqual([])
+    controller.stop()
+  })
+
+  it("does not create a conflict when a pending config file matches incoming content", async () => {
+    const baseBytes = new TextEncoder().encode('{"spellcheck":false}').buffer
+    const matchingBytes = new TextEncoder().encode('{"spellcheck":true}').buffer
+    const identity = randomId()
+    const vault = new FakeVault({ ".config/app.json": '{"spellcheck":true}' })
+    const journal = new MemoryJournal()
+    await journal.replaceSnapshots([
+      {
+        path: ".config/app.json",
+        fileId: identity,
+        fingerprint: await fingerprint(baseBytes),
+        size: baseBytes.byteLength,
+        mtime: 1,
+        kind: "config",
+      },
+    ])
+    await journal.putRevision({
+      revisionId: "config-base",
+      fileId: identity,
+      path: ".config/app.json",
+      parents: [],
+      deviceId: TEST_DEVICE.deviceId,
+      createdAt: 1,
+      cursor: 0,
+      tombstone: false,
+      isConflict: false,
+      operation: null,
+    })
+    const remote = new FakeRemote()
+    remote.addRemoteRevision(
+      {
+        operationId: "remote-config-operation",
+        revisionId: "remote-config-revision",
+        fileId: identity,
+        action: "upsert",
+        path: ".config/app.json",
+        previousPath: null,
+        parents: ["config-base"],
+        authorDeviceId: "device-remote",
+        blobId: "remote-config-blob",
+        isText: true,
+      },
+      matchingBytes,
+    )
+    const controller = new SyncController(
+      vault,
+      journal,
+      remote,
+      new FakeCrypto(),
+      () => ALL_CATEGORIES,
+      () => {},
+    )
+
+    await controller.start(TEST_DEVICE)
+
+    expect(vault.text(".config/app.json")).toBe('{"spellcheck":true}')
+    expect(await journal.listConflicts(true)).toEqual([])
+    await expect(journal.getRevision("remote-config-revision")).resolves.toMatchObject({
+      isConflict: false,
+    })
+    expect([...vault.files.keys()].some((path) => path.includes(".conflict-"))).toBe(false)
     controller.stop()
   })
 

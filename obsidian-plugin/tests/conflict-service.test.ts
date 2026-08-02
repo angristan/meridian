@@ -74,6 +74,47 @@ async function setup(remote: LocalRevision, source: string | null, copy: string)
 }
 
 describe("ConflictService", () => {
+  it("automatically resolves preserved content that exactly matches the current file", async () => {
+    const remote = revision({ revisionId: "remote", parents: ["base"], createdAt: 2, cursor: 2 })
+    const { vault, journal, service } = await setup(remote, "same content", "same content")
+
+    await expect(service.resolveEquivalent()).resolves.toBe(1)
+    await expect(service.resolveEquivalent()).resolves.toBe(0)
+
+    expect(vault.text(SOURCE_PATH)).toBe("same content")
+    expect(vault.text(COPY_PATH)).toBeNull()
+    expect(await journal.listConflicts(true)).toEqual([])
+    await expect(journal.getRevision("remote")).resolves.toEqual(remote)
+  })
+
+  it("keeps an equivalent conflict when its preserved copy changes during cleanup", async () => {
+    class RacingVault extends FakeVault {
+      override async replaceIfUnchanged(
+        path: string,
+        expectedBytes: ArrayBuffer | null,
+        replacementBytes: ArrayBuffer | null,
+        isText: boolean,
+      ): Promise<boolean> {
+        if (path === COPY_PATH) {
+          await this.write(path, new TextEncoder().encode("edited during cleanup").buffer)
+        }
+        return super.replaceIfUnchanged(path, expectedBytes, replacementBytes, isText)
+      }
+    }
+    const remote = revision({ revisionId: "remote", parents: ["base"] })
+    const vault = new RacingVault({ [SOURCE_PATH]: "same", [COPY_PATH]: "same" })
+    const journal = new MemoryJournal()
+    await journal.putRevision(revision({ revisionId: "base" }))
+    await journal.putRevision(remote)
+    await journal.putConflict(conflict())
+    const service = new ConflictService(vault, journal)
+
+    await expect(service.resolveEquivalent()).resolves.toBe(0)
+
+    expect(vault.text(COPY_PATH)).toBe("edited during cleanup")
+    expect(await journal.listConflicts(true)).toHaveLength(1)
+  })
+
   it("previews both text versions and queues incoming content after local work", async () => {
     const remote = revision({ revisionId: "remote", parents: ["base"], createdAt: 2, cursor: 2 })
     const { vault, journal, service } = await setup(remote, "local\ntext", "incoming\ntext")

@@ -7,7 +7,7 @@ import type {
   LocalRevision,
   VaultPort,
 } from "../model"
-import { fingerprint, randomId } from "../platform/bytes"
+import { equalBytes, fingerprint, randomId } from "../platform/bytes"
 import type { JournalPort } from "../storage/journal"
 import { buildLineDiff } from "./revision-diff"
 import { revisionHeads } from "./revision-heads"
@@ -20,6 +20,15 @@ export class ConflictService {
     private readonly vault: VaultPort,
     private readonly journal: JournalPort,
   ) {}
+
+  async resolveEquivalent(): Promise<number> {
+    const conflicts = await this.journal.listConflicts(true)
+    let resolved = 0
+    for (const conflict of conflicts) {
+      if (await this.resolveEquivalentConflict(conflict)) resolved += 1
+    }
+    return resolved
+  }
 
   async details(id: string): Promise<ConflictDetails> {
     const conflict = await this.requireConflict(id)
@@ -51,6 +60,40 @@ export class ConflictService {
         await this.usePreservedCopy(conflict, remoteRevision)
         await this.journal.resolveConflict(conflict.id)
     }
+  }
+
+  private async resolveEquivalentConflict(conflict: ConflictRecord): Promise<boolean> {
+    const remoteRevision = await this.journal.getRevision(conflict.remoteRevisionId)
+    if (!remoteRevision || remoteRevision.tombstone) return false
+    if (
+      !(await this.vault.exists(conflict.sourcePath)) ||
+      !(await this.vault.exists(conflict.conflictPath))
+    ) {
+      return false
+    }
+
+    let versions: [ArrayBuffer, ArrayBuffer]
+    try {
+      versions = await Promise.all([
+        this.vault.read(conflict.sourcePath),
+        this.vault.read(conflict.conflictPath),
+      ])
+    } catch {
+      return false
+    }
+    const [current, preserved] = versions
+    if (!(await equalBytes(current, preserved))) return false
+
+    const removed = await this.vault.replaceIfUnchanged(
+      conflict.conflictPath,
+      preserved,
+      null,
+      conflict.kind !== "binary",
+    )
+    if (!removed) return false
+    await this.journal.removeSnapshot(conflict.conflictPath)
+    await this.journal.resolveConflict(conflict.id)
+    return true
   }
 
   private async queuePreservedCopy(conflict: ConflictRecord): Promise<void> {
