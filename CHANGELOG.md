@@ -1,3 +1,10 @@
+## [1.11.5](https://github.com/angristan/meridian/compare/1.11.4...1.11.5) (2026-08-02)
+
+
+### Bug Fixes
+
+* resolve identical sync conflicts automatically ([a527b15](https://github.com/angristan/meridian/commit/a527b15a8a1e4157ab5c7bf91ca346c9de9c3ba5))
+
 ## [1.11.4](https://github.com/angristan/meridian/compare/1.11.3...1.11.4) (2026-08-02)
 
 
