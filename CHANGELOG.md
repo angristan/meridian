@@ -1,3 +1,10 @@
+## [1.11.8](https://github.com/angristan/meridian/compare/1.11.7...1.11.8) (2026-08-02)
+
+
+### Performance Improvements
+
+* reduce sync startup and index work ([e58d202](https://github.com/angristan/meridian/commit/e58d20209b4cb1eb3b5df0a47bbcab9ae96c0d8c))
+
 ## [1.11.7](https://github.com/angristan/meridian/compare/1.11.6...1.11.7) (2026-08-02)
 
 
