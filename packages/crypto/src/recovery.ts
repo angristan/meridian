@@ -24,10 +24,8 @@ import {
   epochSigningBytes,
   type Hash,
   hashBytes,
-  nonce,
   operationId,
   Permission,
-  type RecoveryEncryptionKey,
   type RecoveryId,
   type RecoverySeed,
   type RecoveryState,
@@ -40,7 +38,6 @@ import {
   x25519PublicKey,
 } from "@meridian/protocol"
 import { ed25519 } from "@noble/curves/ed25519.js"
-import { aesGcmDecrypt, aesGcmEncrypt } from "./aes.js"
 import { validateDeviceCertificate, verifyCheckpoint } from "./authorization.js"
 import { AuthenticationError } from "./errors.js"
 import { sha256 } from "./hash.js"
@@ -112,20 +109,11 @@ export function generateRecoverySeed(): RecoverySeed {
 }
 
 export function serializeEncryptedRecoveryPackage(value: EncryptedRecoveryPackage): Uint8Array {
-  if (value.packageVersion === 2) {
-    return encodeCanonical({
-      packageVersion: value.packageVersion,
-      protocolGeneration: value.protocolGeneration,
-      vaultId: value.vaultId,
-      encapsulatedKey: value.encapsulatedKey,
-      ciphertext: value.ciphertext,
-      checkpoint: encodeCheckpoint(value.checkpoint),
-    })
-  }
   return encodeCanonical({
+    packageVersion: value.packageVersion,
     protocolGeneration: value.protocolGeneration,
     vaultId: value.vaultId,
-    nonce: value.nonce,
+    encapsulatedKey: value.encapsulatedKey,
     ciphertext: value.ciphertext,
     checkpoint: encodeCheckpoint(value.checkpoint),
   })
@@ -133,21 +121,19 @@ export function serializeEncryptedRecoveryPackage(value: EncryptedRecoveryPackag
 
 export function deserializeEncryptedRecoveryPackage(encoded: Uint8Array): EncryptedRecoveryPackage {
   const value = asRecord(decodeCanonical(encoded))
-  const publicKeyEncrypted = value.packageVersion === 2
-  const expected = publicKeyEncrypted
-    ? [
-        "checkpoint",
-        "ciphertext",
-        "encapsulatedKey",
-        "packageVersion",
-        "protocolGeneration",
-        "vaultId",
-      ].sort()
-    : ["checkpoint", "ciphertext", "nonce", "protocolGeneration", "vaultId"].sort()
+  const expected = [
+    "checkpoint",
+    "ciphertext",
+    "encapsulatedKey",
+    "packageVersion",
+    "protocolGeneration",
+    "vaultId",
+  ].sort()
   if (Object.keys(value).sort().join("\0") !== expected.join("\0")) {
     throw new AuthenticationError("Recovery package has missing or unknown fields")
   }
   if (
+    value.packageVersion !== 2 ||
     value.protocolGeneration !== CIPHER_SUITE.protocolGeneration ||
     !(value.vaultId instanceof Uint8Array) ||
     value.vaultId.byteLength !== 16 ||
@@ -157,26 +143,14 @@ export function deserializeEncryptedRecoveryPackage(encoded: Uint8Array): Encryp
   ) {
     throw new AuthenticationError("Recovery package fields are invalid")
   }
-  if (publicKeyEncrypted) {
-    if (!(value.encapsulatedKey instanceof Uint8Array) || value.encapsulatedKey.byteLength !== 32) {
-      throw new AuthenticationError("Recovery package encapsulated key is invalid")
-    }
-    return {
-      packageVersion: 2,
-      protocolGeneration: value.protocolGeneration,
-      vaultId: vaultId(value.vaultId),
-      encapsulatedKey: value.encapsulatedKey,
-      ciphertext: value.ciphertext,
-      checkpoint: decodeCheckpoint(value.checkpoint),
-    }
-  }
-  if (!(value.nonce instanceof Uint8Array) || value.nonce.byteLength !== 12) {
-    throw new AuthenticationError("Recovery package nonce is invalid")
+  if (!(value.encapsulatedKey instanceof Uint8Array) || value.encapsulatedKey.byteLength !== 32) {
+    throw new AuthenticationError("Recovery package encapsulated key is invalid")
   }
   return {
+    packageVersion: 2,
     protocolGeneration: value.protocolGeneration,
     vaultId: vaultId(value.vaultId),
-    nonce: nonce(value.nonce),
+    encapsulatedKey: value.encapsulatedKey,
     ciphertext: value.ciphertext,
     checkpoint: decodeCheckpoint(value.checkpoint),
   }
@@ -267,25 +241,6 @@ function recoveryAad(vault: VaultId): Uint8Array {
   })
 }
 
-export async function encryptRecoveryPackage(
-  state: RecoveryState,
-  encryptionKey: RecoveryEncryptionKey,
-): Promise<EncryptedRecoveryPackage> {
-  const nonceValue = nonce(randomBytes(12))
-  return {
-    protocolGeneration: CIPHER_SUITE.protocolGeneration,
-    vaultId: state.vaultId,
-    nonce: nonceValue,
-    ciphertext: await aesGcmEncrypt(
-      encryptionKey,
-      encodeCanonical(recoveryStateToCbor(state)),
-      recoveryAad(state.vaultId),
-      nonceValue,
-    ),
-    checkpoint: state.checkpoint,
-  }
-}
-
 export interface RecoveryStateSigner {
   readonly deviceId: DeviceId
   readonly signingPrivateKey: Ed25519PrivateKey
@@ -351,42 +306,26 @@ function asRecord(value: CborValue): Record<string, CborValue> {
 
 export async function decryptRecoveryPackage(
   encrypted: EncryptedRecoveryPackage,
-  encryptionKey: RecoveryEncryptionKey,
-  recoverySigningPrivateKey?: Ed25519PrivateKey,
-  recoverySigningPublicKey?: Ed25519PublicKey,
+  recoverySigningPrivateKey: Ed25519PrivateKey,
+  recoverySigningPublicKey: Ed25519PublicKey,
 ): Promise<RecoveryState> {
   if (encrypted.protocolGeneration !== CIPHER_SUITE.protocolGeneration) {
     throw new AuthenticationError("Recovery package protocol generation is unsupported")
   }
-  let value: Record<string, CborValue>
-  let authorization: CborValue | undefined
-  if (encrypted.packageVersion === 2) {
-    if (!recoverySigningPrivateKey || !recoverySigningPublicKey) {
-      throw new AuthenticationError("Recovery signing keys are required for this package version")
-    }
-    const plaintext = await hpkeOpen(
-      x25519PrivateKey(ed25519.utils.toMontgomerySecret(recoverySigningPrivateKey)),
-      {
-        encapsulatedKey: encrypted.encapsulatedKey,
-        ciphertext: encrypted.ciphertext,
-      },
-      recoveryAad(encrypted.vaultId),
-    )
-    const envelope = asRecord(decodeCanonical(plaintext))
-    if (Object.keys(envelope).sort().join("\0") !== "authorization\0state") {
-      throw new AuthenticationError("Recovery package update envelope is malformed")
-    }
-    value = asRecord(envelope.state as CborValue)
-    authorization = envelope.authorization
-  } else {
-    const plaintext = await aesGcmDecrypt(
-      encryptionKey,
-      encrypted.ciphertext,
-      recoveryAad(encrypted.vaultId),
-      encrypted.nonce,
-    )
-    value = asRecord(decodeCanonical(plaintext))
+  const plaintext = await hpkeOpen(
+    x25519PrivateKey(ed25519.utils.toMontgomerySecret(recoverySigningPrivateKey)),
+    {
+      encapsulatedKey: encrypted.encapsulatedKey,
+      ciphertext: encrypted.ciphertext,
+    },
+    recoveryAad(encrypted.vaultId),
+  )
+  const envelope = asRecord(decodeCanonical(plaintext))
+  if (Object.keys(envelope).sort().join("\0") !== "authorization\0state") {
+    throw new AuthenticationError("Recovery package update envelope is malformed")
   }
+  const value = asRecord(envelope.state as CborValue)
+  const authorization = envelope.authorization
   const expectedKeys = [
     "vaultId",
     "epoch",
@@ -483,13 +422,7 @@ export async function decryptRecoveryPackage(
     recoverySequence: value.recoverySequence,
     ...(requiredTransitionOperationId === undefined ? {} : { requiredTransitionOperationId }),
   }
-  if (encrypted.packageVersion === 2) {
-    validateRecoveryStateAuthorization(
-      state,
-      authorization,
-      recoverySigningPublicKey as Ed25519PublicKey,
-    )
-  }
+  validateRecoveryStateAuthorization(state, authorization, recoverySigningPublicKey)
   return state
 }
 
@@ -498,7 +431,10 @@ function validateRecoveryStateAuthorization(
   value: CborValue | undefined,
   recoverySigningPublicKey: Ed25519PublicKey,
 ): void {
-  if (state.requiredTransitionOperationId === undefined) {
+  if (
+    state.requiredTransitionOperationId === undefined &&
+    state.epoch.body.createdBy !== "recovery"
+  ) {
     throw new AuthenticationError("Owner-updated recovery state lacks its required transition")
   }
   const authorization = asRecord(value as CborValue)
@@ -538,15 +474,18 @@ function validateRecoveryStateAuthorization(
   const signature = ed25519Signature(
     fixedBytes(authorization.signature, 64, "state update signature"),
   )
+  const epochAuthorized =
+    state.epoch.body.createdBy === "recovery"
+      ? verify(epochSigningBytes(state.epoch.body), state.epoch.signature, recoverySigningPublicKey)
+      : bytesEqual(state.epoch.body.createdBy, signerDeviceId) &&
+        verify(
+          epochSigningBytes(state.epoch.body),
+          state.epoch.signature,
+          signer.body.signingPublicKey,
+        )
   if (
     !verify(recoveryStateUpdateSigningBytes(state), signature, signer.body.signingPublicKey) ||
-    state.epoch.body.createdBy === "recovery" ||
-    !bytesEqual(state.epoch.body.createdBy, signerDeviceId) ||
-    !verify(
-      epochSigningBytes(state.epoch.body),
-      state.epoch.signature,
-      signer.body.signingPublicKey,
-    )
+    !epochAuthorized
   ) {
     throw new AuthenticationError("Recovery state update signature is invalid")
   }

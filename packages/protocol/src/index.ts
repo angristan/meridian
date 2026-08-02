@@ -1,7 +1,6 @@
 export * from "./bytes.js"
 export * from "./canonical-cbor.js"
 export * from "./constants.js"
-export * from "./downgrade.js"
 export * from "./http-schemas.js"
 export * from "./http-signing.js"
 export * from "./log.js"

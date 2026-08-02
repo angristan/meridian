@@ -1,6 +1,10 @@
+import {
+  CheckpointSchema,
+  RetentionAcknowledgementSchema,
+  SnapshotSchema,
+} from "@meridian/protocol"
 import { assertIdentifier, verifyEd25519 } from "../encoding"
 import { assert, HttpError } from "../errors"
-import { CheckpointSchema, RetentionAcknowledgementSchema, SnapshotSchema } from "../schemas"
 import {
   activeDevice,
   authenticate,

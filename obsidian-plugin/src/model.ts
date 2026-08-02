@@ -16,14 +16,6 @@ export interface PendingDeviceRemoval {
   envelope: unknown
 }
 
-export interface PendingProtocolUpgrade {
-  endpoint: string
-  vaultId: string
-  deviceId: string
-  operationId: string
-  envelope: unknown
-}
-
 export interface PendingEpochTransition {
   endpoint: string
   vaultId: string
@@ -54,7 +46,6 @@ export interface MeridianSettings {
   deviceName: string
   pendingDeviceRemoval: PendingDeviceRemoval | null
   pendingPairingCompletion: PendingPairingCompletion | null
-  pendingProtocolUpgrade: PendingProtocolUpgrade | null
   pendingEpochTransition: PendingEpochTransition | null
   pollIntervalSeconds: number
   scanIntervalMinutes: number
@@ -71,7 +62,6 @@ export const DEFAULT_SETTINGS: MeridianSettings = {
   deviceName: "",
   pendingDeviceRemoval: null,
   pendingPairingCompletion: null,
-  pendingProtocolUpgrade: null,
   pendingEpochTransition: null,
   pollIntervalSeconds: 45,
   scanIntervalMinutes: 5,
@@ -457,11 +447,6 @@ export interface DeviceRevocationMaterial {
   envelope: unknown
 }
 
-export interface LogFormatUpgradeMaterial {
-  operationId: string
-  envelope: unknown
-}
-
 export interface EpochTransitionMaterial {
   operationId: string
   nextEpochId: string
@@ -538,11 +523,7 @@ export interface PairedDeviceMaterial {
 }
 
 export interface CryptoPort {
-  createFirstDevice(
-    setupSession: string,
-    claimChallenge: string,
-    logFormat?: LogFormat,
-  ): Promise<SetupClaim>
+  createFirstDevice(setupSession: string, claimChallenge: string): Promise<SetupClaim>
   verifyOperationLogLink(
     device: DeviceKeyMaterial,
     operation: RemoteOperation,
@@ -589,10 +570,6 @@ export interface CryptoPort {
     device: DeviceKeyMaterial,
     operation: RemoteOperation,
   ): Promise<DeviceRevocationRecord>
-  createLogFormatUpgrade(
-    device: DeviceKeyMaterial,
-    checkpoint: TrustedCheckpoint,
-  ): Promise<LogFormatUpgradeMaterial>
   verifyLogFormatUpgrade(
     device: DeviceKeyMaterial,
     operation: RemoteOperation,
@@ -652,8 +629,6 @@ export interface RemoteDevice {
   revokedAt: number | null
   deviceName: string | null
   platform: string | null
-  supportsCanonicalLog?: boolean
-  supportsEpochTransitions?: boolean
 }
 
 export interface PairingCapability {

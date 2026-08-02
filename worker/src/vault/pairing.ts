@@ -1,5 +1,13 @@
 import {
+  CreatePairingSchema,
+  DeviceDescriptorSchema,
   IDENTIFIER_BYTES,
+  PairingApprovalSchema,
+  PairingCancelSchema,
+  PairingCandidateConfirmationSchema,
+  PairingJoinSchema,
+  PairingReleaseSchema,
+  PairingResultSchema,
   pairingCandidateConfirmationSigningBytes,
   pairingCompletionSigningBytes,
 } from "@meridian/protocol"
@@ -13,16 +21,6 @@ import {
   verifyEd25519,
 } from "../encoding"
 import { assert, HttpError } from "../errors"
-import {
-  CreatePairingSchema,
-  DeviceDescriptorSchema,
-  PairingApprovalSchema,
-  PairingCancelSchema,
-  PairingCandidateConfirmationSchema,
-  PairingJoinSchema,
-  PairingReleaseSchema,
-  PairingResultSchema,
-} from "../schemas"
 import {
   activeDevice,
   authenticate,
@@ -122,8 +120,6 @@ export class VaultPairing {
         revokedOperationId: device.revoked_operation_id,
         deviceName: device.device_name,
         platform: device.platform,
-        supportsCanonicalLog: device.supports_canonical_log === 1,
-        supportsEpochTransitions: device.supports_epoch_transitions === 1,
       }))
     return json({ devices })
   }

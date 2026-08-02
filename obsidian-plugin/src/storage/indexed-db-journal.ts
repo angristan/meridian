@@ -11,7 +11,7 @@ import type {
 } from "../model"
 import type { JournalPort, ReconciliationCommit } from "./contracts"
 import { requestResult, transactionDone } from "./idb-helpers"
-import { DATABASE_VERSION, migrateStableFileIds, upgradeJournalSchema } from "./migration"
+import { DATABASE_VERSION, upgradeJournalSchema } from "./migration"
 import { type MetadataRecord, sortRevisions } from "./types"
 
 export class IndexedDbJournal implements JournalPort {
@@ -32,7 +32,6 @@ export class IndexedDbJournal implements JournalPort {
         resolve(database)
       }
     })
-    await migrateStableFileIds(this.requireDatabase())
   }
 
   close(): void {

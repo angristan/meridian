@@ -17,7 +17,7 @@ import type { DeviceKeyMaterial, RemoteOperation } from "../model"
 import { fromBase64Url, toBase64Url } from "../platform/bytes"
 
 export interface StoredDeviceSecret {
-  readonly version: 1 | 2
+  readonly version: 2
   readonly deviceBundle: string
   readonly recoveryPublicKey: string
   readonly checkpointAuthorizationChain: string[]
@@ -68,30 +68,22 @@ export function parseStoredSecret(serialized: string): StoredDeviceSecret {
     const value: unknown = JSON.parse(serialized)
     if (
       isRecord(value) &&
-      (value.version === 1 || value.version === 2) &&
+      value.version === 2 &&
       typeof value.deviceBundle === "string" &&
       typeof value.recoveryPublicKey === "string" &&
-      (value.version === 1 || stringArray(value.checkpointAuthorizationChain))
+      stringArray(value.checkpointAuthorizationChain)
     ) {
       return {
-        version: value.version,
+        version: 2,
         deviceBundle: value.deviceBundle,
         recoveryPublicKey: value.recoveryPublicKey,
-        checkpointAuthorizationChain:
-          value.version === 2 && stringArray(value.checkpointAuthorizationChain)
-            ? value.checkpointAuthorizationChain
-            : [],
+        checkpointAuthorizationChain: value.checkpointAuthorizationChain,
       }
     }
   } catch {
-    // Legacy development bundles contained only canonical device bytes.
+    // Report the stable format error below.
   }
-  return {
-    version: 1,
-    deviceBundle: serialized,
-    recoveryPublicKey: "",
-    checkpointAuthorizationChain: [],
-  }
+  throw new Error("Stored device secret is not a supported Meridian key bundle")
 }
 
 export function hasAuthorizedCheckpoint(secret: StoredDeviceSecret): boolean {

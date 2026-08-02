@@ -57,9 +57,15 @@ describe("Meridian remote client", () => {
         operations: [
           {
             cursor: 1,
-            chainHash: "chain-hash",
+            operationId: "operation-id",
             authorDeviceId: "remote-device",
+            epochId: "epoch-id",
+            type: "revision",
             envelope: "encrypted-envelope",
+            signature: "signature",
+            previousHash: "previous-hash",
+            chainHash: "chain-hash",
+            committedAt: 1,
           },
         ],
       }),
@@ -100,69 +106,25 @@ describe("Meridian remote client", () => {
     })
   })
 
-  it("retries authentication without capabilities on a pre-upgrade Worker", async () => {
+  it("does not retry a rejected authentication request", async () => {
     const transport = new QueueTransport([
       response({ challengeId: "challenge-id", challenge: "challenge" }),
       response(
         { error: { code: "invalid_request", message: "Request body does not match schema" } },
         400,
       ),
-      response({ sessionToken: "legacy-session", expiresAt: Number.MAX_SAFE_INTEGER }),
     ])
     const client = new MeridianRemoteClient("https://example.test", transport)
 
-    await client.authenticate(TEST_DEVICE, new FakeCrypto())
-
-    expect(JSON.parse(String(transport.requests[1]?.body))).toMatchObject({
-      supportedLogFormats: ["legacy-http-v1", "canonical-cbor-v1"],
-      supportedFeatures: ["epoch-transition-v1"],
+    await expect(client.authenticate(TEST_DEVICE, new FakeCrypto())).rejects.toMatchObject({
+      status: 400,
+      code: "invalid_request",
     })
-    expect(JSON.parse(String(transport.requests[2]?.body))).not.toHaveProperty(
-      "supportedLogFormats",
-    )
-    expect(JSON.parse(String(transport.requests[2]?.body))).not.toHaveProperty("supportedFeatures")
-  })
-
-  it("parses persistent device log capabilities conservatively", async () => {
-    const transport = new QueueTransport([
-      response({ challengeId: "challenge-id", challenge: "challenge" }),
-      response({ sessionToken: "session-token", expiresAt: Number.MAX_SAFE_INTEGER }),
-      response({
-        devices: [
-          {
-            deviceId: "current-device",
-            signingPublicKey: "signing-key",
-            hpkePublicKey: "hpke-key",
-            certificate: "certificate",
-            role: "owner",
-            authorizedAt: 1,
-            revokedAt: null,
-            supportsCanonicalLog: true,
-            supportsEpochTransitions: true,
-          },
-          {
-            deviceId: "old-device",
-            signingPublicKey: "old-signing-key",
-            hpkePublicKey: "old-hpke-key",
-            certificate: "old-certificate",
-            role: "member",
-            authorizedAt: 2,
-            revokedAt: null,
-          },
-        ],
-      }),
-    ])
-    const client = new MeridianRemoteClient("https://example.test", transport)
-
-    await client.authenticate(TEST_DEVICE, new FakeCrypto())
-    const devices = await client.listDevices()
-
-    expect(
-      devices.map((device) => [device.supportsCanonicalLog, device.supportsEpochTransitions]),
-    ).toEqual([
-      [true, true],
-      [false, false],
-    ])
+    expect(JSON.parse(String(transport.requests[1]?.body))).toMatchObject({
+      deviceId: TEST_DEVICE.deviceId,
+      challengeId: "challenge-id",
+    })
+    expect(transport.requests).toHaveLength(2)
   })
 
   it("skips the device registry for an empty change page", async () => {
@@ -515,6 +477,8 @@ describe("Meridian remote client", () => {
         pairingId: "pairing-id",
         status: "joined",
         expiresAt: 1_000,
+        ownerConfirmed: false,
+        candidateConfirmed: false,
         relayAvailable: true,
         candidate: {
           pairingId: "pairing-id",
@@ -528,7 +492,13 @@ describe("Meridian remote client", () => {
           requestProof: "request-proof",
         },
       }),
-      response({ pairingId: "pairing-id", status: "verifying", expiresAt: 1_000 }),
+      response({
+        pairingId: "pairing-id",
+        status: "verifying",
+        expiresAt: 1_000,
+        ownerConfirmed: false,
+        candidateConfirmed: false,
+      }),
     ])
     const client = new MeridianRemoteClient("https://example.test", transport)
 

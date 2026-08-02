@@ -6,7 +6,6 @@ import type {
   EncryptedRevision,
   EpochTransitionMaterial,
   JournalEntry,
-  LogFormatUpgradeMaterial,
   RemoteOperation,
   RevisionDraft,
   ScannedFileSnapshot,
@@ -243,196 +242,6 @@ describe("SyncController", () => {
     controller.stop()
   })
 
-  it("upgrades automatically after every active device checks in", async () => {
-    class OwnerRemote extends FakeRemote {
-      override async listDevices() {
-        return [
-          {
-            deviceId: TEST_DEVICE.deviceId,
-            signingPublicKey: "owner-signing-key",
-            hpkePublicKey: "owner-hpke-key",
-            certificate: "owner-certificate",
-            role: "owner" as const,
-            authorizedAt: 1,
-            revokedAt: null,
-            deviceName: "Owner",
-            platform: "Test",
-            supportsCanonicalLog: true,
-          },
-          {
-            deviceId: "second-device",
-            signingPublicKey: "member-signing-key",
-            hpkePublicKey: "member-hpke-key",
-            certificate: "member-certificate",
-            role: "member" as const,
-            authorizedAt: 2,
-            revokedAt: null,
-            deviceName: "Second device",
-            platform: "Test",
-            supportsCanonicalLog: true,
-          },
-        ]
-      }
-    }
-    const vault = new FakeVault()
-    const journal = new MemoryJournal()
-    const remote = new OwnerRemote()
-    let pending: LogFormatUpgradeMaterial | null = null
-    const controller = new SyncController(
-      vault,
-      journal,
-      remote,
-      new FakeCrypto(),
-      () => ALL_CATEGORIES,
-      () => {},
-      undefined,
-      {
-        protocolUpgrade: {
-          load: () => pending,
-          save: async (material) => {
-            pending = material
-          },
-          clear: async () => {
-            pending = null
-          },
-        },
-      },
-    )
-
-    await controller.start(TEST_DEVICE)
-
-    expect(pending).toBeNull()
-    expect(remote.operations).toHaveLength(1)
-    expect(remote.operations[0]?.envelope).toMatchObject({ type: "log-format-transition" })
-    expect(await controller.logFormat()).toBe("canonical-cbor-v1")
-    expect(await journal.getCheckpoint()).toMatchObject({
-      cursor: 1,
-      initialLogFormat: "legacy-http-v1",
-      logFormat: "canonical-cbor-v1",
-    })
-    controller.stop()
-  })
-
-  it("retries a durably prepared automatic upgrade", async () => {
-    class RetryRemote extends FakeRemote {
-      failNextTransition = true
-
-      override async listDevices() {
-        return [
-          {
-            deviceId: TEST_DEVICE.deviceId,
-            signingPublicKey: "owner-signing-key",
-            hpkePublicKey: "owner-hpke-key",
-            certificate: "owner-certificate",
-            role: "owner" as const,
-            authorizedAt: 1,
-            revokedAt: null,
-            deviceName: "Owner",
-            platform: "Test",
-            supportsCanonicalLog: true,
-          },
-        ]
-      }
-
-      override async commit(envelope: unknown, _operationId?: string) {
-        if (this.failNextTransition) {
-          this.failNextTransition = false
-          throw new Error("Connection failed before upload")
-        }
-        return super.commit(envelope)
-      }
-    }
-    const remote = new RetryRemote()
-    let pending: LogFormatUpgradeMaterial | null = null
-    const controller = new SyncController(
-      new FakeVault(),
-      new MemoryJournal(),
-      remote,
-      new FakeCrypto(),
-      () => ALL_CATEGORIES,
-      () => {},
-      undefined,
-      {
-        protocolUpgrade: {
-          load: () => pending,
-          save: async (material) => {
-            pending = material
-          },
-          clear: async () => {
-            pending = null
-          },
-        },
-      },
-    )
-
-    await controller.start(TEST_DEVICE)
-    expect(pending).toMatchObject({ operationId: "log-format-transition" })
-    expect(remote.operations).toHaveLength(0)
-
-    await controller.sync("manual")
-
-    expect(pending).toBeNull()
-    expect(remote.operations).toHaveLength(1)
-    expect(await controller.logFormat()).toBe("canonical-cbor-v1")
-    controller.stop()
-  })
-
-  it("waits while an active device has not checked in", async () => {
-    class WaitingRemote extends FakeRemote {
-      override async listDevices() {
-        return [
-          {
-            deviceId: TEST_DEVICE.deviceId,
-            signingPublicKey: "owner-signing-key",
-            hpkePublicKey: "owner-hpke-key",
-            certificate: "owner-certificate",
-            role: "owner" as const,
-            authorizedAt: 1,
-            revokedAt: null,
-            deviceName: "Owner",
-            platform: "Test",
-            supportsCanonicalLog: true,
-          },
-          {
-            deviceId: "offline-device",
-            signingPublicKey: "member-signing-key",
-            hpkePublicKey: "member-hpke-key",
-            certificate: "member-certificate",
-            role: "member" as const,
-            authorizedAt: 2,
-            revokedAt: null,
-            deviceName: "Offline device",
-            platform: "Test",
-            supportsCanonicalLog: false,
-          },
-        ]
-      }
-    }
-    const remote = new WaitingRemote()
-    const controller = new SyncController(
-      new FakeVault(),
-      new MemoryJournal(),
-      remote,
-      new FakeCrypto(),
-      () => ALL_CATEGORIES,
-      () => {},
-      undefined,
-      {
-        protocolUpgrade: {
-          load: () => null,
-          save: async () => {},
-          clear: async () => {},
-        },
-      },
-    )
-
-    await controller.start(TEST_DEVICE)
-
-    expect(remote.operations).toHaveLength(0)
-    expect(await controller.logFormat()).toBe("legacy-http-v1")
-    controller.stop()
-  })
-
   it("rotates the initial epoch after every active device checks in", async () => {
     class EpochReadyRemote extends FakeRemote {
       override async listDevices() {
@@ -447,8 +256,6 @@ describe("SyncController", () => {
             revokedAt: null,
             deviceName: "Owner",
             platform: "Test",
-            supportsCanonicalLog: true,
-            supportsEpochTransitions: true,
           },
         ]
       }
@@ -560,8 +367,6 @@ describe("SyncController", () => {
             revokedAt: null,
             deviceName: "Owner",
             platform: "Test",
-            supportsCanonicalLog: true,
-            supportsEpochTransitions: true,
           },
         ]
       }

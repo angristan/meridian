@@ -7,6 +7,15 @@ import {
   sign as signBytes,
   signOperation,
 } from "@meridian/crypto"
+import type {
+  Checkpoint,
+  Operation,
+  PairingApproval,
+  PairingJoin,
+  PairingRelease,
+  RetentionAcknowledgement,
+  SetupClaim,
+} from "@meridian/protocol"
 import {
   CIPHER_SUITE,
   certificateId,
@@ -18,8 +27,6 @@ import {
   encodeOperation,
   fileId,
   hashBytes,
-  LogFormat,
-  logChainSigningBytes,
   logEntryHashInput,
   nonce,
   operationId,
@@ -34,15 +41,6 @@ import {
 } from "@meridian/protocol"
 import { describe, expect, it } from "vitest"
 import { base64UrlDecode, base64UrlEncode, randomToken, sha256, ZERO_HASH } from "../src/encoding"
-import type {
-  Checkpoint,
-  Operation,
-  PairingApproval,
-  PairingJoin,
-  PairingRelease,
-  RetentionAcknowledgement,
-  SetupClaim,
-} from "../src/schemas"
 import { migrateVaultSchema } from "../src/vault/migrations"
 import {
   authSigningMessage,
@@ -155,8 +153,6 @@ async function authenticateDevice(
     deviceId,
     challengeId: challenge.challengeId,
     signature: base64UrlEncode(randomBytes(64)),
-    supportedLogFormats: ["legacy-http-v1", "canonical-cbor-v1"],
-    supportedFeatures: ["epoch-transition-v1"],
   }
   authInput.signature = await sign(
     signingKey,
@@ -271,183 +267,50 @@ describe("Meridian Worker integration", () => {
           "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'devices'",
         )
         .one().sql
-      expect(devicesDefinition).toContain("supports_canonical_log")
+      expect(devicesDefinition).not.toContain("supports_canonical_log")
     })
   })
 
-  it("adopts pre-ledger v1 tables without recreating them", async () => {
-    const id = env.VAULT.idFromName("legacy-schema-test")
+  it("accepts the current schema without mutating existing data", async () => {
+    const id = env.VAULT.idFromName("current-schema-test")
     const stub = env.VAULT.get(id)
     await runInDurableObject(stub, async (instance, state) => {
       await instance.fetch(new Request("https://vault.internal/internal/status"))
-      state.storage.sql.exec("DELETE FROM _sql_schema_migrations")
+      state.storage.sql.exec(
+        `INSERT INTO setup_sessions(token_hash, challenge, created_at, expires_at, consumed_at)
+         VALUES ('sentinel', 'challenge', 1, 2, NULL)`,
+      )
 
       migrateVaultSchema(state.storage.sql, (callback) => state.storage.transactionSync(callback))
 
-      const migration = state.storage.sql
-        .exec<{ version: number }>("SELECT MAX(id) AS version FROM _sql_schema_migrations")
-        .one()
-      expect(migration.version).toBe(10)
       expect(
         state.storage.sql
-          .exec<{ name: string }>(
-            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'operations'",
+          .exec<{ challenge: string }>(
+            "SELECT challenge FROM setup_sessions WHERE token_hash = 'sentinel'",
           )
-          .one().name,
-      ).toBe("operations")
+          .one().challenge,
+      ).toBe("challenge")
     })
   })
 
-  it("bridges a migrated legacy log and blocks old sessions", async () => {
-    const primaryStub = env.VAULT.get(env.VAULT.idFromName("log-transition-test"))
-    const directFetch: TestFetch = (url, init) => primaryStub.fetch(new Request(url, init))
-    const { deviceId, signingKey, vaultId, device } = await setupAndAuthenticate(
-      directFetch,
-      "/internal/setup/session",
-    )
-    await runInDurableObject(primaryStub, async (_instance, state) => {
-      state.storage.sql.exec(
-        "UPDATE vault_state SET log_format = 'legacy-http-v1', log_transition_cursor = NULL",
-      )
-      state.storage.sql.exec("UPDATE devices SET supports_canonical_log = 0")
-    })
-    const sessionToken = await authenticateDevice(vaultId, deviceId, signingKey, directFetch)
-    const authorization = { authorization: `Bearer ${sessionToken}` }
-    const registryResponse = await directFetch("https://example.test/v1/devices", {
-      headers: authorization,
-    })
-    expect(registryResponse.status).toBe(200)
-    expect(await registryResponse.json()).toMatchObject({
-      devices: [{ deviceId, supportsCanonicalLog: true }],
-    })
+  it("rejects unversioned existing schemas without mutating them", async () => {
+    const id = env.VAULT.idFromName("unsupported-schema-test")
+    const stub = env.VAULT.get(id)
+    await runInDurableObject(stub, async (instance, state) => {
+      await instance.fetch(new Request("https://vault.internal/internal/status"))
+      state.storage.sql.exec("DROP TABLE _sql_schema_migrations")
 
-    const transitionIdentifier = operationId(randomBytes(16))
-    const signedTransition = signOperation(
-      {
-        type: "log-format-transition",
-        operationId: transitionIdentifier,
-        vaultId: device.vaultId,
-        epochId: device.epoch.body.epochId,
-        authorDeviceId: device.deviceId,
-        previousCursor: 0,
-        previousLogHash: hashBytes(new Uint8Array(32)),
-        nextLogFormat: LogFormat.CanonicalCborV1,
-        suite: CIPHER_SUITE,
-      },
-      device.signingPrivateKey,
-    )
-    const transitionUnsigned: Operation = {
-      operationId: base64UrlEncode(transitionIdentifier),
-      authorDeviceId: deviceId,
-      epochId: base64UrlEncode(device.epoch.body.epochId),
-      type: "log-format-transition",
-      envelope: base64UrlEncode(encodeOperation(signedTransition)),
-      signature: base64UrlEncode(randomBytes(64)),
-    }
-    const transition: Operation = {
-      ...transitionUnsigned,
-      signature: await sign(signingKey, operationSigningMessage(transitionUnsigned)),
-    }
-    const transitionResponse = await directFetch("https://example.test/v1/operations", {
-      method: "POST",
-      headers: { ...authorization, "content-type": "application/json" },
-      body: JSON.stringify(transition),
-    })
-    expect(transitionResponse.status).toBe(201)
-    const transitionResult = (await transitionResponse.json()) as {
-      cursor: number
-      chainHash: string
-    }
-    expect(transitionResult.cursor).toBe(1)
-    expect(transitionResult.chainHash).toBe(
-      base64UrlEncode(
-        await sha256(
-          logChainSigningBytes(
-            new Uint8Array(32),
-            operationSigningMessage(transition),
-            base64UrlDecode(transition.signature, 64),
-          ),
+      expect(() =>
+        migrateVaultSchema(state.storage.sql, (callback) =>
+          state.storage.transactionSync(callback),
         ),
-      ),
-    )
-    const duplicate = await directFetch("https://example.test/v1/operations", {
-      method: "POST",
-      headers: { ...authorization, "content-type": "application/json" },
-      body: JSON.stringify(transition),
-    })
-    expect(duplicate.status).toBe(200)
-
-    const revisionIdentifier = operationId(randomBytes(16))
-    const signedRevision = signOperation(
-      {
-        type: "revision",
-        operationId: revisionIdentifier,
-        vaultId: device.vaultId,
-        epochId: device.epoch.body.epochId,
-        authorDeviceId: device.deviceId,
-        fileId: fileId(randomBytes(16)),
-        revisionId: revisionId(randomBytes(16)),
-        wrappedRevisionKey: wrappedRevisionKey(randomBytes(40)),
-        metadataNonce: nonce(randomBytes(12)),
-        encryptedMetadata: randomBytes(16),
-        chunks: [],
-        suite: CIPHER_SUITE,
-      },
-      device.signingPrivateKey,
-    )
-    const revisionUnsigned: Operation = {
-      operationId: base64UrlEncode(revisionIdentifier),
-      authorDeviceId: deviceId,
-      epochId: base64UrlEncode(device.epoch.body.epochId),
-      type: "revision",
-      envelope: base64UrlEncode(encodeOperation(signedRevision)),
-      signature: base64UrlEncode(randomBytes(64)),
-    }
-    const revision: Operation = {
-      ...revisionUnsigned,
-      signature: await sign(signingKey, operationSigningMessage(revisionUnsigned)),
-    }
-    const revisionResponse = await directFetch("https://example.test/v1/operations", {
-      method: "POST",
-      headers: { ...authorization, "content-type": "application/json" },
-      body: JSON.stringify(revision),
-    })
-    expect(revisionResponse.status).toBe(201)
-    const revisionResult = (await revisionResponse.json()) as { cursor: number; chainHash: string }
-    expect(revisionResult).toEqual({
-      cursor: 2,
-      chainHash: base64UrlEncode(
-        await sha256(
-          logEntryHashInput(
-            protocolVaultId(base64UrlDecode(vaultId, 16)),
-            2,
-            hashBytes(base64UrlDecode(transitionResult.chainHash, 32)),
-            signedRevision,
-          ),
-        ),
-      ),
-      previousHash: transitionResult.chainHash,
-      duplicate: false,
-    })
-
-    await runInDurableObject(primaryStub, async (_instance, state) => {
-      const vault = state.storage.sql
-        .exec<{ log_format: string; log_transition_cursor: number }>(
-          "SELECT log_format, log_transition_cursor FROM vault_state WHERE singleton = 1",
-        )
-        .one()
-      expect(vault).toEqual({
-        log_format: "canonical-cbor-v1",
-        log_transition_cursor: 1,
-      })
-      state.storage.sql.exec("UPDATE sessions SET supports_canonical_log = 0")
-    })
-    const oldClient = await directFetch("https://example.test/v1/changes?after=2", {
-      headers: authorization,
-    })
-    expect(oldClient.status).toBe(426)
-    await expect(oldClient.json()).resolves.toMatchObject({
-      error: { code: "protocol_upgrade_required" },
+      ).toThrow(/predates the supported schema baseline/)
+      const tables = state.storage.sql
+        .exec<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table'")
+        .toArray()
+        .map((row) => row.name)
+      expect(tables).toContain("operations")
+      expect(tables).not.toContain("_sql_schema_migrations")
     })
   })
 
@@ -491,22 +354,6 @@ describe("Meridian Worker integration", () => {
       ...epochUnsigned,
       signature: await sign(signingKey, operationSigningMessage(epochUnsigned)),
     }
-    await runInDurableObject(primaryStub, async (_instance, state) => {
-      state.storage.sql.exec("UPDATE devices SET supports_epoch_transitions = 0")
-    })
-    const blocked = await directFetch("https://example.test/v1/operations", {
-      method: "POST",
-      headers: { ...authorization, "content-type": "application/json" },
-      body: JSON.stringify(epochOperation),
-    })
-    expect(blocked.status).toBe(409)
-    await expect(blocked.json()).resolves.toMatchObject({
-      error: { code: "epoch_recipient_conflict" },
-    })
-    await runInDurableObject(primaryStub, async (_instance, state) => {
-      state.storage.sql.exec("UPDATE devices SET supports_epoch_transitions = 1")
-    })
-
     const committed = await directFetch("https://example.test/v1/operations", {
       method: "POST",
       headers: { ...authorization, "content-type": "application/json" },
@@ -601,14 +448,6 @@ describe("Meridian Worker integration", () => {
     })
     expect(staleResponse.status).toBe(409)
     await expect(staleResponse.json()).resolves.toMatchObject({ error: { code: "stale_epoch" } })
-
-    await runInDurableObject(primaryStub, async (_instance, state) => {
-      state.storage.sql.exec("UPDATE sessions SET supports_epoch_transitions = 0")
-    })
-    const oldClient = await directFetch("https://example.test/v1/changes?after=1", {
-      headers: authorization,
-    })
-    expect(oldClient.status).toBe(426)
   })
 
   it("records only signed retention acknowledgements on authoritative history", async () => {

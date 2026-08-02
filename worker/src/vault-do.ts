@@ -1,6 +1,7 @@
 import { DurableObject } from "cloudflare:workers"
 import { errorResponse, HttpError } from "./errors"
 import { VaultAuth } from "./vault/auth"
+import { VaultBlobs } from "./vault/blobs"
 import { authenticate, json, type TransactionSync, vaultState } from "./vault/domain"
 import { migrateVaultSchema } from "./vault/migrations"
 import { VaultNotifications } from "./vault/notifications"
@@ -25,6 +26,7 @@ export class VaultDurableObject extends DurableObject<VaultDurableObjectEnv> {
   private readonly sql: SqlStorage
   private readonly initialized: Promise<void>
   private readonly auth: VaultAuth
+  private readonly blobs: VaultBlobs
   private readonly pairing: VaultPairing
   private readonly operations: VaultOperations
   private readonly records: VaultRecords
@@ -41,13 +43,14 @@ export class VaultDurableObject extends DurableObject<VaultDurableObjectEnv> {
     this.auth = new VaultAuth(this.sql, transactionSync, () =>
       this.notifications.closeForRecovery(),
     )
+    this.blobs = new VaultBlobs(this.sql, env.BLOBS)
     this.pairing = new VaultPairing(this.sql, transactionSync)
     this.operations = new VaultOperations(
       this.sql,
       transactionSync,
       (cursor, authorDeviceId) => this.notifications.notifyCursor(cursor, authorDeviceId),
       (deviceId) => this.notifications.closeRevokedDevice(deviceId),
-      env.BLOBS,
+      this.blobs,
     )
     this.records = new VaultRecords(this.sql)
   }
@@ -91,11 +94,11 @@ export class VaultDurableObject extends DurableObject<VaultDurableObjectEnv> {
       if (request.method === "GET" && pathname === "/v1/changes")
         return await this.operations.changes(request)
       if (request.method === "GET" && pathname === "/v1/storage")
-        return await this.operations.storageStats(request)
+        return await this.blobs.storageStats(request)
       if (request.method === "POST" && pathname === "/v1/storage/prune-orphans") {
         return await this.ctx.blockConcurrencyWhile(async () => {
           try {
-            return await this.operations.pruneOrphanBlobs(request)
+            return await this.blobs.pruneOrphanBlobs(request)
           } catch (error) {
             return errorResponse(error)
           }
@@ -104,11 +107,11 @@ export class VaultDurableObject extends DurableObject<VaultDurableObjectEnv> {
       const blobClaimMatch = /^\/internal\/blobs\/([^/]+)\/claim$/.exec(pathname)
       const claimedBlobId = blobClaimMatch?.at(1)
       if (request.method === "POST" && claimedBlobId !== undefined)
-        return await this.operations.claimBlob(request, claimedBlobId)
+        return await this.blobs.claimBlob(request, claimedBlobId)
       const blobFinalizeMatch = /^\/internal\/blobs\/([^/]+)\/finalize$/.exec(pathname)
       const finalizedBlobId = blobFinalizeMatch?.at(1)
       if (request.method === "POST" && finalizedBlobId !== undefined)
-        return await this.operations.finalizeBlob(request, finalizedBlobId)
+        return await this.blobs.finalizeBlob(request, finalizedBlobId)
       if (request.method === "POST" && pathname === "/v1/operations")
         return await this.operations.commitOperation(request)
       if (request.method === "PUT" && pathname === "/v1/checkpoints")

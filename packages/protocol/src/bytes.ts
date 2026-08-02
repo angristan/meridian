@@ -25,7 +25,6 @@ export type X25519PrivateKey = BrandedBytes<"X25519PrivateKey">
 export type RecoverySeed = BrandedBytes<"RecoverySeed">
 export type VaultEpochKey = BrandedBytes<"VaultEpochKey">
 export type RevisionKey = BrandedBytes<"RevisionKey">
-export type RecoveryEncryptionKey = BrandedBytes<"RecoveryEncryptionKey">
 export type Nonce = BrandedBytes<"Nonce">
 export type WrappedRevisionKey = BrandedBytes<"WrappedRevisionKey">
 
@@ -57,8 +56,6 @@ export const vaultEpochKey = (value: Uint8Array) =>
   checkedBytes(value, 32, "VaultEpochKey") as VaultEpochKey
 export const revisionKey = (value: Uint8Array) =>
   checkedBytes(value, 32, "RevisionKey") as RevisionKey
-export const recoveryEncryptionKey = (value: Uint8Array) =>
-  checkedBytes(value, 32, "RecoveryEncryptionKey") as RecoveryEncryptionKey
 export const nonce = (value: Uint8Array) => checkedBytes(value, 12, "Nonce") as Nonce
 export const wrappedRevisionKey = (value: Uint8Array) =>
   checkedBytes(value, 40, "WrappedRevisionKey") as WrappedRevisionKey

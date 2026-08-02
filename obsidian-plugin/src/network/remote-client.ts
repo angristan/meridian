@@ -1,3 +1,22 @@
+import {
+  AuthChallengeResponseSchema,
+  AuthSessionResponseSchema,
+  ChangesResponseSchema,
+  DeviceDescriptorResponseSchema,
+  DeviceListResponseSchema,
+  ErrorResponseSchema,
+  OperationReceiptResponseSchema,
+  PairingCapabilityResponseSchema,
+  PairingResultResponseSchema,
+  PairingStatusResponseSchema,
+  RecoveryChallengeResponseSchema,
+  RecoveryClaimResponseSchema,
+  RecoveryPackageResponseSchema,
+  RetentionAcknowledgementResponseSchema,
+  SetupClaimResponseSchema,
+  StoragePruneResponseSchema,
+  StorageResponseSchema,
+} from "@meridian/protocol"
 import type { RequestUrlParam } from "obsidian"
 import type {
   CryptoPort,
@@ -17,20 +36,7 @@ import type {
   TrustedCheckpoint,
 } from "../model"
 import { connectCursorNotifications } from "./notifications"
-import {
-  assertSuccess,
-  isRecord,
-  MeridianHttpError,
-  optionalNumber,
-  parseDevice,
-  parseJsonBody,
-  parseOperation,
-  parsePairingResult,
-  parsePairingStatus,
-  requiredBoolean,
-  requiredNumber,
-  requiredString,
-} from "./response-parsers"
+import { assertSuccess, decodeResponse, isRecord, parseJsonBody } from "./response-parsers"
 import type { HttpResponse, HttpTransport } from "./transport"
 
 export type { HttpResponse, HttpTransport } from "./transport"
@@ -66,42 +72,55 @@ export class MeridianRemoteClient implements RemotePort {
   async claim(setupSession: string, claim: SetupClaim): Promise<void> {
     if (!isRecord(claim.publicClaim))
       throw new Error("Crypto adapter returned an invalid setup claim")
-    await this.jsonRequest("/v1/setup/claim", {
-      method: "POST",
-      body: { ...claim.publicClaim, setupSession },
-      authenticated: false,
-    })
+    decodeResponse(
+      SetupClaimResponseSchema,
+      await this.jsonRequest("/v1/setup/claim", {
+        method: "POST",
+        body: { ...claim.publicClaim, setupSession },
+        authenticated: false,
+      }),
+      "Setup claim",
+    )
   }
 
   async getRecoveryPackage(): Promise<RecoveryPackageMaterial> {
-    const result = await this.jsonRequest("/v1/recovery/package", {
-      method: "GET",
-      authenticated: false,
-    })
+    const result = decodeResponse(
+      RecoveryPackageResponseSchema,
+      await this.jsonRequest("/v1/recovery/package", {
+        method: "GET",
+        authenticated: false,
+      }),
+      "Recovery package",
+    )
     return {
-      encryptedRecoveryPackage: requiredString(result, "encryptedRecoveryPackage"),
-      recoveryStateId: requiredString(result, "recoveryStateId"),
+      encryptedRecoveryPackage: result.encryptedRecoveryPackage,
+      recoveryStateId: result.recoveryStateId,
     }
   }
 
   async createRecoveryChallenge(): Promise<{ challengeId: string; challenge: string }> {
-    const result = await this.jsonRequest("/v1/recovery/challenge", {
-      method: "POST",
-      authenticated: false,
-    })
-    return {
-      challengeId: requiredString(result, "challengeId"),
-      challenge: requiredString(result, "challenge"),
-    }
+    const result = decodeResponse(
+      RecoveryChallengeResponseSchema,
+      await this.jsonRequest("/v1/recovery/challenge", {
+        method: "POST",
+        authenticated: false,
+      }),
+      "Recovery challenge",
+    )
+    return { challengeId: result.challengeId, challenge: result.challenge }
   }
 
   async recover(publicClaim: unknown): Promise<void> {
     if (!isRecord(publicClaim)) throw new Error("Crypto adapter returned an invalid recovery claim")
-    await this.jsonRequest("/v1/recovery/claim", {
-      method: "POST",
-      body: publicClaim,
-      authenticated: false,
-    })
+    decodeResponse(
+      RecoveryClaimResponseSchema,
+      await this.jsonRequest("/v1/recovery/claim", {
+        method: "POST",
+        body: publicClaim,
+        authenticated: false,
+      }),
+      "Recovery claim",
+    )
     this.clearAuthentication()
   }
 
@@ -119,67 +138,75 @@ export class MeridianRemoteClient implements RemotePort {
   async getChanges(after: number, checkpoint: TrustedCheckpoint | null): Promise<RemoteChanges> {
     const query = new URLSearchParams({ after: String(after) })
     if (checkpoint) query.set("afterHash", checkpoint.logHash)
-    const result = await this.jsonRequest(`/v1/changes?${query.toString()}`, {
-      method: "GET",
-      authenticated: true,
-    })
-    if (!isRecord(result) || !Array.isArray(result.operations)) {
-      throw new Error("Server returned an invalid change set")
-    }
+    const result = decodeResponse(
+      ChangesResponseSchema,
+      await this.jsonRequest(`/v1/changes?${query.toString()}`, {
+        method: "GET",
+        authenticated: true,
+      }),
+      "Change set",
+    )
     const devices = result.operations.length > 0 ? await this.listDevices() : []
     const certificates = devices.map((device) => device.certificate)
     const byDevice = new Map(devices.map((device) => [device.deviceId, device.certificate]))
-    const operations = result.operations.map((value) => {
-      const operation = parseOperation(value)
-      if (!isRecord(operation.envelope)) return operation
-      const authorDeviceId = operation.envelope.authorDeviceId
-      const authorCertificate =
-        typeof authorDeviceId === "string" ? byDevice.get(authorDeviceId) : undefined
+    const operations = result.operations.map((envelope) => {
+      const operation = {
+        cursor: envelope.cursor,
+        logHash: envelope.chainHash,
+        envelope,
+      }
+      const authorCertificate = byDevice.get(envelope.authorDeviceId)
       return authorCertificate
         ? { ...operation, authorCertificate, certificateChain: certificates }
         : operation
     })
-    const latestCursor = optionalNumber(result.latestCursor) ?? operations.at(-1)?.cursor ?? after
-    return { operations, latestCursor }
+    return { operations, latestCursor: result.latestCursor }
   }
 
   async getStorageUsage(): Promise<RemoteStorageUsage> {
-    const result = await this.jsonRequest("/v1/storage", { method: "GET", authenticated: true })
+    const result = decodeResponse(
+      StorageResponseSchema,
+      await this.jsonRequest("/v1/storage", { method: "GET", authenticated: true }),
+      "Storage usage",
+    )
     return {
-      totalBytes: requiredNumber(result, "totalBytes"),
-      blobBytes: requiredNumber(result, "blobBytes"),
-      databaseBytes: requiredNumber(result, "databaseBytes"),
-      blobCount: requiredNumber(result, "blobCount"),
-      reservedBlobBytes: requiredNumber(result, "reservedBlobBytes"),
-      operationCount: requiredNumber(result, "operationCount"),
-      checkpointCount: requiredNumber(result, "checkpointCount"),
-      snapshotCount: requiredNumber(result, "snapshotCount"),
-      retentionMode: requiredForever(result, "retentionMode"),
-      activeDeviceCount: requiredNumber(result, "activeDeviceCount"),
-      acknowledgedDeviceCount: requiredNumber(result, "acknowledgedDeviceCount"),
-      minimumAcknowledgedCursor: requiredNullableNumber(result, "minimumAcknowledgedCursor"),
-      pruningAvailable: requiredBoolean(result, "canPrune"),
+      totalBytes: result.totalBytes,
+      blobBytes: result.blobBytes,
+      databaseBytes: result.databaseBytes,
+      blobCount: result.blobCount,
+      reservedBlobBytes: result.reservedBlobBytes,
+      operationCount: result.operationCount,
+      checkpointCount: result.checkpointCount,
+      snapshotCount: result.snapshotCount,
+      retentionMode: result.retentionMode,
+      activeDeviceCount: result.activeDeviceCount,
+      acknowledgedDeviceCount: result.acknowledgedDeviceCount,
+      minimumAcknowledgedCursor: result.minimumAcknowledgedCursor,
+      pruningAvailable: result.canPrune,
     }
   }
 
   async acknowledgeRetention(acknowledgement: RetentionAcknowledgement): Promise<void> {
-    await this.jsonRequest("/v1/retention/acknowledgement", {
-      method: "PUT",
-      body: acknowledgement,
-      authenticated: true,
-    })
+    decodeResponse(
+      RetentionAcknowledgementResponseSchema,
+      await this.jsonRequest("/v1/retention/acknowledgement", {
+        method: "PUT",
+        body: acknowledgement,
+        authenticated: true,
+      }),
+      "Retention acknowledgement",
+    )
   }
 
   async pruneStorage(): Promise<StoragePruneResult> {
-    const result = await this.jsonRequest("/v1/storage/prune-orphans", {
-      method: "POST",
-      authenticated: true,
-    })
-    return {
-      deletedBytes: requiredNumber(result, "deletedBytes"),
-      deletedCount: requiredNumber(result, "deletedCount"),
-      graceDays: requiredNumber(result, "graceDays"),
-    }
+    return decodeResponse(
+      StoragePruneResponseSchema,
+      await this.jsonRequest("/v1/storage/prune-orphans", {
+        method: "POST",
+        authenticated: true,
+      }),
+      "Storage pruning",
+    )
   }
 
   async putBlob(blob: EncryptedBlob): Promise<void> {
@@ -215,35 +242,51 @@ export class MeridianRemoteClient implements RemotePort {
     idempotencyKey: string,
   ): Promise<{ cursor: number; logHash: string }> {
     if (!isRecord(envelope)) throw new Error("Crypto adapter returned an invalid operation")
-    const result = await this.jsonRequest("/v1/operations", {
-      method: "POST",
-      headers: { "idempotency-key": idempotencyKey },
-      body: envelope,
-      authenticated: true,
-    })
-    return {
-      cursor: requiredNumber(result, "cursor"),
-      logHash: requiredString(result, "chainHash"),
-    }
+    const result = decodeResponse(
+      OperationReceiptResponseSchema,
+      await this.jsonRequest("/v1/operations", {
+        method: "POST",
+        headers: { "idempotency-key": idempotencyKey },
+        body: envelope,
+        authenticated: true,
+      }),
+      "Operation commit",
+    )
+    return { cursor: result.cursor, logHash: result.chainHash }
   }
 
   async listDevices(): Promise<RemoteDevice[]> {
-    const result = await this.jsonRequest("/v1/devices", { method: "GET", authenticated: true })
-    if (!isRecord(result) || !Array.isArray(result.devices)) {
-      throw new Error("Server returned an invalid device registry")
-    }
-    return result.devices.map(parseDevice)
+    const result = decodeResponse(
+      DeviceListResponseSchema,
+      await this.jsonRequest("/v1/devices", { method: "GET", authenticated: true }),
+      "Device registry",
+    )
+    return result.devices.map((device) => ({
+      deviceId: device.deviceId,
+      signingPublicKey: device.signingPublicKey,
+      hpkePublicKey: device.hpkePublicKey,
+      certificate: device.certificate,
+      role: device.role,
+      authorizedAt: device.authorizedAt,
+      revokedAt: device.revokedAt,
+      deviceName: device.deviceName ?? null,
+      platform: device.platform ?? null,
+    }))
   }
 
   async updateDeviceDescriptor(descriptor: {
     deviceName: string
     platform: string
   }): Promise<void> {
-    await this.jsonRequest("/v1/device/descriptor", {
-      method: "PUT",
-      body: descriptor,
-      authenticated: true,
-    })
+    decodeResponse(
+      DeviceDescriptorResponseSchema,
+      await this.jsonRequest("/v1/device/descriptor", {
+        method: "PUT",
+        body: descriptor,
+        authenticated: true,
+      }),
+      "Device descriptor update",
+    )
   }
 
   async revokeDevice(
@@ -251,18 +294,16 @@ export class MeridianRemoteClient implements RemotePort {
     envelope: unknown,
   ): Promise<{ cursor: number; logHash: string }> {
     if (!isRecord(envelope)) throw new Error("Crypto adapter returned an invalid revocation")
-    const result = await this.jsonRequest(
-      `/v1/devices/${encodeURIComponent(targetDeviceId)}/revoke`,
-      {
+    const result = decodeResponse(
+      OperationReceiptResponseSchema,
+      await this.jsonRequest(`/v1/devices/${encodeURIComponent(targetDeviceId)}/revoke`, {
         method: "POST",
         body: { operation: envelope },
         authenticated: true,
-      },
+      }),
+      "Device revocation",
     )
-    return {
-      cursor: requiredNumber(result, "cursor"),
-      logHash: requiredString(result, "chainHash"),
-    }
+    return { cursor: result.cursor, logHash: result.chainHash }
   }
 
   async isDeviceAuthorized(deviceId: string): Promise<boolean> {
@@ -274,9 +315,12 @@ export class MeridianRemoteClient implements RemotePort {
       throw: false,
     })
     if (response.status === 404) {
-      const body = parseJsonBody(response, "Device authorization check")
-      if (isRecord(body) && isRecord(body.error) && body.error.code === "device_not_found") {
-        return false
+      const value = parseJsonBody(response, "Device authorization check")
+      try {
+        const body = decodeResponse(ErrorResponseSchema, value, "Device authorization check")
+        if (body.error.code === "device_not_found") return false
+      } catch {
+        // Normalize malformed 404 bodies below.
       }
       throw new Error("Device authorization check returned an invalid not-found response")
     }
@@ -285,21 +329,19 @@ export class MeridianRemoteClient implements RemotePort {
   }
 
   async createPairing(): Promise<PairingCapability> {
-    const result = await this.jsonRequest("/v1/pairings", {
-      method: "POST",
-      body: { expiresInSeconds: 300 },
-      authenticated: true,
-    })
-    return {
-      pairingId: requiredString(result, "pairingId"),
-      capability: requiredString(result, "capability"),
-      vaultId: requiredString(result, "vaultId"),
-      expiresAt: requiredNumber(result, "expiresAt"),
-    }
+    return decodeResponse(
+      PairingCapabilityResponseSchema,
+      await this.jsonRequest("/v1/pairings", {
+        method: "POST",
+        body: { expiresInSeconds: 300 },
+        authenticated: true,
+      }),
+      "Pairing creation",
+    )
   }
 
   async getPairingStatus(pairingId: string): Promise<PairingStatus> {
-    return parsePairingStatus(
+    return pairingStatus(
       await this.jsonRequest(`/v1/pairings/${encodeURIComponent(pairingId)}`, {
         method: "GET",
         authenticated: true,
@@ -308,7 +350,7 @@ export class MeridianRemoteClient implements RemotePort {
   }
 
   async getPairingProgress(pairingId: string, capability: string): Promise<PairingStatus> {
-    return parsePairingStatus(
+    return pairingStatus(
       await this.jsonRequest(`/v1/pairings/${encodeURIComponent(pairingId)}/status`, {
         method: "POST",
         body: { capability },
@@ -318,7 +360,7 @@ export class MeridianRemoteClient implements RemotePort {
   }
 
   async joinPairing(pairingId: string, payload: unknown): Promise<PairingResult> {
-    return parsePairingResult(
+    return pairingResult(
       await this.jsonRequest(`/v1/pairings/${encodeURIComponent(pairingId)}/join`, {
         method: "POST",
         body: payload,
@@ -328,7 +370,7 @@ export class MeridianRemoteClient implements RemotePort {
   }
 
   async approvePairing(pairingId: string, payload: unknown): Promise<PairingResult> {
-    return parsePairingResult(
+    return pairingResult(
       await this.jsonRequest(`/v1/pairings/${encodeURIComponent(pairingId)}/approve`, {
         method: "POST",
         body: payload,
@@ -338,7 +380,7 @@ export class MeridianRemoteClient implements RemotePort {
   }
 
   async releasePairing(pairingId: string, payload: unknown): Promise<PairingResult> {
-    return parsePairingResult(
+    return pairingResult(
       await this.jsonRequest(`/v1/pairings/${encodeURIComponent(pairingId)}/release`, {
         method: "POST",
         body: payload,
@@ -348,7 +390,7 @@ export class MeridianRemoteClient implements RemotePort {
   }
 
   async getPairingResult(pairingId: string, capability: string): Promise<PairingResult> {
-    return parsePairingResult(
+    return pairingResult(
       await this.jsonRequest(`/v1/pairings/${encodeURIComponent(pairingId)}/result`, {
         method: "POST",
         body: { capability },
@@ -358,7 +400,7 @@ export class MeridianRemoteClient implements RemotePort {
   }
 
   async confirmPairingOwner(pairingId: string): Promise<PairingResult> {
-    return parsePairingResult(
+    return pairingResult(
       await this.jsonRequest(`/v1/pairings/${encodeURIComponent(pairingId)}/confirm-owner`, {
         method: "POST",
         body: {},
@@ -368,7 +410,7 @@ export class MeridianRemoteClient implements RemotePort {
   }
 
   async confirmPairingCandidate(pairingId: string, payload: unknown): Promise<PairingResult> {
-    return parsePairingResult(
+    return pairingResult(
       await this.jsonRequest(`/v1/pairings/${encodeURIComponent(pairingId)}/confirm-candidate`, {
         method: "POST",
         body: payload,
@@ -378,7 +420,7 @@ export class MeridianRemoteClient implements RemotePort {
   }
 
   async completePairing(pairingId: string, payload: unknown): Promise<PairingResult> {
-    return parsePairingResult(
+    return pairingResult(
       await this.jsonRequest(`/v1/pairings/${encodeURIComponent(pairingId)}/complete`, {
         method: "POST",
         body: payload,
@@ -388,7 +430,7 @@ export class MeridianRemoteClient implements RemotePort {
   }
 
   async cancelPairing(pairingId: string, capability: string): Promise<PairingResult> {
-    return parsePairingResult(
+    return pairingResult(
       await this.jsonRequest(`/v1/pairings/${encodeURIComponent(pairingId)}/cancel`, {
         method: "POST",
         body: { capability },
@@ -398,7 +440,7 @@ export class MeridianRemoteClient implements RemotePort {
   }
 
   async rejectPairing(pairingId: string): Promise<PairingResult> {
-    return parsePairingResult(
+    return pairingResult(
       await this.jsonRequest(`/v1/pairings/${encodeURIComponent(pairingId)}/reject`, {
         method: "POST",
         body: {},
@@ -482,50 +524,33 @@ export class MeridianRemoteClient implements RemotePort {
     }
 
     const refresh = async () => {
-      const challengeResult = await this.jsonRequest("/v1/auth/challenge", {
-        method: "POST",
-        body: { deviceId: authentication.device.deviceId },
-        authenticated: false,
-      })
-      const challenge = requiredString(challengeResult, "challenge")
-      const challengeId = requiredString(challengeResult, "challengeId")
-      const proof = await authentication.signer.signChallenge(authentication.device, {
-        challengeId,
-        challenge,
-      })
-      let sessionResult: unknown
-      try {
-        sessionResult = await this.jsonRequest("/v1/auth/session", {
+      const challengeResult = decodeResponse(
+        AuthChallengeResponseSchema,
+        await this.jsonRequest("/v1/auth/challenge", {
           method: "POST",
-          body: {
-            ...proof,
-            supportedLogFormats: ["legacy-http-v1", "canonical-cbor-v1"],
-            supportedFeatures: ["epoch-transition-v1"],
-          },
+          body: { deviceId: authentication.device.deviceId },
           authenticated: false,
-        })
-      } catch (error) {
-        if (
-          !(error instanceof MeridianHttpError) ||
-          error.status !== 400 ||
-          error.code !== "invalid_request"
-        ) {
-          throw error
-        }
-        // A pre-upgrade Worker rejects the additive capability before consuming the challenge.
-        sessionResult = await this.jsonRequest("/v1/auth/session", {
+        }),
+        "Authentication challenge",
+      )
+      const proof = await authentication.signer.signChallenge(authentication.device, {
+        challengeId: challengeResult.challengeId,
+        challenge: challengeResult.challenge,
+      })
+      const sessionResult = decodeResponse(
+        AuthSessionResponseSchema,
+        await this.jsonRequest("/v1/auth/session", {
           method: "POST",
           body: proof,
           authenticated: false,
-        })
-      }
-      const sessionToken = requiredString(sessionResult, "sessionToken")
-      const sessionExpiresAt = requiredNumber(sessionResult, "expiresAt")
+        }),
+        "Authentication session",
+      )
       if (this.authentication !== authentication) {
         throw new Error("Device authentication changed during session creation")
       }
-      this.sessionToken = sessionToken
-      this.sessionExpiresAt = sessionExpiresAt
+      this.sessionToken = sessionResult.sessionToken
+      this.sessionExpiresAt = sessionResult.expiresAt
     }
 
     const promise = refresh().finally(() => {
@@ -559,18 +584,41 @@ export class MeridianRemoteClient implements RemotePort {
   }
 }
 
-function requiredNullableNumber(value: unknown, field: string): number | null {
-  if (!isRecord(value) || !(field in value)) {
-    throw new Error(`Server response field ${field} is invalid`)
+function pairingStatus(value: unknown): PairingStatus {
+  const result = decodeResponse(PairingStatusResponseSchema, value, "Pairing status")
+  return {
+    pairingId: result.pairingId,
+    status: result.status,
+    expiresAt: result.expiresAt,
+    ownerConfirmed: result.ownerConfirmed,
+    candidateConfirmed: result.candidateConfirmed,
+    ...(result.requestedAt === undefined || result.requestedAt === null
+      ? {}
+      : { requestedAt: result.requestedAt }),
+    ...(result.candidateConfirmation === undefined
+      ? {}
+      : { candidateConfirmation: result.candidateConfirmation }),
+    ...(result.candidate === undefined
+      ? {}
+      : { candidate: result.candidate, candidatePackage: JSON.stringify(result.candidate) }),
   }
-  return value[field] === null ? null : requiredNumber(value, field)
 }
 
-function requiredForever(value: unknown, field: string): "forever" {
-  if (!isRecord(value) || value[field] !== "forever") {
-    throw new Error(`Server response field ${field} is invalid`)
+function pairingResult(value: unknown): PairingResult {
+  const result = decodeResponse(PairingResultResponseSchema, value, "Pairing result")
+  return {
+    pairingId: result.pairingId,
+    status: result.status,
+    ...(result.deviceId ? { deviceId: result.deviceId } : {}),
+    ...(result.certificate ? { certificate: result.certificate } : {}),
+    ...(result.transcriptHash ? { transcriptHash: result.transcriptHash } : {}),
+    ...(result.verificationPreview ? { verificationPreview: result.verificationPreview } : {}),
+    ...(result.approvalSignature ? { approvalSignature: result.approvalSignature } : {}),
+    ...(result.hpkeTransfer ? { hpkeTransfer: result.hpkeTransfer } : {}),
+    ...(result.verificationStartedAt === undefined || result.verificationStartedAt === null
+      ? {}
+      : { verificationStartedAt: result.verificationStartedAt }),
   }
-  return "forever"
 }
 
 export function normalizeEndpoint(value: string): string {

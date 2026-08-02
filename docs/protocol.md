@@ -128,7 +128,7 @@ Before member self-removal, the plugin quiesces synchronization and durably stor
 
 A signed epoch declaration binds vault and epoch IDs, monotonic sequence, previous epoch ID, complete suite, creator, and reason. The initial and recovery epochs are recovery-signed. Authorized devices with `rotate-epoch` may create routine, revocation, or migration epochs.
 
-A routine transition is signed by the owner under the predecessor epoch. It binds the exact predecessor cursor/hash, next declaration, one HPKE key package for every active device, the previous recovery state ID, and a replacement encrypted recovery package. Each key package binds the vault, operation, predecessor, successor, and recipient. The Worker requires an exact active-device recipient set and confirmed client support.
+A routine transition is signed by the owner under the predecessor epoch. It binds the exact predecessor cursor/hash, next declaration, one HPKE key package for every active device, the previous recovery state ID, and a replacement encrypted recovery package. Each key package binds the vault, operation, predecessor, successor, and recipient. The Worker requires an exact active-device recipient set.
 
 The Worker appends the transition, advances its authoritative epoch, replaces recovery state by predecessor CAS, and cancels incomplete pairings in one Durable Object transaction. The transition is the final operation authorized by the predecessor epoch. All later operations must name the successor epoch. A concurrent write, pairing completion, recovery, or second rotation invalidates the prepared transition and causes a pull and exact rebuild.
 
@@ -140,7 +140,7 @@ A client MUST verify epoch authorization before use, decrypt its recipient packa
 - a transition whose previous ID does not match the accepted epoch;
 - an old-epoch operation authored after a transition or applicable revocation.
 
-After all active devices advertise epoch-transition support, the owner automatically creates the migration epoch. A later device revocation automatically creates another epoch whose recipient set excludes revoked devices. Rotation gives no retroactive secrecy. Pairing after rotation transfers the current key plus the bounded historical keyring; an in-progress pairing is fenced when rotation commits.
+A device revocation automatically creates another epoch whose recipient set excludes revoked devices. Rotation gives no retroactive secrecy. Pairing after rotation transfers the current key plus the bounded historical keyring; an in-progress pairing is fenced when rotation commits.
 
 ## Revisions and operations
 
@@ -180,7 +180,7 @@ Cursor 0 has the all-zero 32-byte hash. Each returned entry MUST match the calle
 
 Deployments created before canonical log verification use `legacy-http-v1`, which hashes the previous hash, the outer HTTP operation signing bytes, and the outer signature with the deployed length-prefixed `log-chain/v1` framing. Legacy checkpoints omit log-format fields and decode as legacy from cursor zero.
 
-Each successful signed authentication records canonical-log support for that device. Once every non-revoked device has recorded support, the owner client automatically appends one `log-format-transition` operation as the last legacy-hashed entry. Its canonical signed body commits to the exact previous cursor and hash and selects `canonical-cbor-v1`. The prepared operation is stored durably before upload and retries exactly after a crash or lost response. The Durable Object checks the predecessor and changes formats in the same transaction that appends the transition. The next entry uses the canonical formula above; old history is never rewritten. New vaults negotiate canonical hashing during setup. Clients that do not advertise canonical support receive `protocol_upgrade_required` after a transition and cannot write old-format entries.
+Some immutable histories contain one signed `log-format-transition` as their last legacy-hashed entry. Its body commits to the exact previous cursor and hash and selects `canonical-cbor-v1`; the next entry uses the canonical formula above. Clients retain this read-only verifier so initial pull, resumed pull, and history backfill can authenticate old entries without rewriting them. Current clients cannot create this operation. New vaults and all current writes require canonical hashing.
 
 Before acknowledging or advertising a newly applied cursor, a client durably persists its high-water mark and current log format. It rejects a lower cursor, lower generation, a format downgrade, or a different hash or format at the same cursor. Pairing includes a signed trusted checkpoint. Recovery includes a public checkpoint commitment and the same checkpoint inside authenticated ciphertext.
 
@@ -212,7 +212,7 @@ A pairing capability is server-side, short-lived, and single-use. The QR code is
 
 The recovery code encodes 256 random seed bits plus a 32-bit checksum in a versioned, grouped unpadded-base64url form. It is high-entropy ownership material, not a password. The server never receives it.
 
-Legacy recovery packages use AES-GCM under a key derived from the recovery seed. Owner-updated version-2 packages use HPKE to the recovery signing key converted to X25519 by the reviewed curve conversion. Their encrypted plaintext includes vault, current signed epoch and key, the bounded historical keyring, predecessor checkpoint, required transition operation ID, monotonic recovery sequence, and an owner signature with its recovery-rooted authorization chain. Associated data binds the recovery domain, vault, generation, KDF, and AEAD. A clear signed checkpoint is stored beside the ciphertext and MUST match the authenticated inner checkpoint.
+Version-2 recovery packages use HPKE to the recovery signing key converted to X25519 by the reviewed curve conversion. Their encrypted plaintext includes vault, current signed epoch and key, the bounded historical keyring, checkpoint, monotonic recovery sequence, and an authorized device signature with its recovery-rooted authorization chain. Owner-created epoch updates also bind the required transition operation ID. Associated data binds the recovery domain, vault, generation, KDF, and AEAD. A clear signed checkpoint is stored beside the ciphertext and MUST match the authenticated inner checkpoint. Older package formats are not accepted.
 
 The public recovery state ID is SHA-256 of canonical, domain-separated bytes containing the vault ID and the exact serialized encrypted recovery package. Recovery claim version 2 signs a stable recovery attempt ID, the previous recovery state ID, the challenge, replacement identity, and replacement package.
 

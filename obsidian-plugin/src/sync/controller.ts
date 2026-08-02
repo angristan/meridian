@@ -2,10 +2,7 @@ import type {
   ConfigCategory,
   CryptoPort,
   DeviceKeyMaterial,
-  EpochTransitionMaterial,
   LocalRevision,
-  LogFormat,
-  LogFormatUpgradeMaterial,
   PairingApprovalMaterial,
   PairingCapability,
   PairingDeviceDescriptor,
@@ -30,6 +27,10 @@ import {
 import type { JournalPort } from "../storage/journal"
 import { normalizeVaultPath } from "../vault/path-policy"
 import { ConflictService } from "./conflict-service"
+import {
+  EpochTransitionCoordinator,
+  type EpochTransitionStore,
+} from "./epoch-transition-coordinator"
 import { HistoryBackfillService } from "./history-backfill-service"
 import { HistoryService } from "./history-service"
 import { OperationApplier } from "./operation-applier"
@@ -38,24 +39,11 @@ import { PushEngine } from "./push-engine"
 import { Reconciler } from "./reconciler"
 import { RevisionLoader } from "./revision-loader"
 
-export interface ProtocolUpgradeStore {
-  load(): LogFormatUpgradeMaterial | null
-  save(material: LogFormatUpgradeMaterial): Promise<void>
-  clear(): Promise<void>
-}
-
-export interface EpochTransitionStore {
-  load(): EpochTransitionMaterial | null
-  save(material: EpochTransitionMaterial): Promise<void>
-  clear(): Promise<void>
-}
-
 export interface SyncControllerOptions {
   progressThrottleMs?: number
   now?: () => number
   selection?: () => SelectiveSyncSettings
   compute?: SyncComputePort
-  protocolUpgrade?: ProtocolUpgradeStore
   persistDevice?: (device: DeviceKeyMaterial) => Promise<void>
   epochTransition?: EpochTransitionStore
 }
@@ -79,8 +67,7 @@ export class SyncController {
   private readonly now: () => number
   private readonly compute: SyncComputePort
   private readonly selection: () => SelectiveSyncSettings
-  private readonly protocolUpgrade: ProtocolUpgradeStore | undefined
-  private readonly epochTransition: EpochTransitionStore | undefined
+  private readonly epochTransitions: EpochTransitionCoordinator
   private readonly persistDevice: (device: DeviceKeyMaterial) => Promise<void>
   private status: SyncStatus = { ...INITIAL_STATUS }
 
@@ -101,8 +88,6 @@ export class SyncController {
     this.now = options.now ?? Date.now
     this.selection = options.selection ?? (() => ({ excludedFolders: [], excludedExtensions: [] }))
     this.compute = options.compute ?? new BackgroundSyncCompute()
-    this.protocolUpgrade = options.protocolUpgrade
-    this.epochTransition = options.epochTransition
     this.persistDevice = options.persistDevice ?? (async () => {})
     const revisionLoader = new RevisionLoader(remote, crypto, () => vault.maxFileBytes())
     const applier = new OperationApplier(
@@ -127,6 +112,17 @@ export class SyncController {
       this.persistDevice,
     )
     this.pushEngine = new PushEngine(vault, journal, remote, crypto)
+    this.epochTransitions = new EpochTransitionCoordinator(
+      journal,
+      remote,
+      crypto,
+      options.epochTransition,
+      this.persistDevice,
+      (device) => {
+        this.device = device
+      },
+      (patch) => this.updateStatus(patch),
+    )
   }
 
   async start(device: DeviceKeyMaterial): Promise<void> {
@@ -282,12 +278,6 @@ export class SyncController {
       message: "Conflict resolved",
       queued: (await this.journal.listPending()).length,
     })
-  }
-
-  async logFormat(): Promise<LogFormat> {
-    const checkpoint =
-      (await this.journal.getCheckpoint()) ?? this.requireDevice().trustedCheckpoint
-    return checkpoint.logFormat ?? "legacy-http-v1"
   }
 
   async storageUsage() {
@@ -520,8 +510,10 @@ export class SyncController {
     this.device = pull.device
     if (pull.stopped || this.stopRequested) return
     await this.conflictService.resolveEquivalent()
-    if (await this.retryPendingProtocolUpgrade()) return
-    if (await this.retryPendingEpochTransition()) return
+    if (await this.epochTransitions.resumePrepared(this.requireDevice())) {
+      this.rerunReason = mergeSyncReasons(this.rerunReason, "notification")
+      return
+    }
 
     this.updateStatus({ phase: "pushing", message: "Uploading local changes", progress: null })
     const push = await this.pushEngine.push(
@@ -543,8 +535,10 @@ export class SyncController {
       this.rerunReason = mergeSyncReasons(this.rerunReason, "notification")
     }
     if (push.error) throw push.error
-    if (!push.committed && (await this.startAutomaticProtocolUpgrade(this.requireDevice()))) return
-    if (!push.committed && (await this.startAutomaticEpochTransition(this.requireDevice()))) return
+    if (!push.committed && (await this.epochTransitions.prepareNext(this.requireDevice()))) {
+      this.rerunReason = mergeSyncReasons(this.rerunReason, "notification")
+      return
+    }
 
     await this.acknowledgeRetention()
     const lastSyncedAt = this.now()
@@ -558,142 +552,6 @@ export class SyncController {
       error: null,
       progress: null,
     })
-  }
-
-  private async retryPendingProtocolUpgrade(): Promise<boolean> {
-    const pending = this.protocolUpgrade?.load()
-    if (!pending) return false
-    if ((await this.logFormat()) === "canonical-cbor-v1") {
-      await this.protocolUpgrade?.clear()
-      return false
-    }
-    return this.commitAutomaticProtocolUpgrade(pending)
-  }
-
-  private async startAutomaticProtocolUpgrade(device: DeviceKeyMaterial): Promise<boolean> {
-    if (!this.protocolUpgrade || (await this.logFormat()) !== "legacy-http-v1") return false
-    if ((await this.journal.listPending()).length > 0) return false
-    const devices = await this.remote.listDevices()
-    const current = devices.find((candidate) => candidate.deviceId === device.deviceId)
-    const active = devices.filter((candidate) => candidate.revokedAt === null)
-    if (
-      current?.role !== "owner" ||
-      active.length === 0 ||
-      active.some((candidate) => !candidate.supportsCanonicalLog)
-    ) {
-      return false
-    }
-    const checkpoint = (await this.journal.getCheckpoint()) ?? device.trustedCheckpoint
-    const material = await this.crypto.createLogFormatUpgrade(device, checkpoint)
-    await this.protocolUpgrade.save(material)
-    return this.commitAutomaticProtocolUpgrade(material)
-  }
-
-  private async commitAutomaticProtocolUpgrade(
-    material: LogFormatUpgradeMaterial,
-  ): Promise<boolean> {
-    this.updateStatus({
-      phase: "pushing",
-      message: "Upgrading vault security",
-      error: null,
-      progress: null,
-    })
-    try {
-      await this.remote.commit(material.envelope, material.operationId)
-    } catch (error) {
-      if (error instanceof MeridianHttpError && error.code === "log_transition_conflict") {
-        await this.protocolUpgrade?.clear()
-        this.rerunReason = mergeSyncReasons(this.rerunReason, "notification")
-        return true
-      }
-      throw error
-    }
-    this.rerunReason = mergeSyncReasons(this.rerunReason, "notification")
-    return true
-  }
-
-  private async retryPendingEpochTransition(): Promise<boolean> {
-    const pending = this.epochTransition?.load()
-    if (!pending) return false
-    const device = this.requireDevice()
-    if (device.epochId === pending.nextEpochId) {
-      await this.epochTransition?.clear()
-      return false
-    }
-    return this.commitAutomaticEpochTransition(pending)
-  }
-
-  private async startAutomaticEpochTransition(device: DeviceKeyMaterial): Promise<boolean> {
-    if (
-      !this.epochTransition ||
-      device.requiredTransitionOperationId !== null ||
-      (await this.logFormat()) !== "canonical-cbor-v1" ||
-      (await this.journal.listPending()).length > 0
-    ) {
-      return false
-    }
-    const devices = await this.remote.listDevices()
-    const current = devices.find((candidate) => candidate.deviceId === device.deviceId)
-    const active = devices.filter((candidate) => candidate.revokedAt === null)
-    if (
-      current?.role !== "owner" ||
-      active.length === 0 ||
-      active.some((candidate) => !candidate.supportsEpochTransitions)
-    ) {
-      return false
-    }
-    const revocations = await this.journal.listDeviceRevocations()
-    const newestRevocation = revocations.reduce(
-      (latest, revocation) => Math.max(latest, revocation.cursor),
-      0,
-    )
-    const reason =
-      device.epochSequence === 0
-        ? "migration"
-        : newestRevocation > device.epochActivatedAtCursor
-          ? "revocation"
-          : null
-    if (reason === null) return false
-
-    const localCheckpoint = (await this.journal.getCheckpoint()) ?? device.trustedCheckpoint
-    const refreshed = await this.crypto.refreshTrustedCheckpoint(device, localCheckpoint)
-    await this.persistDevice(refreshed)
-    this.device = refreshed
-    const recovery = await this.remote.getRecoveryPackage()
-    const material = await this.crypto.createEpochTransition(
-      refreshed,
-      active,
-      recovery.recoveryStateId,
-      reason,
-    )
-    await this.epochTransition.save(material)
-    return this.commitAutomaticEpochTransition(material)
-  }
-
-  private async commitAutomaticEpochTransition(
-    material: EpochTransitionMaterial,
-  ): Promise<boolean> {
-    this.updateStatus({
-      phase: "pushing",
-      message: "Rotating vault encryption keys",
-      error: null,
-      progress: null,
-    })
-    try {
-      await this.remote.commit(material.envelope, material.operationId)
-    } catch (error) {
-      if (
-        error instanceof MeridianHttpError &&
-        (error.code === "epoch_transition_conflict" || error.code === "epoch_recipient_conflict")
-      ) {
-        await this.epochTransition?.clear()
-        this.rerunReason = mergeSyncReasons(this.rerunReason, "notification")
-        return true
-      }
-      throw error
-    }
-    this.rerunReason = mergeSyncReasons(this.rerunReason, "notification")
-    return true
   }
 
   private async acknowledgeRetention(): Promise<void> {

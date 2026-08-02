@@ -48,7 +48,7 @@ import { generateHpkeKeyPair } from "./hpke.js"
 import { deriveRecoveryKeys } from "./kdf.js"
 import {
   decryptRecoveryPackage,
-  encryptRecoveryPackage,
+  encryptRecoveryPackageForPublicKey,
   formatRecoveryCode,
   generateRecoverySeed,
   parseRecoveryCode,
@@ -57,7 +57,7 @@ import { randomBytes } from "./runtime.js"
 import { generateSigningKeyPair, sign, signingKeyPairFromSeed } from "./signatures.js"
 
 export interface DeviceKeyBundle {
-  readonly version: 1 | 2
+  readonly version: 2
   readonly vaultId: VaultId
   readonly deviceId: DeviceId
   readonly signingPrivateKey: Ed25519PrivateKey
@@ -82,9 +82,7 @@ export interface FirstDeviceClaimBundle {
 
 const randomId = () => randomBytes(16)
 
-export async function createFirstDeviceClaimBundle(
-  initialLogFormat: LogFormat = LogFormat.CanonicalCborV1,
-): Promise<FirstDeviceClaimBundle> {
+export async function createFirstDeviceClaimBundle(): Promise<FirstDeviceClaimBundle> {
   const [signing, hpke] = await Promise.all([
     Promise.resolve(generateSigningKeyPair()),
     generateHpkeKeyPair(),
@@ -138,8 +136,8 @@ export async function createFirstDeviceClaimBundle(
       logHash: hashBytes(ZERO_HASH),
       signerDeviceId: device,
       protocolGeneration: CIPHER_SUITE.protocolGeneration,
-      initialLogFormat,
-      logFormat: initialLogFormat,
+      initialLogFormat: LogFormat.CanonicalCborV1,
+      logFormat: LogFormat.CanonicalCborV1,
     },
     signing.privateKey,
   )
@@ -158,7 +156,7 @@ export async function createFirstDeviceClaimBundle(
     epochActivatedAtCursor: 0,
     checkpoint,
   }
-  const encryptedRecoveryPackage = await encryptRecoveryPackage(
+  const encryptedRecoveryPackage = await encryptRecoveryPackageForPublicKey(
     {
       vaultId: vault,
       epoch,
@@ -167,7 +165,12 @@ export async function createFirstDeviceClaimBundle(
       checkpoint,
       recoverySequence: 0,
     },
-    recoveryKeys.encryptionKey,
+    recoverySigning.publicKey,
+    {
+      deviceId: device,
+      signingPrivateKey: signing.privateKey,
+      authorizationChain: [certificate],
+    },
   )
   return {
     device: bundle,
@@ -193,7 +196,6 @@ export async function recoverDeviceFromPackage(
   const recoverySigning = signingKeyPairFromSeed(recoveryKeys.signingPrivateKey)
   const state = await decryptRecoveryPackage(
     encryptedPackage,
-    recoveryKeys.encryptionKey,
     recoveryKeys.signingPrivateKey,
     recoverySigning.publicKey,
   )
@@ -269,7 +271,7 @@ export async function recoverDeviceFromPackage(
       : { requiredTransitionOperationId: state.requiredTransitionOperationId }),
     checkpoint,
   }
-  const nextPackage = await encryptRecoveryPackage(
+  const nextPackage = await encryptRecoveryPackageForPublicKey(
     {
       ...state,
       epoch: nextEpoch,
@@ -278,7 +280,12 @@ export async function recoverDeviceFromPackage(
       checkpoint,
       recoverySequence: state.recoverySequence + 1,
     },
-    recoveryKeys.encryptionKey,
+    recoverySigning.publicKey,
+    {
+      deviceId: replacementDeviceId,
+      signingPrivateKey: signing.privateKey,
+      authorizationChain: [certificate],
+    },
   )
   return {
     device,
@@ -340,7 +347,7 @@ function nonNegativeInteger(value: CborValue | undefined, label: string): number
 
 export function deserializeDeviceKeyBundle(encoded: Uint8Array): DeviceKeyBundle {
   const value = record(decodeCanonical(encoded))
-  if (value.version !== 1 && value.version !== 2) {
+  if (value.version !== 2) {
     throw new CryptoError("INVALID_DEVICE_BUNDLE", "Device key bundle version is unsupported")
   }
   const keys = [
@@ -355,15 +362,12 @@ export function deserializeDeviceKeyBundle(encoded: Uint8Array): DeviceKeyBundle
     "epoch",
     "vaultEpochKey",
     "epochKeys",
-    ...(value.version === 2 ? ["epochActivatedAtCursor"] : []),
+    "epochActivatedAtCursor",
     ...(value.requiredTransitionOperationId === undefined ? [] : ["requiredTransitionOperationId"]),
     "checkpoint",
   ].sort()
   if (Object.keys(value).sort().join("\0") !== keys.join("\0")) {
     throw new CryptoError("INVALID_DEVICE_BUNDLE", "Device key bundle has an unsupported shape")
-  }
-  if (value.version === 1 && value.requiredTransitionOperationId !== undefined) {
-    throw new CryptoError("INVALID_DEVICE_BUNDLE", "Legacy device bundle contains new epoch state")
   }
   const signingPrivate = ed25519PrivateKey(
     fixed(value.signingPrivateKey, 32, "signing private key"),
@@ -432,10 +436,10 @@ export function deserializeDeviceKeyBundle(encoded: Uint8Array): DeviceKeyBundle
     epoch: decodeEpochDeclaration(value.epoch),
     vaultEpochKey: vaultEpochKey(fixed(value.vaultEpochKey, 32, "vault epoch key")),
     epochKeys,
-    epochActivatedAtCursor:
-      value.version === 1
-        ? 0
-        : nonNegativeInteger(value.epochActivatedAtCursor, "epoch activation cursor"),
+    epochActivatedAtCursor: nonNegativeInteger(
+      value.epochActivatedAtCursor,
+      "epoch activation cursor",
+    ),
     ...(requiredTransitionOperationId === undefined ? {} : { requiredTransitionOperationId }),
     checkpoint: decodeCheckpoint(value.checkpoint),
   }

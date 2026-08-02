@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { isSafeOrphanCandidate } from "../src/vault/operations"
+import { isSafeOrphanCandidate } from "../src/vault/blobs"
 
 describe("safe orphan pruning", () => {
   const cutoff = 1_000

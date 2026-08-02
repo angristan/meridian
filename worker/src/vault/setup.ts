@@ -1,5 +1,5 @@
 import { computeRecoveryStateId } from "@meridian/crypto"
-import { vaultId } from "@meridian/protocol"
+import { SetupClaimSchema, vaultId } from "@meridian/protocol"
 import {
   assertIdentifier,
   base64UrlDecode,
@@ -10,7 +10,6 @@ import {
   ZERO_HASH,
 } from "../encoding"
 import { assert, HttpError } from "../errors"
-import { SetupClaimSchema } from "../schemas"
 import {
   cleanupExpired,
   decode,
@@ -79,10 +78,6 @@ export class VaultSetup {
     )
     validateOpaqueData(claim.initialDevice.certificate, MAX_CERTIFICATE_BYTES, "certificate")
     validateSignature(claim.proof)
-    assert(
-      claim.logFormat === "canonical-cbor-v1",
-      new HttpError(426, "protocol_upgrade_required", "Update Meridian and use a new setup link"),
-    )
     validateRecoveryRootedIdentity(
       claim.initialDevice,
       claim.vaultId,
@@ -165,8 +160,8 @@ export class VaultSetup {
       this.sql.exec(
         `INSERT INTO devices(
           device_id, signing_public_key, hpke_public_key, certificate, role, authorized_at,
-          authorized_by, supports_canonical_log
-        ) VALUES (?, ?, ?, ?, 'owner', ?, NULL, 1)`,
+          authorized_by
+        ) VALUES (?, ?, ?, ?, 'owner', ?, NULL)`,
         claim.initialDevice.deviceId,
         claim.initialDevice.signingPublicKey,
         claim.initialDevice.hpkePublicKey,

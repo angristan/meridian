@@ -12,7 +12,6 @@ import type {
   EpochTransitionMaterial,
   HistoryRevisionMetadata,
   LogFormat,
-  LogFormatUpgradeMaterial,
   PairedDeviceMaterial,
   PairingApprovalMaterial,
   PairingCapability,
@@ -416,22 +415,6 @@ export class FakeCrypto implements CryptoPort {
         ...predecessor,
         cursor: operation.cursor,
         logHash: operation.logHash,
-      },
-    }
-  }
-
-  async createLogFormatUpgrade(
-    device: DeviceKeyMaterial,
-    checkpoint: TrustedCheckpoint,
-  ): Promise<LogFormatUpgradeMaterial> {
-    return {
-      operationId: "log-format-transition",
-      envelope: {
-        operationId: "log-format-transition",
-        authorDeviceId: device.deviceId,
-        type: "log-format-transition",
-        previousCursor: checkpoint.cursor,
-        previousHash: checkpoint.logHash,
       },
     }
   }

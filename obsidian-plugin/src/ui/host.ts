@@ -6,7 +6,6 @@ import type {
   DeletedFileRecord,
   LocalCompactionResult,
   LocalRevision,
-  LogFormat,
   MeridianSettings,
   PairingInvitation,
   PairingStatus,
@@ -27,14 +26,8 @@ export interface MeridianUiHost {
   openSettings(): void
   syncNow(): Promise<void>
   repairLocalIndex(): Promise<void>
-  getLogFormat(): Promise<LogFormat | null>
   getEpochStatus(): Promise<{ sequence: number; pending: boolean } | null>
-  connectFromSetup(
-    endpoint: string,
-    setupSession: string,
-    claimChallenge: string,
-    logFormat?: LogFormat,
-  ): Promise<void>
+  connectFromSetup(endpoint: string, setupSession: string, claimChallenge: string): Promise<void>
   recoverVault(endpoint: string, recoveryCode: string): Promise<void>
   disconnect(): Promise<void>
   resumeConnection(): Promise<void>

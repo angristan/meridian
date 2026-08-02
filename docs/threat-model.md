@@ -113,12 +113,12 @@ Local vault use remains available offline. Push/pull is idempotent and resumable
 | Stolen session | short expiry, exact authorization checks | bearer can act until expiry, bounded by certificate permissions |
 | Pairing MITM/substitution | signed device descriptor, ciphertext-free verification preview, two explicit phrase confirmations, owner-local HPKE transfer withholding, full signed transcript, certificate chain, 40-bit phrase, short expiry | user can confirm a mismatched phrase or attacker can guess at 1 in 2^40 per attempt |
 | Lost device | revoke certificate, reject later operations/sessions, recipient-exact automatic epoch rotation | downloaded history and old keys cannot be erased |
-| Malicious or stale recovery package | legacy AES-GCM or owner-signed HPKE package, vault-bound context, required transition ID, public state ID, predecessor CAS | a malicious server can still roll back its complete stored state; an independent checkpoint is needed to detect all-device-loss rollback |
+| Malicious or stale recovery package | authorized version-2 HPKE package, vault-bound context, required transition ID for owner updates, public state ID, predecessor CAS | a malicious server can still roll back its complete stored state; an independent checkpoint is needed to detect all-device-loss rollback |
 | Server rollback | persisted cursor/hash/generation, signed transferred checkpoints | isolated split views are not fully detectable |
 | Downgrade | complete suite in signed epoch; durable highest generation/sequence | a compromised endpoint can alter its own local floor |
 | Parser bombs | closed schemas, strict canonical subset, bounded bytes/depth/collections/chunks | host memory pressure still requires platform testing |
 | Partial write/crash | immutable blobs/revisions, byte reservation plus R2 confirmation, server transaction, local journal, apply-before-cursor | abandoned ciphertext requires later conservative GC |
-| Storage exhaustion | optional atomic per-vault reservations, emergency security headroom, local pressure warnings, lossless compaction, fail-closed `507`/IndexedDB transaction | infinite history grows without bound; Cloudflare and browser hard limits can still stop new writes |
+| Storage exhaustion | local pressure warnings, lossless compaction, conservative orphan cleanup, and fail-closed IndexedDB transactions | infinite history grows without bound; Cloudflare and browser hard limits can still stop new writes |
 | Wrong clock | causality from parents/cursors; timestamps are hints | expiry checks need reasonable local/server time policy |
 | Path collision | NFC, relative paths, case-fold collision detection, deterministic conflict names | platform-specific reserved names need adapter tests |
 | Malicious notification | notification is a hint; HTTP pull is authoritative | reconnect storms require backoff/rate limits |

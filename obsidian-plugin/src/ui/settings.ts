@@ -3,325 +3,66 @@ import {
   Notice,
   Setting,
   type SettingDefinition,
+  type SettingDefinitionGroup,
   type SettingDefinitionItem,
 } from "obsidian"
 import { connectionControlState } from "../plugin/connection-control"
-import type { MeridianSettingKey } from "../plugin/settings-controls"
-import { normalizeExcludedExtension, normalizeExcludedFolder } from "../vault/path-policy"
+import {
+  getMeridianControlValue,
+  type MeridianSettingKey,
+  setMeridianControlValue,
+} from "../plugin/settings-controls"
 import { ConnectionModal, RecoveryConnectModal } from "./connection-modals"
 import type { MeridianUiHost } from "./host"
 import { StorageModal } from "./storage-modal"
 
+interface LegacySettingPresentation {
+  description?: false
+  button?: {
+    label: string
+    disabled?: boolean | (() => boolean)
+    wait?: boolean
+    warning?: boolean
+  }
+  visible?: boolean | (() => boolean)
+}
+
+type MeridianSettingSpec = SettingDefinition<MeridianSettingKey> & {
+  legacy?: LegacySettingPresentation
+}
+
+type MeridianSettingGroupSpec = Omit<SettingDefinitionGroup<MeridianSettingKey>, "items"> & {
+  items: MeridianSettingSpec[]
+  legacy?: {
+    description?: string
+    heading?: boolean
+  }
+}
+
 export function renderSettings(container: HTMLElement, host: MeridianUiHost): void {
   container.empty()
-  const connection = connectionControlState(host.settings, host.getStatus().phase)
-  const configured = connection.kind !== "unconfigured"
-  const removalPending = host.settings.pendingDeviceRemoval !== null
-  const pairingPending = host.settings.pendingPairingCompletion !== null
-
-  new Setting(container)
-    .setName("Connection")
-    .setDesc(configured ? host.settings.endpoint : "Not connected")
-    .addButton((button) =>
-      button
-        .setButtonText(connection.label)
-        .setDisabled(connection.disabled)
-        .onClick(async () => {
-          const action = connection.action
-          if (action === "connect") {
-            new ConnectionModal(host).open()
-            return
-          }
-          if (action === null) return
-          button.setDisabled(true)
-          try {
-            if (action === "pause") await host.disconnect()
-            else await host.resumeConnection()
-            renderSettings(container, host)
-            new Notice(action === "pause" ? "Meridian sync paused" : "Meridian sync resumed")
-          } catch (error) {
-            new Notice(error instanceof Error ? error.message : "Unable to change sync state")
-            button.setDisabled(false)
-          }
-        }),
-    )
-
-  new Setting(container)
-    .setName("Device name")
-    .setDesc("A local label shown when managing authorized devices.")
-    .addText((text) =>
-      text.setValue(host.settings.deviceName).onChange(async (value) => {
-        host.settings.deviceName = value.trim().slice(0, 80)
-        await host.saveSettings()
-      }),
-    )
-
-  if (pairingPending) {
-    new Setting(container)
-      .setName("Finish pairing")
-      .setDesc(
-        "The keys are stored locally, but server authorization still needs confirmation. Retry safely without creating another device identity.",
-      )
-      .addButton((button) =>
-        button
-          .setButtonText("Retry pairing")
-          .setCta()
-          .onClick(async () => {
-            button.setDisabled(true)
-            try {
-              await host.completePendingPairing()
-              renderSettings(container, host)
-              new Notice("Device pairing completed")
-            } catch (error) {
-              new Notice(error instanceof Error ? error.message : "Unable to finish pairing")
-              button.setDisabled(false)
-            }
-          }),
-      )
-  } else if (configured) {
-    const removal = new Setting(container)
-      .setName("Remove this device")
-      .setDesc("Checking whether this device can remove its Meridian identity…")
-    let hasButton = false
-    const addRemovalButton = () => {
-      if (hasButton) return
-      hasButton = true
-      removal.addButton((button) =>
-        button
-          .setButtonText("Remove")
-          .setWarning()
-          .onClick(() =>
-            new RemoveCurrentDeviceModal(host, () => renderSettings(container, host)).open(),
-          ),
-      )
-    }
-    if (removalPending) {
-      removal.setDesc(
-        "A previous removal attempt is pending. Retry to confirm server revocation and finish local cleanup.",
-      )
-      removal.addButton((button) =>
-        button
-          .setButtonText("Retry removal")
-          .setWarning()
-          .onClick(() =>
-            new RemoveCurrentDeviceModal(host, () => renderSettings(container, host)).open(),
-          ),
-      )
-    } else {
-      void host
-        .getDevices()
-        .then((devices) => {
-          const current = devices.find((device) => device.deviceId === host.settings.deviceId)
-          if (!current || current.revokedAt !== null) {
-            removal.setDesc(
-              "This identity may already be revoked. Remove its local Meridian connection to pair again.",
-            )
-            addRemovalButton()
-            return
-          }
-          if (current.role === "owner") {
-            removal.setDesc(
-              "The owner device cannot remove itself. Use recovery from another device after owner loss.",
-            )
-            return
-          }
-          removal.setDesc(
-            "Permanently revoke this device and forget its local Meridian connection. Vault files are kept.",
-          )
-          addRemovalButton()
-        })
-        .catch(() => {
-          removal.setDesc(
-            "Unable to verify this identity. Removal will proceed only if the server confirms it safely.",
-          )
-          addRemovalButton()
-        })
-    }
-  }
-
-  new Setting(container).setName("Selective sync").setHeading()
-  container.createDiv({
-    cls: "setting-item-description meridian-section-description",
-    text: "Exclusions are local to this device. Excluded files remain in the vault and in remote history. Re-enabling a locally changed file creates a new revision instead of deleting prior versions.",
-  })
-  new Setting(container)
-    .setName("Excluded folders")
-    .setDesc(
-      "One vault-relative folder per line. Hidden folders and Obsidian configuration are managed separately.",
-    )
-    .addTextArea((text) => {
-      text.inputEl.rows = 3
-      return text
-        .setPlaceholder("Archive\nAttachments/private")
-        .setValue(host.settings.selectiveSync.excludedFolders.join("\n"))
-        .onChange(async (value) => {
-          host.settings.selectiveSync.excludedFolders = normalizeList(
-            value.split("\n"),
-            normalizeExcludedFolder,
-          )
-          await host.saveSettings()
-        })
-    })
-  new Setting(container)
-    .setName("Excluded file extensions")
-    .setDesc("Comma-separated extensions without a leading dot, for example mov, zip, or psd.")
-    .addText((text) =>
-      text
-        .setPlaceholder("mov, zip")
-        .setValue(host.settings.selectiveSync.excludedExtensions.join(", "))
-        .onChange(async (value) => {
-          host.settings.selectiveSync.excludedExtensions = normalizeList(
-            value.split(/[\s,]+/),
-            normalizeExcludedExtension,
-          )
-          await host.saveSettings()
-        }),
-    )
-  new Setting(container)
-    .setName("Apply selective sync")
-    .setDesc(
-      "Scan now with the current exclusions. Changing exclusions never creates deletion records.",
-    )
-    .addButton((button) =>
-      button.setButtonText("Apply now").onClick(async () => {
-        button.setDisabled(true)
-        try {
-          await host.syncNow()
-          new Notice("Selective sync settings applied")
-        } catch (error) {
-          new Notice(error instanceof Error ? error.message : "Unable to apply selective sync")
-        } finally {
-          button.setDisabled(false)
-        }
-      }),
-    )
-
-  new Setting(container).setName("Configuration sync").setHeading()
-  container.createDiv({
-    cls: "setting-item-description meridian-section-description",
-    text: "Selections are local to this device. Workspace layouts, caches, temporary files, plugin state, and secrets are always excluded.",
-  })
-  const categories = [
-    ["main", "Main settings"],
-    ["appearance", "Appearance"],
-    ["themes", "Themes and CSS snippets"],
-    ["hotkeys", "Hotkeys"],
-    ["core-plugins", "Active core plugin list"],
-    ["core-plugin-settings", "Core plugin settings"],
-  ] as const
-  for (const [category, label] of categories) {
-    new Setting(container).setName(label).addToggle((toggle) =>
-      toggle.setValue(host.settings.configCategories[category]).onChange(async (value) => {
-        host.settings.configCategories[category] = value
-        await host.saveSettings()
-        await host.syncNow()
-      }),
-    )
-  }
-
-  new Setting(container).setName("Network and mobile").setHeading()
-  new Setting(container)
-    .setName("Polling interval")
-    .setDesc("Fallback interval in seconds when live notifications are unavailable.")
-    .addSlider((slider) =>
-      slider
-        .setLimits(15, 300, 15)
-        .setDynamicTooltip()
-        .setValue(host.settings.pollIntervalSeconds)
-        .onChange(async (value) => {
-          host.settings.pollIntervalSeconds = value
-          await host.saveSettings()
-        }),
-    )
-  new Setting(container)
-    .setName("Full scan interval")
-    .setDesc("Periodic reconciliation recovers file events missed while iOS was suspended.")
-    .addSlider((slider) =>
-      slider
-        .setLimits(1, 30, 1)
-        .setDynamicTooltip()
-        .setValue(host.settings.scanIntervalMinutes)
-        .onChange(async (value) => {
-          host.settings.scanIntervalMinutes = value
-          await host.saveSettings()
-        }),
-    )
-  new Setting(container)
-    .setName("Attachment size limit")
-    .setDesc("Whole-file mobile APIs require a conservative per-file memory limit in MiB.")
-    .addDropdown((dropdown) =>
-      dropdown
-        .addOptions({ "16": "16 MiB", "32": "32 MiB", "64": "64 MiB", "128": "128 MiB" })
-        .setValue(String(host.settings.maxFileSizeMiB))
-        .onChange(async (value) => {
-          host.settings.maxFileSizeMiB = Number(value)
-          await host.saveSettings()
-        }),
-    )
-
-  new Setting(container).setName("Security and protocol").setHeading()
-  const protocolUpgrade = new Setting(container)
-    .setName("Vault protocol")
-    .setDesc("Checking the signed operation log format…")
-  configureProtocolUpgrade(protocolUpgrade, host)
-  const epochStatus = new Setting(container)
-    .setName("Encryption epoch")
-    .setDesc("Checking encryption key rotation state…")
-  configureEpochStatus(epochStatus, host)
-
-  new Setting(container).setName("Storage and retention").setHeading()
-  new Setting(container)
-    .setName("Storage usage")
-    .setDesc("Review encrypted blob, operation, checkpoint, and snapshot storage.")
-    .addButton((button) =>
-      button
-        .setButtonText("View usage")
-        .setDisabled(!configured)
-        .onClick(() => new StorageModal(host).open()),
-    )
-  new Setting(container)
-    .setName("Automatic pruning")
-    .setDesc(
-      "Unavailable until every active device can acknowledge and rebootstrap from a signed generation-aware snapshot.",
-    )
-    .addButton((button) => button.setButtonText("Not available").setDisabled(true))
-
-  new Setting(container).setName("Recovery and repair").setHeading()
-  new Setting(container)
-    .setName("Recover vault ownership")
-    .setDesc("Use the offline recovery code after losing every authorized device.")
-    .addButton((button) =>
-      button
-        .setButtonText("Recover")
-        .setWarning()
-        .onClick(() => new RecoveryConnectModal(host).open()),
-    )
-  new Setting(container)
-    .setName("Rebuild local index")
-    .setDesc(
-      "Deletes only rebuildable local scan state. Remote history and encrypted vault data remain intact.",
-    )
-    .addButton((button) =>
-      button
-        .setButtonText("Rebuild")
-        .setWarning()
-        .onClick(async () => {
-          await host.repairLocalIndex()
-          new Notice("Meridian local index rebuilt")
-        }),
-    )
+  const groups = createMeridianSettingGroups(host, () => renderSettings(container, host))
+  for (const group of groups) renderLegacyGroup(container, host, group)
 }
 
 export function getMeridianSettingDefinitions(
   host: MeridianUiHost,
   refresh: () => void,
 ): SettingDefinitionItem<MeridianSettingKey>[] {
+  return createMeridianSettingGroups(host, refresh)
+}
+
+function createMeridianSettingGroups(
+  host: MeridianUiHost,
+  refresh: () => void,
+): MeridianSettingGroupSpec[] {
   const connection = connectionControlState(host.settings, host.getStatus().phase)
   const configured = connection.kind !== "unconfigured"
   return [
     {
       type: "group",
       heading: "Connection and device",
+      legacy: { heading: false },
       items: [
         {
           name: "Connection",
@@ -337,7 +78,7 @@ export function getMeridianSettingDefinitions(
         },
         {
           name: "Finish pairing",
-          desc: "Retry a safely stored pairing completion without creating another identity.",
+          desc: "The keys are stored locally, but server authorization still needs confirmation. Retry safely without creating another device identity.",
           visible: () => host.settings.pendingPairingCompletion !== null,
           render: (setting) => configurePairingRetry(setting, host, refresh),
         },
@@ -353,10 +94,14 @@ export function getMeridianSettingDefinitions(
     {
       type: "group",
       heading: "Selective sync",
+      legacy: {
+        description:
+          "Exclusions are local to this device. Excluded files remain in the vault and in remote history. Re-enabling a locally changed file creates a new revision instead of deleting prior versions.",
+      },
       items: [
         {
           name: "Excluded folders",
-          desc: "Device-local vault folders that Meridian leaves untouched. One folder per line.",
+          desc: "One vault-relative folder per line. Hidden folders and Obsidian configuration are managed separately.",
           aliases: ["ignore folders", "select folders", "files"],
           control: {
             type: "textarea",
@@ -367,7 +112,7 @@ export function getMeridianSettingDefinitions(
         },
         {
           name: "Excluded file extensions",
-          desc: "Device-local file types that Meridian leaves untouched, separated by commas.",
+          desc: "Comma-separated extensions without a leading dot, for example mov, zip, or psd.",
           aliases: ["ignore file types", "attachments", "extensions"],
           control: {
             type: "text",
@@ -377,15 +122,20 @@ export function getMeridianSettingDefinitions(
         },
         {
           name: "Apply selective sync",
-          desc: "Scan now. Changing exclusions never creates remote deletion records.",
+          desc: "Scan now with the current exclusions. Changing exclusions never creates deletion records.",
           aliases: ["scan exclusions"],
-          action: () => void runSettingAction(host.syncNow(), "Selective sync settings applied"),
+          action: () => runSettingAction(host.syncNow(), "Selective sync settings applied"),
+          legacy: { button: { label: "Apply now", wait: true } },
         },
       ],
     },
     {
       type: "group",
       heading: "Configuration sync",
+      legacy: {
+        description:
+          "Selections are local to this device. Workspace layouts, caches, temporary files, plugin state, and secrets are always excluded.",
+      },
       items: [
         configToggle("Main settings", "config.main", ["app settings"]),
         configToggle("Appearance", "config.appearance", ["theme settings"]),
@@ -414,7 +164,7 @@ export function getMeridianSettingDefinitions(
         },
         {
           name: "Full scan interval",
-          desc: "Periodic reconciliation recovers events missed while a mobile device was suspended.",
+          desc: "Periodic reconciliation recovers file events missed while iOS was suspended.",
           aliases: ["iOS background scan"],
           control: {
             type: "slider",
@@ -427,7 +177,7 @@ export function getMeridianSettingDefinitions(
         },
         {
           name: "Attachment size limit",
-          desc: "Conservative per-file memory limit for whole-file mobile APIs.",
+          desc: "Whole-file mobile APIs require a conservative per-file memory limit in MiB.",
           aliases: ["maximum file size", "MiB"],
           control: {
             type: "dropdown",
@@ -439,21 +189,15 @@ export function getMeridianSettingDefinitions(
     },
     {
       type: "group",
-      heading: "Security and protocol",
+      heading: "Security",
       items: [
         {
-          name: "Vault protocol",
-          desc: "Track the automatic upgrade to canonical generation-1 log hashes.",
-          aliases: ["log hash", "security migration", "canonical log"],
-          visible: () => configured,
-          render: (setting) => configureProtocolUpgrade(setting, host),
-        },
-        {
           name: "Encryption epoch",
-          desc: "Track automatic vault encryption key rotation.",
+          desc: "Checking encryption key rotation state…",
           aliases: ["key rotation", "revocation", "epoch"],
           visible: () => configured,
           render: (setting) => configureEpochStatus(setting, host),
+          legacy: { visible: true },
         },
       ],
     },
@@ -467,6 +211,10 @@ export function getMeridianSettingDefinitions(
           aliases: ["space", "R2", "database"],
           visible: () => configured,
           action: () => new StorageModal(host).open(),
+          legacy: {
+            visible: true,
+            button: { label: "View usage", disabled: () => !configured },
+          },
         },
         {
           name: "Automatic pruning",
@@ -488,13 +236,14 @@ export function getMeridianSettingDefinitions(
           desc: "Use the offline recovery code after losing every authorized device.",
           aliases: ["recovery code", "lost devices"],
           action: () => new RecoveryConnectModal(host).open(),
+          legacy: { button: { label: "Recover", warning: true } },
         },
         {
           name: "Rebuild local index",
-          desc: "Delete only rebuildable local scan state. Remote history and vault data remain intact.",
+          desc: "Deletes only rebuildable local scan state. Remote history and encrypted vault data remain intact.",
           aliases: ["repair", "rescan"],
-          action: () =>
-            void runSettingAction(host.repairLocalIndex(), "Meridian local index rebuilt"),
+          action: () => runSettingAction(host.repairLocalIndex(), "Meridian local index rebuilt"),
+          legacy: { button: { label: "Rebuild", warning: true } },
         },
       ],
     },
@@ -505,13 +254,111 @@ function configToggle(
   name: string,
   key: MeridianSettingKey,
   aliases: string[],
-): SettingDefinition<MeridianSettingKey> {
+): MeridianSettingSpec {
   return {
     name,
     desc: "Local to this device. Secrets, workspace state, caches, and temporary files stay excluded.",
     aliases,
     control: { type: "toggle", key },
+    legacy: { description: false },
   }
+}
+
+function renderLegacyGroup(
+  container: HTMLElement,
+  host: MeridianUiHost,
+  group: MeridianSettingGroupSpec,
+): void {
+  if (group.legacy?.heading !== false && group.heading) {
+    new Setting(container).setName(group.heading).setHeading()
+  }
+  if (group.legacy?.description) {
+    container.createDiv({
+      cls: "setting-item-description meridian-section-description",
+      text: group.legacy.description,
+    })
+  }
+  group.items.forEach((item, index) => {
+    const visible = item.legacy?.visible ?? item.visible
+    if (!evaluate(visible, true)) return
+    const setting = new Setting(container).setName(item.name)
+    if (item.desc && item.legacy?.description !== false) setting.setDesc(item.desc)
+    if (item.render) {
+      item.render(setting, undefined as never)
+    } else if (item.control) {
+      renderLegacyControl(setting, host, item.control)
+    } else if (item.action) {
+      renderLegacyAction(setting, item, index)
+    }
+  })
+}
+
+function renderLegacyControl(
+  setting: Setting,
+  host: MeridianUiHost,
+  control: NonNullable<Extract<MeridianSettingSpec, { control: object }>["control"]>,
+): void {
+  const value = getMeridianControlValue(host, control.key)
+  const save = (next: unknown) => setMeridianControlValue(host, control.key, next)
+  switch (control.type) {
+    case "text":
+      setting.addText((text) => {
+        if (control.placeholder) text.setPlaceholder(control.placeholder)
+        return text.setValue(String(value ?? "")).onChange(save)
+      })
+      break
+    case "textarea":
+      setting.addTextArea((text) => {
+        if (control.rows) text.inputEl.rows = control.rows
+        if (control.placeholder) text.setPlaceholder(control.placeholder)
+        return text.setValue(String(value ?? "")).onChange(save)
+      })
+      break
+    case "toggle":
+      setting.addToggle((toggle) => toggle.setValue(Boolean(value)).onChange(save))
+      break
+    case "slider":
+      setting.addSlider((slider) =>
+        slider
+          .setLimits(control.min, control.max, control.step)
+          .setDynamicTooltip()
+          .setValue(Number(value))
+          .onChange(save),
+      )
+      break
+    case "dropdown":
+      setting.addDropdown((dropdown) =>
+        dropdown
+          .addOptions(control.options)
+          .setValue(String(value ?? ""))
+          .onChange(save),
+      )
+      break
+    default:
+      break
+  }
+}
+
+function renderLegacyAction(setting: Setting, item: MeridianSettingSpec, index: number): void {
+  if (!item.action || !item.legacy?.button) return
+  const { button: presentation } = item.legacy
+  setting.addButton((button) => {
+    button.setButtonText(presentation.label).setDisabled(evaluate(presentation.disabled, false))
+    if (presentation.warning) button.setWarning()
+    return button.onClick(async () => {
+      if (presentation.wait) button.setDisabled(true)
+      try {
+        await item.action?.(setting.settingEl, index)
+      } finally {
+        if (presentation.wait) button.setDisabled(false)
+      }
+    })
+  })
+}
+
+function evaluate(value: boolean | (() => boolean) | undefined, fallback: boolean): boolean {
+  if (typeof value === "function") return value()
+  return value ?? fallback
 }
 
 function configureEpochStatus(setting: Setting, host: MeridianUiHost): void {
@@ -534,33 +381,6 @@ function configureEpochStatus(setting: Setting, host: MeridianUiHost): void {
     })
     .catch((error) => {
       setting.setDesc(error instanceof Error ? error.message : "Unable to inspect encryption epoch")
-    })
-}
-
-function configureProtocolUpgrade(setting: Setting, host: MeridianUiHost): void {
-  if (host.settings.pendingProtocolUpgrade) {
-    setting.setDesc(
-      "The signed automatic upgrade is safely stored and will retry during the next sync.",
-    )
-    return
-  }
-  void host
-    .getLogFormat()
-    .then((format) => {
-      if (format === "canonical-cbor-v1") {
-        setting.setDesc("This vault uses verified canonical generation-1 operation log hashes.")
-        return
-      }
-      if (format === "legacy-http-v1") {
-        setting.setDesc(
-          "Waiting for every active device to update and check in. Meridian will then upgrade the vault automatically.",
-        )
-        return
-      }
-      setting.setDesc("Connect Meridian to inspect the vault protocol.")
-    })
-    .catch((error) => {
-      setting.setDesc(error instanceof Error ? error.message : "Unable to inspect vault protocol")
     })
 }
 
@@ -626,7 +446,9 @@ function configureDeviceRemoval(
     )
   }
   if (host.settings.pendingDeviceRemoval) {
-    setting.setDesc("A previous removal is pending. Retry server revocation and local cleanup.")
+    setting.setDesc(
+      "A previous removal attempt is pending. Retry to confirm server revocation and finish local cleanup.",
+    )
     addRemovalButton("Retry removal")
     return () => {
       active = false
@@ -640,20 +462,24 @@ function configureDeviceRemoval(
       const current = devices.find((device) => device.deviceId === host.settings.deviceId)
       if (!current || current.revokedAt !== null) {
         setting.setDesc(
-          "This identity may already be revoked. Remove the local connection to pair again.",
+          "This identity may already be revoked. Remove its local Meridian connection to pair again.",
         )
         addRemovalButton("Remove")
       } else if (current.role === "owner") {
-        setting.setDesc("The owner device cannot remove itself. Use recovery after owner loss.")
+        setting.setDesc(
+          "The owner device cannot remove itself. Use recovery from another device after owner loss.",
+        )
       } else {
-        setting.setDesc("Permanently revoke this device. Local vault files are kept.")
+        setting.setDesc(
+          "Permanently revoke this device and forget its local Meridian connection. Vault files are kept.",
+        )
         addRemovalButton("Remove")
       }
     })
     .catch(() => {
       if (!active) return
       setting.setDesc(
-        "Unable to verify this identity. Removal proceeds only after server confirmation.",
+        "Unable to verify this identity. Removal will proceed only if the server confirms it safely.",
       )
       addRemovalButton("Remove")
     })
@@ -669,11 +495,6 @@ async function runSettingAction(action: Promise<void>, success: string): Promise
   } catch (error) {
     new Notice(error instanceof Error ? error.message : "Unable to update Meridian settings")
   }
-}
-
-function normalizeList(values: string[], normalize: (value: string) => string | null): string[] {
-  const normalized = values.map(normalize).filter((value): value is string => value !== null)
-  return [...new Set(normalized)].sort().slice(0, 200)
 }
 
 class RemoveCurrentDeviceModal extends Modal {

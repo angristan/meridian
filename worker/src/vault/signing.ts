@@ -1,4 +1,15 @@
 import { validateDeviceCertificate } from "@meridian/crypto"
+import type {
+  AuthSession,
+  Checkpoint,
+  Operation,
+  PairingApproval,
+  PairingJoin,
+  PairingRelease,
+  RetentionAcknowledgement,
+  SetupClaim,
+  Snapshot,
+} from "@meridian/protocol"
 import {
   bytesEqual,
   checkpointUploadSigningBytes,
@@ -18,17 +29,6 @@ import {
 } from "@meridian/protocol"
 import { base64UrlDecode } from "../encoding"
 import { assert, HttpError } from "../errors"
-import type {
-  AuthSession,
-  Checkpoint,
-  Operation,
-  PairingApproval,
-  PairingJoin,
-  PairingRelease,
-  RetentionAcknowledgement,
-  SetupClaim,
-  Snapshot,
-} from "../schemas"
 import {
   type DeviceRow,
   MAX_CERTIFICATE_BYTES,
@@ -96,7 +96,7 @@ export function setupClaimSigningMessage(claim: SetupClaim, challenge: string): 
     ),
     setupSession: claim.setupSession,
     challenge,
-    ...(claim.logFormat === undefined ? {} : { logFormat: claim.logFormat }),
+    logFormat: claim.logFormat,
   })
 }
 

@@ -5,6 +5,8 @@ import {
   ed25519PublicKey,
   encodeCanonical,
   hashBytes,
+  type RecoveryClaim,
+  RecoveryClaimSchema,
   recoveryId,
   vaultId,
   x25519PublicKey,
@@ -18,7 +20,6 @@ import {
   verifyEd25519,
 } from "../encoding"
 import { assert, HttpError } from "../errors"
-import { type RecoveryClaim, RecoveryClaimSchema } from "../schemas"
 import {
   cleanupExpired,
   decode,
@@ -102,12 +103,6 @@ export class VaultRecovery {
 
   async recover(request: Request): Promise<Response> {
     const input = decode(RecoveryClaimSchema, await requestJson(request))
-    assert(
-      input.claimVersion === 2 &&
-        input.recoveryId !== undefined &&
-        input.previousRecoveryStateId !== undefined,
-      new HttpError(426, "protocol_upgrade_required", "Update Meridian to recover this vault"),
-    )
     const recoveryIdentifier = input.recoveryId
     assertIdentifier(recoveryIdentifier, "recoveryId")
     assertIdentifier(input.challengeId, "challengeId")
@@ -246,8 +241,8 @@ export class VaultRecovery {
       this.sql.exec(
         `INSERT INTO devices(
           device_id, signing_public_key, hpke_public_key, certificate, role, authorized_at,
-          authorized_by, supports_canonical_log
-        ) VALUES (?, ?, ?, ?, 'owner', ?, NULL, 1)`,
+          authorized_by
+        ) VALUES (?, ?, ?, ?, 'owner', ?, NULL)`,
         input.newDevice.deviceId,
         input.newDevice.signingPublicKey,
         input.newDevice.hpkePublicKey,

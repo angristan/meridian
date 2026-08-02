@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest"
 import {
-  acceptAuthorizedEpoch,
   assertConsistentHighWaterMark,
   assertPairingDeviceMetadata,
   CIPHER_SUITE,
@@ -8,7 +7,6 @@ import {
   type DeviceCertificate,
   decodeDeviceCertificate,
   deviceId,
-  type EpochDeclarationBody,
   ed25519PublicKey,
   ed25519Signature,
   encodeCanonical,
@@ -85,7 +83,7 @@ describe("protocol wire models", () => {
     ).toThrow(/valid Unicode/)
   })
 
-  it("rejects rollback and downgrade", () => {
+  it("rejects rollback", () => {
     const trusted = {
       cursor: 8,
       logHash: hashBytes(fill(32, 9)),
@@ -98,18 +96,5 @@ describe("protocol wire models", () => {
         protocolGeneration: 1,
       }),
     ).toThrow(/backwards/)
-
-    const epoch: EpochDeclarationBody = {
-      vaultId: vaultId(fill(16, 1)),
-      epochId: epochId(fill(16, 2)),
-      sequence: 3,
-      previousEpochId: epochId(fill(16, 3)),
-      suite: CIPHER_SUITE,
-      createdBy: "recovery",
-      reason: "migration",
-    }
-    expect(() =>
-      acceptAuthorizedEpoch({ highestProtocolGeneration: 2, highestEpochSequence: 2 }, epoch),
-    ).toThrow(/downgrade/)
   })
 })

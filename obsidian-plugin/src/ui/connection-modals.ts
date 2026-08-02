@@ -1,5 +1,4 @@
 import { type App, Modal, Notice, Setting } from "obsidian"
-import type { LogFormat } from "../model"
 import type { MeridianUiHost } from "./host"
 import { recoveryCodePresentation } from "./recovery-code"
 
@@ -45,12 +44,7 @@ export class ConnectionModal extends Modal {
         .onClick(async () => {
           button.setDisabled(true)
           try {
-            await this.host.connectFromSetup(
-              endpoint,
-              setupSession,
-              claimChallenge,
-              "canonical-cbor-v1",
-            )
+            await this.host.connectFromSetup(endpoint, setupSession, claimChallenge)
             this.close()
           } catch (error) {
             new Notice(error instanceof Error ? error.message : String(error), 10_000)
@@ -71,7 +65,6 @@ export class SetupLinkModal extends Modal {
     private readonly endpoint: string,
     private readonly setupSession: string,
     private readonly claimChallenge: string,
-    private readonly logFormat: LogFormat = "legacy-http-v1",
   ) {
     super(host.app)
   }
@@ -90,12 +83,7 @@ export class SetupLinkModal extends Modal {
         .onClick(async () => {
           button.setDisabled(true)
           try {
-            await this.host.connectFromSetup(
-              this.endpoint,
-              this.setupSession,
-              this.claimChallenge,
-              this.logFormat,
-            )
+            await this.host.connectFromSetup(this.endpoint, this.setupSession, this.claimChallenge)
             this.close()
           } catch (error) {
             new Notice(error instanceof Error ? error.message : String(error), 10_000)

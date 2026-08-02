@@ -36,7 +36,6 @@ export const Domain = Object.freeze({
 
 export const KdfLabel = Object.freeze({
   RecoverySigningSeed: "meridian/v1/kdf/recovery-signing-seed",
-  RecoveryEncryptionKey: "meridian/v1/kdf/recovery-encryption-key",
   RevisionKek: "meridian/v1/kdf/revision-kek",
 } as const)
 

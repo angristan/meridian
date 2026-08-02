@@ -1,74 +1,13 @@
-import { sign, signOperation, verify, verifyOperation } from "@meridian/crypto"
-import {
-  CIPHER_SUITE,
-  decodeOperation,
-  ed25519Signature,
-  encodeOperation,
-  hashBytes,
-  LogFormat,
-  operationId,
-  Permission,
-} from "@meridian/protocol"
-import type {
-  DeviceKeyMaterial,
-  LogFormatUpgradeMaterial,
-  RemoteOperation,
-  TrustedCheckpoint,
-} from "../model"
-import { fromBase64Url, randomId, toBase64Url } from "../platform/bytes"
+import { verify, verifyOperation } from "@meridian/crypto"
+import { decodeOperation, ed25519Signature, LogFormat, Permission } from "@meridian/protocol"
+import type { DeviceKeyMaterial, RemoteOperation } from "../model"
+import { fromBase64Url, toBase64Url } from "../platform/bytes"
 import { deviceBundle, trustedAuthorCertificate } from "./device-secret"
 import {
   parseWorkerOperation,
   type WorkerOperation,
   workerOperationSigningBytes,
 } from "./worker-operation"
-
-export async function createLogFormatUpgrade(
-  device: DeviceKeyMaterial,
-  checkpoint: TrustedCheckpoint,
-): Promise<LogFormatUpgradeMaterial> {
-  const bundle = deviceBundle(device)
-  if (!bundle.certificate.body.permissions.includes(Permission.ManageDevices)) {
-    throw new Error("Only the vault owner can upgrade the log format")
-  }
-  const formats = checkpointFormats(checkpoint)
-  if (formats.logFormat !== LogFormat.LegacyHttpV1) {
-    throw new Error("Vault log format is already upgraded")
-  }
-  if (formats.initialLogFormat !== LogFormat.LegacyHttpV1) {
-    throw new Error("Vault log format state is invalid")
-  }
-
-  const operationIdentifier = operationId(fromBase64Url(randomId()))
-  const signedTransition = signOperation(
-    {
-      type: "log-format-transition",
-      operationId: operationIdentifier,
-      vaultId: bundle.vaultId,
-      epochId: bundle.epoch.body.epochId,
-      authorDeviceId: bundle.deviceId,
-      previousCursor: checkpoint.cursor,
-      previousLogHash: hashBytes(fromBase64Url(checkpoint.logHash, 32)),
-      nextLogFormat: LogFormat.CanonicalCborV1,
-      suite: CIPHER_SUITE,
-    },
-    bundle.signingPrivateKey,
-  )
-  const unsigned: Omit<WorkerOperation, "signature"> = {
-    operationId: toBase64Url(operationIdentifier),
-    authorDeviceId: device.deviceId,
-    epochId: toBase64Url(bundle.epoch.body.epochId),
-    type: "log-format-transition",
-    envelope: toBase64Url(encodeOperation(signedTransition)),
-  }
-  return {
-    operationId: unsigned.operationId,
-    envelope: {
-      ...unsigned,
-      signature: toBase64Url(sign(workerOperationSigningBytes(unsigned), bundle.signingPrivateKey)),
-    },
-  }
-}
 
 export async function verifyLogFormatUpgrade(
   device: DeviceKeyMaterial,
@@ -124,16 +63,6 @@ export async function verifyLogFormatUpgrade(
     throw new Error("Log format transition does not match the legacy log head")
   }
   return body.nextLogFormat
-}
-
-function checkpointFormats(checkpoint: TrustedCheckpoint): {
-  initialLogFormat: "legacy-http-v1" | "canonical-cbor-v1"
-  logFormat: "legacy-http-v1" | "canonical-cbor-v1"
-} {
-  return {
-    initialLogFormat: checkpoint.initialLogFormat ?? LogFormat.LegacyHttpV1,
-    logFormat: checkpoint.logFormat ?? LogFormat.LegacyHttpV1,
-  }
 }
 
 function stringField(value: unknown, field: string): string {

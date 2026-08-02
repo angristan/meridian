@@ -69,10 +69,9 @@ describe("shared crypto adapter", () => {
     const legacySecret = JSON.parse(claim.keyBundle) as Record<string, unknown>
     legacySecret.version = 1
     delete legacySecret.checkpointAuthorizationChain
-    await expect(crypto.loadDevice(JSON.stringify(legacySecret))).resolves.toMatchObject({
-      deviceId: claim.deviceId,
-      trustedCheckpointAuthorized: false,
-    })
+    await expect(crypto.loadDevice(JSON.stringify(legacySecret))).rejects.toThrow(
+      "not a supported Meridian key bundle",
+    )
     if (!decrypted.bytes) throw new Error("Expected decrypted revision content")
     expect(new TextDecoder().decode(decrypted.bytes)).toBe("private note")
     expect(decrypted.path).toBe("note.md")
@@ -170,8 +169,6 @@ describe("shared crypto adapter", () => {
           revokedAt: null,
           deviceName: "Owner",
           platform: "Test",
-          supportsCanonicalLog: true,
-          supportsEpochTransitions: true,
         },
       ],
       randomId(32),
@@ -441,8 +438,6 @@ describe("shared crypto adapter", () => {
           revokedAt: null,
           deviceName: "Owner",
           platform: "Test",
-          supportsCanonicalLog: true,
-          supportsEpochTransitions: true,
         },
         {
           deviceId: member.deviceId,
@@ -454,8 +449,6 @@ describe("shared crypto adapter", () => {
           revokedAt: null,
           deviceName: "Test iPhone",
           platform: "iOS",
-          supportsCanonicalLog: true,
-          supportsEpochTransitions: true,
         },
       ],
       randomId(32),

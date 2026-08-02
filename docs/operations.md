@@ -14,18 +14,11 @@
 
 Use Workers Logs and Traces to diagnose request classes, latency, binding failures, cursor lag, reconnects, retries, and encrypted byte counts. Never log setup/session tokens, keys, recovery material, file paths, envelope bodies, or stable identifiers that are unnecessary for diagnosis.
 
-## Vault protocol upgrade
+## Protocol compatibility
 
-New vaults start with canonical operation-log hashes. Existing vaults upgrade automatically:
+Current Meridian clients create and write only canonical generation-1 operation logs and current epoch transitions. The Worker rejects writes to a vault that is not already canonical.
 
-1. Update Meridian on every active device.
-2. Open each device once and let sync complete.
-3. Keep or reopen the owner device. Meridian upgrades after every non-revoked device has authenticated with canonical-log support.
-4. Open **Settings → Meridian → Security and protocol** to confirm that the vault protocol is upgraded.
-
-The signed transition is the last legacy-hashed log entry. Existing history stays unchanged, and every later entry uses canonical generation-1 hashing. A crash or lost response leaves the exact signed transition available for retry. If another device writes first, Meridian discards the stale attempt, pulls the new entry, and tries again automatically.
-
-A device that is no longer used must be revoked before Meridian can stop waiting for it. An old client stops with **Update Meridian to continue** after the transition. It cannot append another legacy entry. Downgrading Meridian for that vault is not supported.
+Vaults that previously moved from the deployed legacy hash format keep their immutable legacy entries and signed transition. Clients can verify and replay that history, but they cannot create another format transition or append a legacy-hashed entry. Downgrading Meridian is not supported.
 
 ## Device replacement
 

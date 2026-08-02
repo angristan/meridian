@@ -10,7 +10,6 @@ import type {
   EpochTransitionMaterial,
   HistoryRevisionMetadata,
   LogFormat,
-  LogFormatUpgradeMaterial,
   PairedDeviceMaterial,
   PairingApprovalMaterial,
   PairingCapability,
@@ -35,7 +34,7 @@ import {
   signChallenge,
 } from "./device-workflows"
 import { applyEpochTransition, createEpochTransition } from "./epoch-workflows"
-import { createLogFormatUpgrade, verifyLogFormatUpgrade } from "./log-format-transition"
+import { verifyLogFormatUpgrade } from "./log-format-transition"
 import {
   approvePairing,
   consumePairingResult,
@@ -84,12 +83,8 @@ class PackageCryptoPort implements CryptoPort {
     return createRetentionAcknowledgement(device, checkpoint)
   }
 
-  createFirstDevice(
-    setupSession: string,
-    claimChallenge: string,
-    logFormat: LogFormat = "canonical-cbor-v1",
-  ): Promise<SetupClaim> {
-    return createFirstDevice(setupSession, claimChallenge, logFormat)
+  createFirstDevice(setupSession: string, claimChallenge: string): Promise<SetupClaim> {
+    return createFirstDevice(setupSession, claimChallenge)
   }
 
   loadDevice(serializedKeyBundle: string): Promise<DeviceKeyMaterial> {
@@ -138,13 +133,6 @@ class PackageCryptoPort implements CryptoPort {
     operation: RemoteOperation,
   ): Promise<DeviceRevocationRecord> {
     return verifyDeviceRevocation(device, operation)
-  }
-
-  createLogFormatUpgrade(
-    device: DeviceKeyMaterial,
-    checkpoint: DeviceKeyMaterial["trustedCheckpoint"],
-  ): Promise<LogFormatUpgradeMaterial> {
-    return createLogFormatUpgrade(device, checkpoint)
   }
 
   verifyLogFormatUpgrade(

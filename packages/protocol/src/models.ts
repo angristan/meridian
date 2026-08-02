@@ -230,16 +230,7 @@ export interface RecoveryState {
   readonly requiredTransitionOperationId?: OperationId
 }
 
-export interface LegacyEncryptedRecoveryPackage {
-  readonly packageVersion?: 1
-  readonly protocolGeneration: number
-  readonly vaultId: VaultId
-  readonly nonce: Nonce
-  readonly ciphertext: Uint8Array
-  readonly checkpoint: SignedCheckpoint
-}
-
-export interface PublicKeyEncryptedRecoveryPackage {
+export interface EncryptedRecoveryPackage {
   readonly packageVersion: 2
   readonly protocolGeneration: number
   readonly vaultId: VaultId
@@ -247,10 +238,6 @@ export interface PublicKeyEncryptedRecoveryPackage {
   readonly ciphertext: Uint8Array
   readonly checkpoint: SignedCheckpoint
 }
-
-export type EncryptedRecoveryPackage =
-  | LegacyEncryptedRecoveryPackage
-  | PublicKeyEncryptedRecoveryPackage
 
 export interface AuthChallenge {
   readonly challengeId: string

@@ -30,7 +30,7 @@ import {
   deserializePairingVerificationPreview,
   deviceEpochKey,
   encryptFileRevision,
-  encryptRecoveryPackage,
+  encryptRecoveryPackageForPublicKey,
   inspectPairingVerificationPreview,
   parseRecoveryCode,
   preparePairingEpochPackage,
@@ -86,7 +86,11 @@ describe("plugin-facing cryptography workflows", () => {
     const transportedPackage = deserializeEncryptedRecoveryPackage(
       serializeEncryptedRecoveryPackage(claim.encryptedRecoveryPackage),
     )
-    const recovered = await decryptRecoveryPackage(transportedPackage, keys.encryptionKey)
+    const recovered = await decryptRecoveryPackage(
+      transportedPackage,
+      keys.signingPrivateKey,
+      claim.recoveryPublicKey,
+    )
     expect(bytesEqual(recovered.vaultEpochKey, claim.device.vaultEpochKey)).toBe(true)
 
     const tamperedCheckpointSignature = new Uint8Array(transportedPackage.checkpoint.signature)
@@ -100,13 +104,14 @@ describe("plugin-facing cryptography workflows", () => {
             signature: ed25519Signature(tamperedCheckpointSignature),
           },
         },
-        keys.encryptionKey,
+        keys.signingPrivateKey,
+        claim.recoveryPublicKey,
       ),
     ).rejects.toThrow(/public commitment/)
 
     const substitutedVaultId = new Uint8Array(recovered.vaultId)
     substitutedVaultId[0] = (substitutedVaultId[0] ?? 0) ^ 1
-    const inconsistentPackage = await encryptRecoveryPackage(
+    const inconsistentPackage = await encryptRecoveryPackageForPublicKey(
       {
         ...recovered,
         epoch: signEpochDeclaration(
@@ -114,11 +119,16 @@ describe("plugin-facing cryptography workflows", () => {
           keys.signingPrivateKey,
         ),
       },
-      keys.encryptionKey,
+      claim.recoveryPublicKey,
+      {
+        deviceId: claim.device.deviceId,
+        signingPrivateKey: claim.device.signingPrivateKey,
+        authorizationChain: [claim.device.certificate],
+      },
     )
-    await expect(decryptRecoveryPackage(inconsistentPackage, keys.encryptionKey)).rejects.toThrow(
-      /internally inconsistent/,
-    )
+    await expect(
+      decryptRecoveryPackage(inconsistentPackage, keys.signingPrivateKey, claim.recoveryPublicKey),
+    ).rejects.toThrow(/internally inconsistent/)
 
     const replacement = await recoverDeviceFromPackage(claim.recoveryCode, transportedPackage)
     expect(bytesEqual(replacement.device.vaultEpochKey, claim.device.vaultEpochKey)).toBe(false)

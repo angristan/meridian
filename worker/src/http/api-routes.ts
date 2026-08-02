@@ -16,7 +16,7 @@ import {
   RetentionAcknowledgementSchema,
   RevokeDeviceSchema,
   SnapshotSchema,
-} from "../schemas"
+} from "@meridian/protocol"
 import { runResponse } from "./effect-boundary"
 import { proxyJson } from "./json-proxy"
 import { requiredParam } from "./request"

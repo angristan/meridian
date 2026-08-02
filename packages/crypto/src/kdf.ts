@@ -4,9 +4,7 @@ import {
   ed25519PrivateKey,
   encodeCanonical,
   KdfLabel,
-  type RecoveryEncryptionKey,
   type RecoverySeed,
-  recoveryEncryptionKey,
 } from "@meridian/protocol"
 import { asArrayBuffer, webCrypto } from "./runtime.js"
 
@@ -51,16 +49,11 @@ export async function deriveLabeledKey(
 
 export interface RecoveryDerivedKeys {
   readonly signingPrivateKey: Ed25519PrivateKey
-  readonly encryptionKey: RecoveryEncryptionKey
 }
 
 export async function deriveRecoveryKeys(seed: RecoverySeed): Promise<RecoveryDerivedKeys> {
-  const [signing, encryption] = await Promise.all([
-    deriveLabeledKey(seed, KdfLabel.RecoverySigningSeed, { purpose: "trust-anchor" }),
-    deriveLabeledKey(seed, KdfLabel.RecoveryEncryptionKey, { purpose: "recovery-package" }),
-  ])
-  return {
-    signingPrivateKey: ed25519PrivateKey(signing),
-    encryptionKey: recoveryEncryptionKey(encryption),
-  }
+  const signing = await deriveLabeledKey(seed, KdfLabel.RecoverySigningSeed, {
+    purpose: "trust-anchor",
+  })
+  return { signingPrivateKey: ed25519PrivateKey(signing) }
 }

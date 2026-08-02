@@ -4,7 +4,6 @@ import {
   type PendingDeviceRemoval,
   type PendingEpochTransition,
   type PendingPairingCompletion,
-  type PendingProtocolUpgrade,
 } from "../model"
 import { normalizeExcludedExtension, normalizeExcludedFolder } from "../vault/path-policy"
 
@@ -22,7 +21,6 @@ export function normalizeSettings(loaded: unknown): MeridianSettings {
     deviceName: typeof value.deviceName === "string" ? value.deviceName : "",
     pendingDeviceRemoval: pendingDeviceRemoval(value.pendingDeviceRemoval),
     pendingPairingCompletion: pendingPairingCompletion(value.pendingPairingCompletion),
-    pendingProtocolUpgrade: pendingProtocolUpgrade(value.pendingProtocolUpgrade),
     pendingEpochTransition: pendingEpochTransition(value.pendingEpochTransition),
     pollIntervalSeconds: boundedNumber(value.pollIntervalSeconds, 15, 300, 45),
     scanIntervalMinutes: boundedNumber(value.scanIntervalMinutes, 1, 30, 5),
@@ -55,7 +53,6 @@ export function withoutMeridianIdentity(settings: MeridianSettings): MeridianSet
     deviceId: "",
     pendingDeviceRemoval: null,
     pendingPairingCompletion: null,
-    pendingProtocolUpgrade: null,
     pendingEpochTransition: null,
   }
 }
@@ -78,26 +75,6 @@ function pendingEpochTransition(value: unknown): PendingEpochTransition | null {
     deviceId: value.deviceId,
     operationId: value.operationId,
     nextEpochId: value.nextEpochId,
-    envelope: value.envelope,
-  }
-}
-
-function pendingProtocolUpgrade(value: unknown): PendingProtocolUpgrade | null {
-  if (
-    !isRecord(value) ||
-    typeof value.endpoint !== "string" ||
-    typeof value.vaultId !== "string" ||
-    typeof value.deviceId !== "string" ||
-    typeof value.operationId !== "string" ||
-    !isRecord(value.envelope)
-  ) {
-    return null
-  }
-  return {
-    endpoint: value.endpoint,
-    vaultId: value.vaultId,
-    deviceId: value.deviceId,
-    operationId: value.operationId,
     envelope: value.envelope,
   }
 }

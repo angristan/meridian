@@ -1,7 +1,7 @@
+import { SetupClaimSchema, SetupSessionRequestSchema } from "@meridian/protocol"
 import { Effect } from "effect"
 import { constantTimeSecretEquals } from "../encoding"
 import { HttpError } from "../errors"
-import { SetupClaimSchema, SetupSessionRequestSchema } from "../schemas"
 import { SECURITY_HEADERS, SETUP_PAGE, SETUP_SCRIPT } from "../setup-page"
 import { decodeJsonEffect, runResponse } from "./effect-boundary"
 import { proxyJson } from "./json-proxy"

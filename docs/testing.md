@@ -69,29 +69,27 @@ Until the repository and a release are public, the build produces `obsidian-plug
 
 Automated responsiveness tests use generous wall-clock ceilings to detect pathological regressions and assert that cooperative fallbacks and batch pulls yield to timer heartbeats. They are not hardware performance claims.
 
-### Protocol migration and recovery CAS
+### Historical log verification and recovery CAS
 
-- Open an existing legacy vault with the new client; verify normal legacy sync still works before upgrade.
-- Check in only some active devices; verify the vault remains legacy without preparing a transition.
-- Check in every non-revoked device, then sync the owner; verify the automatic transition is legacy-hashed, the next operation is canonical-hashed, and old history is unchanged.
-- Lose the upgrade response and restart before and after pull; verify the exact transition retries automatically and the setting reports the canonical format.
-- Write from another device between preparation and commit; verify the stale transition is discarded, pulled, and prepared again automatically.
-- Try an old client after upgrade; it must stop with **Update Meridian to continue** and append nothing.
-- Alter, omit, reorder, or fork a canonical log entry; reject it before decrypting or changing the vault.
+- Replay an immutable `legacy revision → signed format transition → canonical revision` sequence from cursor zero.
+- Resume from checkpoints before and after the historical transition; verify the correct hash format is selected.
+- Backfill complete history across the transition without rewriting any entry.
+- Reject attempts to submit a new format transition or append to a non-canonical vault.
+- Alter, omit, reorder, or fork a canonical or legacy history entry; reject it before decrypting or changing the vault.
 - Submit two recovery claims from the same predecessor; exactly one may replace the package.
 - Retry the successful recovery request exactly; return the same result without a second replacement.
-- Submit a legacy or stale recovery claim; reject it without consuming valid newer state.
+- Submit an older-format or stale recovery claim; reject it without consuming valid newer state.
 
 ### Epoch rotation
 
-- Update and check in only some active devices; verify migration rotation waits without preparing an operation.
-- Check in every active device; verify the owner automatically commits one transition and every device reaches the same successor sequence.
+- Prepare a transition with a missing, extra, or duplicate active-device recipient; verify the Worker rejects it.
+- Commit a transition for the exact active-device set; verify every device reaches the same successor sequence.
 - Lose the commit response, fail SecretStorage replacement, and crash before IndexedDB checkpoint advancement; verify the exact transition retries and the cursor never passes an unreadable key.
 - Prepare a revision under the predecessor epoch, then receive a transition; verify exact plaintext is retained and ciphertext is regenerated under the successor.
 - Revoke one member; verify the next recipient set excludes it and the remaining devices rotate automatically.
 - Race rotation with a revision, second rotation, recovery, and pairing completion; exactly one predecessor CAS may win.
 - Read revisions from every retained old epoch and reject a missing, duplicate, substituted, or undecryptable recipient package.
-- Recover from a version-2 owner-updated package; verify its owner authorization, required transition, checkpoint, keyring, and recovery CAS before writing.
+- Recover from a version-2 package; verify device authorization, any required transition, checkpoint, keyring, and recovery CAS before writing.
 - Try a client without epoch support after activation; it must receive **Update Meridian to continue** and append nothing.
 
 ### Retention and storage safety
