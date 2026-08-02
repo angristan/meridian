@@ -114,6 +114,22 @@ describe("IndexedDB lossless compaction", () => {
     journal.close()
   })
 
+  it("keeps the last successful sync time after reopening", async () => {
+    const name = databaseName()
+    const journal = new IndexedDbJournal(name)
+    await journal.open()
+
+    expect(await journal.getLastSuccessfulSyncAt()).toBeNull()
+    await journal.setLastSuccessfulSyncAt(1_725_000_000_000)
+    journal.close()
+
+    const reopened = new IndexedDbJournal(name)
+    await reopened.open()
+    expect(await reopened.getLastSuccessfulSyncAt()).toBe(1_725_000_000_000)
+    await expect(reopened.setLastSuccessfulSyncAt(0)).rejects.toThrow(/timestamp is invalid/)
+    reopened.close()
+  })
+
   it("commits independent batches and resumes idempotently", async () => {
     const name = databaseName()
     const journal = new IndexedDbJournal(name)

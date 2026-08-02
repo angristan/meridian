@@ -36,6 +36,8 @@ export interface JournalPort {
   putSnapshot(snapshot: FileSnapshot): Promise<void>
   removeSnapshot(path: string): Promise<void>
   getCursor(): Promise<number>
+  getLastSuccessfulSyncAt(): Promise<number | null>
+  setLastSuccessfulSyncAt(timestamp: number): Promise<void>
   getCheckpoint(): Promise<TrustedCheckpoint | null>
   setCheckpoint(checkpoint: TrustedCheckpoint): Promise<void>
   getDeviceRevocation(deviceId: string): Promise<DeviceRevocationRecord | null>

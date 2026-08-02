@@ -110,6 +110,50 @@ describe("SyncController", () => {
     controller.stop()
   })
 
+  it("restores the last successful sync time after a restart", async () => {
+    const journal = new MemoryJournal()
+    const syncedAt = 1_725_000_000_000
+    const firstStatuses: SyncStatus[] = []
+    const first = new SyncController(
+      new FakeVault(),
+      journal,
+      new FakeRemote(),
+      new FakeCrypto(),
+      () => ALL_CATEGORIES,
+      (status) => firstStatuses.push(status),
+      undefined,
+      { now: () => syncedAt },
+    )
+
+    await first.start(TEST_DEVICE)
+    expect(await journal.getLastSuccessfulSyncAt()).toBe(syncedAt)
+    expect(firstStatuses.at(-1)?.lastSyncedAt).toBe(syncedAt)
+    first.stop()
+
+    class UnavailableRemote extends FakeRemote {
+      override async authenticate(): Promise<void> {
+        throw new Error("Offline")
+      }
+    }
+    const restartedStatuses: SyncStatus[] = []
+    const restarted = new SyncController(
+      new FakeVault(),
+      journal,
+      new UnavailableRemote(),
+      new FakeCrypto(),
+      () => ALL_CATEGORIES,
+      (status) => restartedStatuses.push(status),
+    )
+
+    await restarted.start(TEST_DEVICE)
+
+    expect(restartedStatuses).toContainEqual(
+      expect.objectContaining({ message: "Ready to sync", lastSyncedAt: syncedAt }),
+    )
+    expect(restartedStatuses.at(-1)).toMatchObject({ phase: "error", lastSyncedAt: syncedAt })
+    restarted.stop()
+  })
+
   it("fails closed when IndexedDB quota is exhausted", async () => {
     class FullJournal extends MemoryJournal {
       override async commitReconciliation(): Promise<void> {

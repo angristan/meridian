@@ -157,6 +157,7 @@ export class SyncController {
       message: "Ready to sync",
       cursor: await this.journal.getCursor(),
       queued: (await this.journal.listPending()).length,
+      lastSyncedAt: await this.journal.getLastSuccessfulSyncAt(),
       error: null,
       progress: null,
     })
@@ -539,12 +540,14 @@ export class SyncController {
     if (!push.committed && (await this.startAutomaticEpochTransition(this.requireDevice()))) return
 
     await this.acknowledgeRetention()
+    const lastSyncedAt = this.now()
+    await this.journal.setLastSuccessfulSyncAt(lastSyncedAt)
     this.updateStatus({
       phase: "idle",
       message: "Up to date",
       cursor: await this.journal.getCursor(),
       queued: (await this.journal.listPending()).length,
-      lastSyncedAt: Date.now(),
+      lastSyncedAt,
       error: null,
       progress: null,
     })

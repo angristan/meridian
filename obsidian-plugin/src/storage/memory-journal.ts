@@ -17,6 +17,7 @@ export class MemoryJournal implements JournalPort {
   private snapshots = new Map<string, FileSnapshot>()
   private readonly dirtyPaths = new Map<string, DirtyPath>()
   private cursor = 0
+  private lastSuccessfulSyncAt: number | null = null
   private checkpoint: TrustedCheckpoint | null = null
   private readonly revocations = new Map<string, DeviceRevocationRecord>()
   private readonly revisions = new Map<string, LocalRevision>()
@@ -136,6 +137,17 @@ export class MemoryJournal implements JournalPort {
 
   async getCursor(): Promise<number> {
     return this.cursor
+  }
+
+  async getLastSuccessfulSyncAt(): Promise<number | null> {
+    return this.lastSuccessfulSyncAt
+  }
+
+  async setLastSuccessfulSyncAt(timestamp: number): Promise<void> {
+    if (!Number.isSafeInteger(timestamp) || timestamp <= 0) {
+      throw new Error("Last sync timestamp is invalid")
+    }
+    this.lastSuccessfulSyncAt = timestamp
   }
 
   async getCheckpoint(): Promise<TrustedCheckpoint | null> {

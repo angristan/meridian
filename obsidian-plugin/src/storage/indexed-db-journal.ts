@@ -188,6 +188,19 @@ export class IndexedDbJournal implements JournalPort {
     return (await this.getMetadata<number>("cursor")) ?? 0
   }
 
+  async getLastSuccessfulSyncAt(): Promise<number | null> {
+    const timestamp = await this.getMetadata<unknown>("last-successful-sync-at")
+    return isValidTimestamp(timestamp) ? timestamp : null
+  }
+
+  async setLastSuccessfulSyncAt(timestamp: number): Promise<void> {
+    if (!isValidTimestamp(timestamp)) throw new Error("Last sync timestamp is invalid")
+    await this.put("meta", {
+      key: "last-successful-sync-at",
+      value: timestamp,
+    } satisfies MetadataRecord)
+  }
+
   async getCheckpoint(): Promise<TrustedCheckpoint | null> {
     return (await this.getMetadata<TrustedCheckpoint>("checkpoint")) ?? null
   }
@@ -378,6 +391,10 @@ export class IndexedDbJournal implements JournalPort {
 }
 
 const COMPACTION_BATCH_SIZE = 500
+
+function isValidTimestamp(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0
+}
 
 async function deleteCursorMatches(
   transaction: IDBTransaction,
