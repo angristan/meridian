@@ -3,7 +3,7 @@ import type { ConfigCategory, ScannedFileSnapshot, SelectiveSyncSettings } from 
 import { fingerprint, randomId } from "../src/platform/bytes"
 import type { ReconciliationCommit } from "../src/storage/contracts"
 import { MemoryJournal } from "../src/storage/journal"
-import { Reconciler } from "../src/sync/reconciler"
+import { FINGERPRINT_AUDIT_INTERVAL_MS, Reconciler } from "../src/sync/reconciler"
 import { ALL_CATEGORIES, FakeVault } from "./fakes"
 
 describe("Reconciler", () => {
@@ -17,6 +17,59 @@ describe("Reconciler", () => {
     expect(pending).toHaveLength(1)
     expect(pending[0]).toMatchObject({ action: "upsert", path: "note.md" })
     expect(JSON.stringify(pending)).not.toContain("private text")
+  })
+
+  it("reuses fingerprints when size and modification time match", async () => {
+    const bytes = new TextEncoder().encode("unchanged").buffer
+    const vault = new FakeVault({ "note.md": "unchanged" })
+    const journal = new MemoryJournal()
+    await journal.replaceSnapshots([
+      {
+        path: "note.md",
+        fileId: randomId(),
+        fingerprint: await fingerprint(bytes),
+        size: bytes.byteLength,
+        mtime: 1,
+        kind: "vault",
+      },
+    ])
+
+    const result = await new Reconciler(vault, journal, undefined, () => 100).reconcile(
+      ALL_CATEGORIES,
+    )
+
+    expect(result).toEqual({ queued: 0, files: 1 })
+    expect(vault.fingerprintedPaths).toEqual([])
+    expect(await journal.getLastFingerprintAuditAt()).toBe(100)
+  })
+
+  it("performs a full fingerprint audit after one day", async () => {
+    const original = new TextEncoder().encode("old").buffer
+    const vault = new FakeVault({ "note.md": "old" })
+    const journal = new MemoryJournal()
+    await journal.replaceSnapshots([
+      {
+        path: "note.md",
+        fileId: randomId(),
+        fingerprint: await fingerprint(original),
+        size: original.byteLength,
+        mtime: 1,
+        kind: "vault",
+      },
+    ])
+    let now = 100
+    const reconciler = new Reconciler(vault, journal, undefined, () => now)
+    await reconciler.reconcile(ALL_CATEGORIES)
+    vault.files.set("note.md", new TextEncoder().encode("new").buffer)
+
+    now += FINGERPRINT_AUDIT_INTERVAL_MS - 1
+    await expect(reconciler.reconcile(ALL_CATEGORIES)).resolves.toEqual({ queued: 0, files: 1 })
+    expect(vault.fingerprintedPaths).toEqual([])
+
+    now += 1
+    await expect(reconciler.reconcile(ALL_CATEGORIES)).resolves.toEqual({ queued: 1, files: 1 })
+    expect(vault.fingerprintedPaths).toEqual(["note.md"])
+    expect(await journal.getLastFingerprintAuditAt()).toBe(now)
   })
 
   it("uses the initial pending index instead of rescanning the journal per file", async () => {

@@ -53,6 +53,7 @@ export const TEST_DEVICE: DeviceKeyMaterial = {
 
 export class FakeVault implements VaultPort {
   readonly files = new Map<string, ArrayBuffer>()
+  readonly fingerprintedPaths: string[] = []
   readonly configDir = ".config"
 
   constructor(
@@ -111,12 +112,28 @@ export class FakeVault implements VaultPort {
         })
         continue
       }
+      const kind = isConfigPath(path, this.configDir) ? "config" : "vault"
+      const cachedFingerprint = options.forceFingerprint
+        ? undefined
+        : options.fingerprintCache?.get(path)
+      let fileFingerprint: string
+      if (
+        cachedFingerprint &&
+        cachedFingerprint.size === bytes.byteLength &&
+        cachedFingerprint.mtime === 1 &&
+        cachedFingerprint.kind === kind
+      ) {
+        fileFingerprint = cachedFingerprint.fingerprint
+      } else {
+        this.fingerprintedPaths.push(path)
+        fileFingerprint = await fingerprint(bytes)
+      }
       snapshots.push({
         path,
-        fingerprint: await fingerprint(bytes),
+        fingerprint: fileFingerprint,
         size: bytes.byteLength,
         mtime: 1,
-        kind: isConfigPath(path, this.configDir) ? "config" : "vault",
+        kind,
       })
       processed += 1
       options.onProgress?.({

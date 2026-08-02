@@ -140,7 +140,10 @@ export class IndexedDbJournal implements JournalPort {
 
   async commitReconciliation(commit: ReconciliationCommit): Promise<void> {
     const database = this.requireDatabase()
-    const transaction = database.transaction(["entries", "files", "dirty-paths"], "readwrite")
+    const transaction = database.transaction(
+      ["entries", "files", "dirty-paths", "meta"],
+      "readwrite",
+    )
     const done = transactionDone(transaction)
     const entries = transaction.objectStore("entries")
     const files = transaction.objectStore("files")
@@ -152,6 +155,12 @@ export class IndexedDbJournal implements JournalPort {
     const tokenByPath = new Map(currentDirtyPaths.map((change) => [change.path, change.token]))
     for (const change of commit.consumeDirtyPaths) {
       if (tokenByPath.get(change.path) === change.token) dirtyPaths.delete(change.path)
+    }
+    if (commit.fingerprintAuditedAt !== undefined) {
+      transaction.objectStore("meta").put({
+        key: "last-fingerprint-audit-at",
+        value: commit.fingerprintAuditedAt,
+      } satisfies MetadataRecord)
     }
     await done
   }
@@ -198,6 +207,11 @@ export class IndexedDbJournal implements JournalPort {
       key: "last-successful-sync-at",
       value: timestamp,
     } satisfies MetadataRecord)
+  }
+
+  async getLastFingerprintAuditAt(): Promise<number | null> {
+    const timestamp = await this.getMetadata<unknown>("last-fingerprint-audit-at")
+    return isValidTimestamp(timestamp) ? timestamp : null
   }
 
   async getCheckpoint(): Promise<TrustedCheckpoint | null> {

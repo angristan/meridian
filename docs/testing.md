@@ -60,7 +60,9 @@ Until the repository and a release are public, the build produces `obsidian-plug
 ### Responsiveness and index recovery
 
 - Populate 10,000 small files, edit one file, and verify routine sync scans only that path.
-- Change a file while Meridian is stopped or Obsidian is suspended; verify resume performs a complete scan and catches it.
+- Reconcile an unchanged 10,000-file vault; reuse every cached fingerprint without reading file contents.
+- Change a file while Meridian is stopped or Obsidian is suspended; verify resume detects changed size or modification time.
+- Preserve both size and modification time while changing bytes; verify the daily complete fingerprint audit catches it.
 - Rename a file and verify the paired old/new dirty paths preserve one stable file identity.
 - Edit a path again while reconciliation is committing; verify the newer dirty token remains queued.
 - Apply a remote revision and verify its resulting Obsidian event does not echo a duplicate revision.

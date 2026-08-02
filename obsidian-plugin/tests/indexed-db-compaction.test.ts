@@ -130,6 +130,27 @@ describe("IndexedDB lossless compaction", () => {
     reopened.close()
   })
 
+  it("persists the fingerprint audit time with reconciliation", async () => {
+    const name = databaseName()
+    const journal = new IndexedDbJournal(name)
+    await journal.open()
+
+    expect(await journal.getLastFingerprintAuditAt()).toBeNull()
+    await journal.commitReconciliation({
+      entries: [],
+      putSnapshots: [],
+      removeSnapshotPaths: [],
+      consumeDirtyPaths: [],
+      fingerprintAuditedAt: 1_725_000_000_000,
+    })
+    journal.close()
+
+    const reopened = new IndexedDbJournal(name)
+    await reopened.open()
+    expect(await reopened.getLastFingerprintAuditAt()).toBe(1_725_000_000_000)
+    reopened.close()
+  })
+
   it("commits independent batches and resumes idempotently", async () => {
     const name = databaseName()
     const journal = new IndexedDbJournal(name)

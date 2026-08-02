@@ -721,6 +721,8 @@ export interface RemotePort {
 export interface VaultScanOptions {
   shouldStop?: () => boolean
   onProgress?: (progress: ScanSyncProgress) => void
+  fingerprintCache?: ReadonlyMap<string, ScannedFileSnapshot>
+  forceFingerprint?: boolean
 }
 
 export interface VaultPort {

@@ -163,9 +163,9 @@ function createMeridianSettingGroups(
           },
         },
         {
-          name: "Full scan interval",
-          desc: "Periodic reconciliation recovers file events missed while iOS was suspended.",
-          aliases: ["iOS background scan"],
+          name: "Vault check interval",
+          desc: "Checks paths, sizes, and modification times to recover events missed while iOS was suspended.",
+          aliases: ["iOS background scan", "full scan"],
           control: {
             type: "slider",
             key: "scanIntervalMinutes",

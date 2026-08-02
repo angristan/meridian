@@ -332,7 +332,7 @@ The plugin combines:
 - Obsidian file events for low latency;
 - a durable local journal for crash recovery;
 - startup and resume reconciliation;
-- periodic full scans to recover missed or coalesced events;
+- periodic metadata scans plus daily fingerprint audits to recover missed or coalesced events;
 - normalized paths, Unicode NFC handling, and case-fold collision detection.
 
 Modification timestamps are hints only. Causality comes from revision parents and persisted cursors.

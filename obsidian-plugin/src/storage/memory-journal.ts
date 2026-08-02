@@ -18,6 +18,7 @@ export class MemoryJournal implements JournalPort {
   private readonly dirtyPaths = new Map<string, DirtyPath>()
   private cursor = 0
   private lastSuccessfulSyncAt: number | null = null
+  private lastFingerprintAuditAt: number | null = null
   private checkpoint: TrustedCheckpoint | null = null
   private readonly revocations = new Map<string, DeviceRevocationRecord>()
   private readonly revisions = new Map<string, LocalRevision>()
@@ -114,6 +115,9 @@ export class MemoryJournal implements JournalPort {
       this.snapshots.set(snapshot.path, structuredClone(snapshot))
     }
     for (const path of commit.removeSnapshotPaths) this.snapshots.delete(path)
+    if (commit.fingerprintAuditedAt !== undefined) {
+      this.lastFingerprintAuditAt = commit.fingerprintAuditedAt
+    }
     await this.consumeDirtyPaths(commit.consumeDirtyPaths)
   }
 
@@ -148,6 +152,10 @@ export class MemoryJournal implements JournalPort {
       throw new Error("Last sync timestamp is invalid")
     }
     this.lastSuccessfulSyncAt = timestamp
+  }
+
+  async getLastFingerprintAuditAt(): Promise<number | null> {
+    return this.lastFingerprintAuditAt
   }
 
   async getCheckpoint(): Promise<TrustedCheckpoint | null> {

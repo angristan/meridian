@@ -50,6 +50,7 @@ export class ObsidianVaultPort implements VaultPort {
     options: VaultScanOptions = {},
   ): Promise<ScannedFileSnapshot[]> {
     const paths = new Set<string>()
+    const cachedStats = new Map<string, { size: number; mtime: number }>()
     let discovered = 0
     for (const file of this.vault.getFiles()) {
       if (options.shouldStop?.()) throw new Error("Vault scan canceled")
@@ -57,14 +58,16 @@ export class ObsidianVaultPort implements VaultPort {
         isSyncablePath(file.path, this.configDir, categories) &&
         isSelectedForSync(file.path, this.configDir, selection)
       ) {
-        paths.add(normalizeVaultPath(file.path))
+        const path = normalizeVaultPath(file.path)
+        paths.add(path)
+        cachedStats.set(path, file.stat)
       }
       discovered += 1
       if (discovered % 500 === 0) await yieldToEventLoop()
     }
     for (const path of await this.listSelectedConfigFiles(categories, options)) paths.add(path)
 
-    return this.scanFiles([...paths], categories, selection, options)
+    return this.scanFilesWithStats([...paths], categories, selection, options, cachedStats)
   }
 
   async scanFiles(
@@ -72,6 +75,16 @@ export class ObsidianVaultPort implements VaultPort {
     categories: Record<ConfigCategory, boolean>,
     selection: SelectiveSyncSettings = { excludedFolders: [], excludedExtensions: [] },
     options: VaultScanOptions = {},
+  ): Promise<ScannedFileSnapshot[]> {
+    return this.scanFilesWithStats(paths, categories, selection, options, new Map())
+  }
+
+  private async scanFilesWithStats(
+    paths: readonly string[],
+    categories: Record<ConfigCategory, boolean>,
+    selection: SelectiveSyncSettings,
+    options: VaultScanOptions,
+    cachedStats: ReadonlyMap<string, { size: number; mtime: number }>,
   ): Promise<ScannedFileSnapshot[]> {
     const snapshots: ScannedFileSnapshot[] = []
     const candidates = [...new Set(paths.map(normalizeVaultPath))].sort()
@@ -94,23 +107,37 @@ export class ObsidianVaultPort implements VaultPort {
         reportProgress(candidate)
         continue
       }
-      const stat = await this.vault.adapter.stat(normalizePath(candidate))
-      if (stat?.type !== "file") {
+      const cachedStat = cachedStats.get(candidate)
+      const adapterStat = cachedStat
+        ? null
+        : await this.vault.adapter.stat(normalizePath(candidate))
+      if (!cachedStat && adapterStat?.type !== "file") {
         reportProgress(candidate)
         continue
       }
+      const stat = cachedStat ?? adapterStat
+      if (!stat) throw new Error("Vault file metadata disappeared during scanning")
       if (stat.size > this.maxFileBytes()) {
         throw new Error(`${candidate} exceeds the configured mobile-safe file size limit`)
       }
-      const bytes = await this.read(candidate)
-      const fileFingerprint = await this.compute.fingerprint(bytes, options.shouldStop)
+      const kind = isConfigPath(candidate, this.configDir) ? "config" : "vault"
+      const cachedFingerprint = options.forceFingerprint
+        ? undefined
+        : options.fingerprintCache?.get(candidate)
+      const fileFingerprint =
+        cachedFingerprint &&
+        cachedFingerprint.size === stat.size &&
+        cachedFingerprint.mtime === stat.mtime &&
+        cachedFingerprint.kind === kind
+          ? cachedFingerprint.fingerprint
+          : await this.compute.fingerprint(await this.read(candidate), options.shouldStop)
       if (options.shouldStop?.()) throw new Error("Vault scan canceled")
       snapshots.push({
         path: candidate,
         fingerprint: fileFingerprint,
         size: stat.size,
         mtime: stat.mtime,
-        kind: isConfigPath(candidate, this.configDir) ? "config" : "vault",
+        kind,
       })
       reportProgress(candidate)
       if (index % 25 === 0) await yieldToEventLoop()

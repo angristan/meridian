@@ -31,6 +31,37 @@ describe("sync responsiveness budgets", () => {
     expect(heartbeatTicks).toBeGreaterThan(0)
   }, 15_000)
 
+  it("reuses cached fingerprints across a 10k-file vault", async () => {
+    const fileCount = 10_000
+    const vault = new FakeVault(
+      Object.fromEntries(
+        Array.from({ length: fileCount }, (_, index) => [`Notes/file-${index}.md`, "x"]),
+      ),
+    )
+    const journal = new MemoryJournal()
+    await journal.replaceSnapshots(
+      Array.from({ length: fileCount }, (_, index) => ({
+        path: `Notes/file-${index}.md`,
+        fileId: `file-id-${index}`,
+        fingerprint: `fingerprint-${index}`,
+        size: 1,
+        mtime: 1,
+        kind: "vault" as const,
+      })),
+    )
+    const heartbeat = startHeartbeat()
+    const startedAt = performance.now()
+
+    const result = await new Reconciler(vault, journal).reconcile(ALL_CATEGORIES)
+    const elapsed = performance.now() - startedAt
+    const heartbeatTicks = heartbeat.stop()
+
+    expect(result).toEqual({ queued: 0, files: fileCount })
+    expect(vault.fingerprintedPaths).toEqual([])
+    expect(elapsed).toBeLessThan(RESPONSIVENESS_BUDGET_MS)
+    expect(heartbeatTicks).toBeGreaterThan(0)
+  }, 15_000)
+
   it("reconciles one dirty file without reading a 10k-file vault", async () => {
     class OneFileVault extends FakeVault {
       readonly scannedPaths: string[][] = []

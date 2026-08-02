@@ -15,6 +15,8 @@ import type { JournalPort } from "../storage/journal"
 import { configCategoryForPath, isSelectedForSync } from "../vault/path-policy"
 import { revisionHeads } from "./revision-heads"
 
+export const FINGERPRINT_AUDIT_INTERVAL_MS = 24 * 60 * 60 * 1_000
+
 export interface ReconcileResult {
   queued: number
   files: number
@@ -30,6 +32,7 @@ export class Reconciler {
     private readonly vault: VaultPort,
     private readonly journal: JournalPort,
     private readonly compute: SyncComputePort = new BackgroundSyncCompute(),
+    private readonly now: () => number = Date.now,
   ) {}
 
   async reconcile(
@@ -37,16 +40,29 @@ export class Reconciler {
     selection: SelectiveSyncSettings = { excludedFolders: [], excludedExtensions: [] },
     options: ReconcileOptions = {},
   ): Promise<ReconcileResult> {
-    const dirtyPaths = await this.journal.listDirtyPaths()
-    const current = await this.vault.listFiles(categories, selection, options)
+    const [dirtyPaths, previous, lastFingerprintAuditAt] = await Promise.all([
+      this.journal.listDirtyPaths(),
+      this.journal.getSnapshots(),
+      this.journal.getLastFingerprintAuditAt(),
+    ])
+    const now = this.now()
+    const forceFingerprint =
+      lastFingerprintAuditAt !== null &&
+      now - lastFingerprintAuditAt >= FINGERPRINT_AUDIT_INTERVAL_MS
+    const current = await this.vault.listFiles(categories, selection, {
+      ...options,
+      fingerprintCache: previous,
+      forceFingerprint,
+    })
     return this.reconcileScanned(
       current,
-      await this.journal.getSnapshots(),
+      previous,
       categories,
       selection,
       null,
       dirtyPaths,
       options,
+      lastFingerprintAuditAt === null || forceFingerprint ? now : undefined,
     )
   }
 
@@ -82,6 +98,7 @@ export class Reconciler {
     scope: ReadonlySet<string> | null,
     dirtyPaths: DirtyPath[],
     options: ReconcileOptions,
+    fingerprintAuditedAt?: number,
   ): Promise<ReconcileResult> {
     if (options.shouldStop?.()) throw new Error("Vault reconciliation canceled")
     const pendingEntries = await this.journal.listPending()
@@ -209,6 +226,7 @@ export class Reconciler {
       // A prepared retry may contain older bytes than the current file. Keep its event durable until
       // the pending revision commits, then the mandatory rerun compares the resulting snapshot.
       consumeDirtyPaths: dirtyPaths.filter((change) => !preparedPendingPaths.has(change.path)),
+      ...(fingerprintAuditedAt === undefined ? {} : { fingerprintAuditedAt }),
     })
     return { queued: entries.length, files: scope?.size ?? current.length }
   }
