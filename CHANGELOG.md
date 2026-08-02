@@ -1,3 +1,10 @@
+## [1.11.6](https://github.com/angristan/meridian/compare/1.11.5...1.11.6) (2026-08-02)
+
+
+### Bug Fixes
+
+* bind queued revision operation IDs ([bc3af22](https://github.com/angristan/meridian/commit/bc3af225076b98a3efe9fd83f9aa3e9afa25b1e6))
+
 ## [1.11.5](https://github.com/angristan/meridian/compare/1.11.4...1.11.5) (2026-08-02)
 
 
