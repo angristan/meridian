@@ -105,20 +105,18 @@ export class PushEngine {
     shouldStop: () => boolean,
   ): Promise<{ stopped: true } | { stopped: false; checkpoint: TrustedCheckpoint }> {
     let prepared = entry.preparedRevision
-    if (!prepared || prepared.invalidatedByEpoch) {
-      const invalidated = prepared?.invalidatedByEpoch === true ? prepared : null
-      const exists = invalidated
-        ? invalidated.action !== "delete"
-        : await this.vault.exists(entry.path)
-      const action = invalidated
-        ? invalidated.action
+    if (!prepared || prepared.invalidatedByEpoch || prepared.operationIdBound !== true) {
+      const rebuild = prepared ?? null
+      const exists = rebuild ? rebuild.action !== "delete" : await this.vault.exists(entry.path)
+      const action = rebuild
+        ? rebuild.action
         : exists
           ? entry.action === "restore"
             ? "restore"
             : "upsert"
           : "delete"
-      const bytes = invalidated
-        ? invalidated.bytes
+      const bytes = rebuild
+        ? rebuild.bytes
         : action === "delete"
           ? null
           : await this.vault.read(entry.path)
@@ -133,7 +131,7 @@ export class PushEngine {
         bytes,
         chunkSize: CHUNK_SIZE,
       })
-      prepared = { action, bytes, encrypted }
+      prepared = { action, bytes, encrypted, operationIdBound: true }
       await this.journal.putEntry({
         ...entry,
         state: "uploading",

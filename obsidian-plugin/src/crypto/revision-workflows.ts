@@ -6,7 +6,13 @@ import {
   sign,
   verify,
 } from "@meridian/crypto"
-import { decodeOperation, ed25519Signature, fileId, revisionId } from "@meridian/protocol"
+import {
+  decodeOperation,
+  ed25519Signature,
+  fileId,
+  operationId,
+  revisionId,
+} from "@meridian/protocol"
 import type {
   BlobTransferProgress,
   DecryptedRevision,
@@ -31,6 +37,7 @@ export async function encryptRevision(
   const bundle = deviceBundle(device)
   const encrypted = await encryptFileRevision({
     device: bundle,
+    operationId: operationId(fromBase64Url(draft.operationId)),
     normalizedPath: draft.path,
     content: draft.bytes ? new Uint8Array(draft.bytes) : null,
     contentType: isTextPath(draft.path) ? "utf8-text" : "binary",

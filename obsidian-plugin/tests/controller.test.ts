@@ -1071,6 +1071,66 @@ describe("SyncController", () => {
     controller.stop()
   })
 
+  it("rebuilds prepared revisions created before operation ID binding", async () => {
+    class RecordingCrypto extends FakeCrypto {
+      readonly drafts: RevisionDraft[] = []
+
+      override async encryptRevision(
+        device: DeviceKeyMaterial,
+        draft: RevisionDraft,
+      ): Promise<EncryptedRevision> {
+        this.drafts.push(draft)
+        return super.encryptRevision(device, draft)
+      }
+    }
+
+    const bytes = new TextEncoder().encode("queued content").buffer
+    const operationId = randomId()
+    const journal = new MemoryJournal()
+    await journal.putEntry({
+      id: operationId,
+      action: "upsert",
+      fileId: randomId(),
+      path: "note.md",
+      previousPath: null,
+      fingerprint: null,
+      baseRevisionId: null,
+      parentRevisionIds: [],
+      restoreSourceRevisionId: null,
+      revisionId: randomId(),
+      createdAt: 1,
+      attempts: 1,
+      state: "failed",
+      error: "Operation wrapper does not match its canonical signed envelope",
+      preparedRevision: {
+        action: "upsert",
+        bytes,
+        encrypted: { blobs: [], envelope: { operationId: "different-inner-id" } },
+      },
+    })
+    const crypto = new RecordingCrypto()
+    const remote = new FakeRemote()
+    const controller = new SyncController(
+      new FakeVault({ "note.md": "queued content" }),
+      journal,
+      remote,
+      crypto,
+      () => ALL_CATEGORIES,
+      () => {},
+    )
+
+    await controller.start(TEST_DEVICE)
+
+    expect(crypto.drafts).toHaveLength(1)
+    const [rebuilt] = crypto.drafts
+    if (!rebuilt?.bytes) throw new Error("Expected retained queued plaintext")
+    expect(rebuilt.operationId).toBe(operationId)
+    expect(new TextDecoder().decode(rebuilt.bytes)).toBe("queued content")
+    expect(remote.operations).toHaveLength(1)
+    expect(await journal.listPending()).toEqual([])
+    controller.stop()
+  })
+
   it("requeues a dirty edit behind a prepared revision retry", async () => {
     const oldBytes = new TextEncoder().encode("prepared content").buffer
     const operationId = randomId()

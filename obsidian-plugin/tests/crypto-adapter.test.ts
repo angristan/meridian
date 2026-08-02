@@ -1,4 +1,5 @@
 import { computeRecoveryStateId, deserializeEncryptedRecoveryPackage } from "@meridian/crypto"
+import { decodeOperation } from "@meridian/protocol"
 import { describe, expect, it } from "vitest"
 import { createPackageCryptoPort } from "../src/crypto/package-adapter"
 import { fromBase64Url, randomId, toBase64Url } from "../src/platform/bytes"
@@ -22,8 +23,9 @@ describe("shared crypto adapter", () => {
     const claim = await crypto.createFirstDevice("setup-session", "claim-challenge")
     const device = await crypto.loadDevice(claim.keyBundle)
     const plaintext = new TextEncoder().encode("private note").buffer
+    const operationId = randomId()
     const encrypted = await crypto.encryptRevision(device, {
-      operationId: randomId(),
+      operationId,
       revisionId: randomId(),
       fileId: randomId(),
       action: "upsert",
@@ -33,6 +35,13 @@ describe("shared crypto adapter", () => {
       bytes: plaintext,
       chunkSize: 4 * 1024 * 1024,
     })
+    const wrapper = record(encrypted.envelope)
+    expect(stringField(wrapper, "operationId")).toBe(operationId)
+    expect(
+      toBase64Url(
+        decodeOperation(fromBase64Url(stringField(wrapper, "envelope"))).body.operationId,
+      ),
+    ).toBe(operationId)
     const blobs = new Map(encrypted.blobs.map((blob) => [blob.blobId, blob.bytes]))
     await expect(
       crypto.inspectRevision(

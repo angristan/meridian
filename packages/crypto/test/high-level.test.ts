@@ -8,6 +8,7 @@ import {
   encodeCanonical,
   encodeDeviceCertificate,
   hashBytes,
+  operationId,
   Permission,
   pairingId,
   recoveryId,
@@ -182,14 +183,17 @@ describe("plugin-facing cryptography workflows", () => {
   it("encrypts and decrypts signed chunked file revisions", async () => {
     const claim = await createFirstDeviceClaimBundle()
     const plaintext = textEncoder.encode("offline revisions survive")
+    const revisionOperationId = operationId(new Uint8Array(16).fill(14))
     const encrypted = await encryptFileRevision({
       device: claim.device,
+      operationId: revisionOperationId,
       normalizedPath: "Notes/Café.md",
       content: plaintext,
       contentType: "utf8-text",
       createdAt: 1_700_000_000_000,
       chunkSize: 5,
     })
+    expect(bytesEqual(encrypted.operation.body.operationId, revisionOperationId)).toBe(true)
     expect(encrypted.blobs.length).toBeGreaterThan(1)
     const blobs = new Map(encrypted.blobs.map((blob) => [bytesToHex(blob.blobId), blob.ciphertext]))
     const decrypted = await decryptFileRevision({

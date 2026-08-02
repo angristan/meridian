@@ -10,8 +10,8 @@ import {
   encodeRevisionMetadata,
   type FileId,
   fileId,
+  type OperationId,
   OperationType,
-  operationId,
   Permission,
   type RevisionId,
   type RevisionMetadata,
@@ -30,6 +30,7 @@ const MAX_CHUNK_SIZE = 8 * 1024 * 1024
 
 export interface EncryptFileRevisionInput {
   readonly device: DeviceKeyBundle
+  readonly operationId: OperationId
   readonly normalizedPath: string
   readonly content: Uint8Array | null
   readonly contentType: "binary" | "utf8-text"
@@ -132,7 +133,7 @@ export async function encryptFileRevision(
 
   const body: RevisionOperation = {
     type: "revision",
-    operationId: operationId(randomBytes(16)),
+    operationId: input.operationId,
     vaultId: input.device.vaultId,
     epochId: input.device.epoch.body.epochId,
     authorDeviceId: input.device.deviceId,

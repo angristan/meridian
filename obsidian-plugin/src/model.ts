@@ -417,6 +417,8 @@ export interface PreparedJournalRevision {
   action: JournalAction
   bytes: ArrayBuffer | null
   encrypted: EncryptedRevision
+  /** Missing on payloads created before the signed operation ID was bound to the journal entry. */
+  operationIdBound?: true
   invalidatedByEpoch?: true
 }
 
