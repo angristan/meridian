@@ -1,3 +1,10 @@
+## [1.11.1](https://github.com/angristan/meridian/compare/1.11.0...1.11.1) (2026-08-02)
+
+
+### Bug Fixes
+
+* sync epoch transitions on offline devices ([4ae50ab](https://github.com/angristan/meridian/commit/4ae50ab0c21f4372467c438d5fd477066eaebc4c))
+
 # [1.11.0](https://github.com/angristan/meridian/compare/1.10.0...1.11.0) (2026-08-01)
 
 
