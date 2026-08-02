@@ -1,3 +1,10 @@
+## [1.11.2](https://github.com/angristan/meridian/compare/1.11.1...1.11.2) (2026-08-02)
+
+
+### Bug Fixes
+
+* remember last successful sync ([a879ba1](https://github.com/angristan/meridian/commit/a879ba1fd52c4978571c5cbf352934c7a4c5d236))
+
 ## [1.11.1](https://github.com/angristan/meridian/compare/1.11.0...1.11.1) (2026-08-02)
 
 
