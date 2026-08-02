@@ -256,6 +256,57 @@ describe("plugin-facing cryptography workflows", () => {
     ).rejects.toThrow(/authentication failed/)
   })
 
+  it("bounds concurrent blob downloads while preserving chunk order", async () => {
+    const claim = await createFirstDeviceClaimBundle()
+    const plaintext = textEncoder.encode("bounded-download-work")
+    const encrypted = await encryptFileRevision({
+      device: claim.device,
+      operationId: operationId(new Uint8Array(16).fill(15)),
+      normalizedPath: "attachment.bin",
+      content: plaintext,
+      contentType: "binary",
+      createdAt: 1_700_000_000_000,
+      chunkSize: 1,
+    })
+    const blobs = new Map(
+      encrypted.blobs.map((blob, index) => [
+        bytesToHex(blob.blobId),
+        { ciphertext: blob.ciphertext, index },
+      ]),
+    )
+    let active = 0
+    let maximumActive = 0
+    let started = 0
+    let releaseInitial: (() => void) | undefined
+    const initialGate = new Promise<void>((resolve) => {
+      releaseInitial = resolve
+    })
+
+    const decrypting = decryptFileRevision({
+      operation: encrypted.operationBytes,
+      epochKey: claim.device.vaultEpochKey,
+      authorCertificate: claim.device.certificate,
+      loadBlob: async (id) => {
+        const blob = blobs.get(bytesToHex(id))
+        if (!blob) throw new Error("missing test blob")
+        active += 1
+        started += 1
+        maximumActive = Math.max(maximumActive, active)
+        if (started <= 4) await initialGate
+        active -= 1
+        return blob.ciphertext
+      },
+    })
+    while (started < 4) await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(started).toBe(4)
+    expect(maximumActive).toBe(4)
+    releaseInitial?.()
+
+    const decrypted = await decrypting
+    expect(maximumActive).toBe(4)
+    expect(bytesEqual(decrypted.content ?? new Uint8Array(), plaintext)).toBe(true)
+  })
+
   it("prepares, serializes, verifies, and consumes a pairing epoch package", async () => {
     const first = await createFirstDeviceClaimBundle()
     const pending = await createPendingPairingDevice()

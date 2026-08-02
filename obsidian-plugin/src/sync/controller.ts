@@ -13,6 +13,7 @@ import type {
   SelectiveSyncSettings,
   SyncReason,
   SyncStatus,
+  TrustedCheckpoint,
   VaultPort,
 } from "../model"
 import { INITIAL_STATUS } from "../model"
@@ -61,6 +62,8 @@ export class SyncController {
   private rerunReason: SyncReason | null = null
   private authenticated = false
   private stopNotifications: (() => void) | null = null
+  private notificationGeneration = 0
+  private lastRetentionAcknowledgementKey: string | null | undefined
   private stopRequested = false
   private lastProgressEmission = 0
   private readonly progressThrottleMs: number
@@ -188,6 +191,11 @@ export class SyncController {
     this.authenticated = false
     this.startNotifications()
     return this.sync("resume")
+  }
+
+  reconnectNotifications(): void {
+    if (this.stopRequested || !this.authenticated) return
+    this.startNotifications()
   }
 
   sync(reason: SyncReason): Promise<void> {
@@ -557,9 +565,17 @@ export class SyncController {
   private async acknowledgeRetention(): Promise<void> {
     const device = this.requireDevice()
     const checkpoint = (await this.journal.getCheckpoint()) ?? device.trustedCheckpoint
+    const acknowledgementKey = retentionAcknowledgementKey(device, checkpoint)
+    if (this.lastRetentionAcknowledgementKey === undefined) {
+      this.lastRetentionAcknowledgementKey = await this.journal.getLastRetentionAcknowledgementKey()
+    }
+    if (this.lastRetentionAcknowledgementKey === acknowledgementKey) return
+
     const acknowledgement = await this.crypto.createRetentionAcknowledgement(device, checkpoint)
     try {
       await this.remote.acknowledgeRetention(acknowledgement)
+      await this.journal.setLastRetentionAcknowledgementKey(acknowledgementKey)
+      this.lastRetentionAcknowledgementKey = acknowledgementKey
     } catch (error) {
       // A concurrent append or rotation can make an otherwise valid acknowledgement stale. The
       // next notification sync signs the new head; no cleanup boundary advances in the meantime.
@@ -584,19 +600,41 @@ export class SyncController {
   }
 
   private startNotifications(): void {
+    const generation = ++this.notificationGeneration
     this.stopNotifications?.()
     this.stopNotifications = null
+    this.updateStatus({ socketConnected: false })
     if (!this.device || !this.authenticated) return
-    void this.journal.getCursor().then((cursor) => {
-      if (!this.device || !this.authenticated || this.stopRequested) return
-      this.stopNotifications = this.remote.connectNotifications(
-        cursor,
-        (hintedCursor) => {
-          if (hintedCursor > this.status.cursor) void this.sync("notification")
-        },
-        (connected) => this.updateStatus({ socketConnected: connected }),
-      )
-    })
+    void this.journal
+      .getCursor()
+      .then((cursor) => {
+        if (
+          generation !== this.notificationGeneration ||
+          !this.device ||
+          !this.authenticated ||
+          this.stopRequested
+        ) {
+          return
+        }
+        this.stopNotifications = this.remote.connectNotifications(
+          cursor,
+          (hintedCursor) => {
+            if (generation === this.notificationGeneration && hintedCursor > this.status.cursor) {
+              void this.sync("notification")
+            }
+          },
+          (connected) => {
+            if (generation === this.notificationGeneration) {
+              this.updateStatus({ socketConnected: connected })
+            }
+          },
+        )
+      })
+      .catch(() => {
+        if (generation === this.notificationGeneration) {
+          this.updateStatus({ socketConnected: false })
+        }
+      })
   }
 
   private requireDevice(): DeviceKeyMaterial {
@@ -608,6 +646,7 @@ export class SyncController {
     this.stopRequested = true
     this.compute.close()
     this.rerunReason = null
+    this.notificationGeneration += 1
     this.stopNotifications?.()
     this.stopNotifications = null
   }
@@ -645,6 +684,21 @@ function mergeSyncReasons(current: SyncReason | null, incoming: SyncReason): Syn
 
 function requiresFullScan(reason: SyncReason): boolean {
   return reason === "startup" || reason === "resume" || reason === "interval" || reason === "manual"
+}
+
+function retentionAcknowledgementKey(
+  device: DeviceKeyMaterial,
+  checkpoint: TrustedCheckpoint,
+): string {
+  return JSON.stringify([
+    device.vaultId,
+    device.deviceId,
+    device.epochId,
+    checkpoint.cursor,
+    checkpoint.logHash,
+    checkpoint.initialLogFormat ?? "legacy-http-v1",
+    checkpoint.logFormat ?? "legacy-http-v1",
+  ])
 }
 
 function networkAvailable(): boolean {

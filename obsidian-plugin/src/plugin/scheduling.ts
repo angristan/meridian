@@ -1,40 +1,100 @@
 import { type Plugin, TFile } from "obsidian"
-import type { MeridianSettings } from "../model"
+import type { MeridianSettings, SyncStatus } from "../model"
 import type { SyncController } from "../sync/controller"
 import { isSyncablePath } from "../vault/path-policy"
-import { FILE_EVENT_DEBOUNCE_MS, isFallbackPollDue } from "./scheduling-policy"
+import {
+  fallbackPollDueAt,
+  fileEventDelayMs,
+  notificationReconnectDelayMs,
+} from "./scheduling-policy"
 
-const SCHEDULER_TICK_MS = 15_000
+interface SchedulingDependencies {
+  now?: () => number
+  random?: () => number
+}
 
 export class PluginScheduling {
   private eventTimer: number | null = null
+  private scheduleTimer: number | null = null
   private eventWrites: Promise<void> = Promise.resolve()
   private eventWriteFailed = false
+  private eventBurstStartedAt: number | null = null
+  private lastFileEventAt: number | null = null
   private lastPollAt = 0
   private lastScanAt = 0
+  private nextReconnectAt = Number.POSITIVE_INFINITY
+  private reconnectAttempt = 0
+  private pollFailures = 0
+  private runningScheduledWork = false
+  private resumeWork: Promise<void> | null = null
+  private registered = false
+  private readonly now: () => number
+  private readonly random: () => number
 
   constructor(
     private readonly plugin: Plugin,
     private readonly controller: () => SyncController | null,
     private readonly settings: () => MeridianSettings,
-  ) {}
+    dependencies: SchedulingDependencies = {},
+  ) {
+    this.now = dependencies.now ?? Date.now
+    this.random = dependencies.random ?? Math.random
+  }
 
   register(): void {
+    this.registered = true
     this.registerVaultEvents()
     this.registerResumeEvents()
-    this.plugin.registerInterval(
-      window.setInterval(() => void this.runScheduledWork(), SCHEDULER_TICK_MS),
-    )
+    this.plugin.register(() => this.stop())
+    this.scheduleNextWork()
   }
 
   connectionStarted(): void {
-    this.lastPollAt = Date.now()
-    this.lastScanAt = Date.now()
+    const now = this.now()
+    this.lastPollAt = now
+    this.lastScanAt = now
+    this.reconnectAttempt = 0
+    this.nextReconnectAt = this.controller()?.getStatus().socketConnected
+      ? Number.POSITIVE_INFINITY
+      : now + notificationReconnectDelayMs(0, this.random)
+    this.pollFailures = 0
+    this.scheduleNextWork()
+  }
+
+  settingsChanged(): void {
+    this.scheduleNextWork()
+  }
+
+  statusChanged(patch: Partial<SyncStatus>): void {
+    if (patch.socketConnected === true) {
+      this.reconnectAttempt = 0
+      this.nextReconnectAt = Number.POSITIVE_INFINITY
+    } else if (
+      patch.socketConnected === false &&
+      this.nextReconnectAt === Number.POSITIVE_INFINITY
+    ) {
+      this.nextReconnectAt =
+        this.now() + notificationReconnectDelayMs(this.reconnectAttempt, this.random)
+    }
+    if (
+      patch.socketConnected !== undefined ||
+      patch.lastSyncedAt !== undefined ||
+      patch.phase === "idle" ||
+      patch.phase === "offline" ||
+      patch.phase === "error"
+    ) {
+      this.scheduleNextWork()
+    }
+  }
+
+  async flushPendingFileEvents(): Promise<void> {
+    await this.drainFileEvents()
   }
 
   stop(): void {
-    if (this.eventTimer !== null) window.clearTimeout(this.eventTimer)
-    this.eventTimer = null
+    this.registered = false
+    this.clearEventTimer()
+    this.clearScheduleTimer()
   }
 
   private registerVaultEvents(): void {
@@ -78,52 +138,156 @@ export class PluginScheduling {
 
   private registerResumeEvents(): void {
     this.plugin.registerDomEvent(document, "visibilitychange", () => {
-      if (document.visibilityState === "visible") void this.controller()?.resume()
+      if (document.visibilityState === "visible") this.resumeNow()
+      else this.suspendNow()
     })
-    this.plugin.registerDomEvent(window, "pageshow", () => void this.controller()?.resume())
-    this.plugin.registerDomEvent(window, "online", () => void this.controller()?.resume())
+    this.plugin.registerDomEvent(window, "pageshow", () => this.resumeNow())
+    this.plugin.registerDomEvent(window, "pagehide", () => this.suspendNow())
+    this.plugin.registerDomEvent(window, "online", () => this.resumeNow())
+  }
+
+  private resumeNow(): void {
+    if (this.resumeWork) return
+    const controller = this.controller()
+    if (!controller) return
+    const now = this.now()
+    this.lastPollAt = now
+    this.lastScanAt = now
+    this.reconnectAttempt = 0
+    this.nextReconnectAt = now + notificationReconnectDelayMs(0, this.random)
+    this.pollFailures = 0
+    this.clearScheduleTimer()
+    const work = controller.resume().finally(() => {
+      if (this.resumeWork === work) this.resumeWork = null
+      this.scheduleNextWork()
+    })
+    this.resumeWork = work
+  }
+
+  private suspendNow(): void {
+    this.clearScheduleTimer()
+    if (this.eventTimer !== null) void this.flushFileEvents()
   }
 
   private scheduleFileSync(): void {
-    if (this.eventTimer !== null) window.clearTimeout(this.eventTimer)
+    const now = this.now()
+    const burstStartedAt = this.eventBurstStartedAt ?? now
+    const delay = fileEventDelayMs({
+      now,
+      burstStartedAt,
+      previousEventAt: this.lastFileEventAt,
+    })
+    this.eventBurstStartedAt = burstStartedAt
+    this.lastFileEventAt = now
+    this.clearEventTimer()
     this.eventTimer = window.setTimeout(() => {
       this.eventTimer = null
       void this.flushFileEvents()
-    }, FILE_EVENT_DEBOUNCE_MS)
+    }, delay)
   }
 
   private async flushFileEvents(): Promise<void> {
-    await this.eventWrites
+    const eventWriteFailed = await this.drainFileEvents()
     const controller = this.controller()
     if (!controller) return
-    const reason = this.eventWriteFailed ? "manual" : "file-event"
-    this.eventWriteFailed = false
-    await controller.sync(reason)
+    await controller.sync(eventWriteFailed ? "manual" : "file-event")
+  }
+
+  private async drainFileEvents(): Promise<boolean> {
+    this.clearEventTimer()
+    this.eventBurstStartedAt = null
+    this.lastFileEventAt = null
+    const writes = this.eventWrites
+    await writes
+    const failed = this.eventWriteFailed
+    if (this.eventWrites === writes) this.eventWriteFailed = false
+    return failed
   }
 
   private async runScheduledWork(): Promise<void> {
-    const controller = this.controller()
-    if (!controller || document.visibilityState !== "visible") return
-    const now = Date.now()
-    const settings = this.settings()
-    if (now - this.lastScanAt >= settings.scanIntervalMinutes * 60_000) {
-      this.lastScanAt = now
-      this.lastPollAt = now
-      await controller.sync("interval")
-      return
-    }
-    const status = controller.getStatus()
-    if (
-      isFallbackPollDue({
-        now,
+    if (this.runningScheduledWork) return
+    this.runningScheduledWork = true
+    this.scheduleTimer = null
+    try {
+      const controller = this.controller()
+      if (!controller || document.visibilityState !== "visible") return
+      const now = this.now()
+      const settings = this.settings()
+      const status = controller.getStatus()
+      const scanDueAt = this.lastScanAt + settings.scanIntervalMinutes * 60_000
+      const pollDueAt = fallbackPollDueAt({
         lastPollAt: this.lastPollAt,
         lastSyncedAt: status.lastSyncedAt,
         socketConnected: status.socketConnected,
         disconnectedPollIntervalMs: settings.pollIntervalSeconds * 1_000,
+        consecutiveFailures: this.pollFailures,
       })
-    ) {
-      this.lastPollAt = now
-      await controller.sync("notification")
+      const reconnectDue = !status.socketConnected && now >= this.nextReconnectAt
+      if (reconnectDue) {
+        this.reconnectAttempt += 1
+        this.nextReconnectAt =
+          now + notificationReconnectDelayMs(this.reconnectAttempt, this.random)
+        controller.reconnectNotifications()
+      }
+
+      if (now >= scanDueAt) {
+        this.lastScanAt = now
+        this.lastPollAt = now
+        await controller.sync("interval")
+        this.recordPollOutcome(controller.getStatus())
+      } else if (now >= pollDueAt) {
+        this.lastPollAt = now
+        await controller.sync("notification")
+        this.recordPollOutcome(controller.getStatus())
+      }
+    } finally {
+      this.runningScheduledWork = false
+      this.scheduleNextWork()
     }
+  }
+
+  private recordPollOutcome(status: SyncStatus): void {
+    if (status.phase === "error" || status.phase === "offline") this.pollFailures += 1
+    else this.pollFailures = 0
+  }
+
+  private scheduleNextWork(): void {
+    if (!this.registered || this.runningScheduledWork) return
+    this.clearScheduleTimer()
+    const controller = this.controller()
+    if (
+      !controller ||
+      document.visibilityState !== "visible" ||
+      (typeof navigator !== "undefined" && navigator.onLine === false)
+    ) {
+      return
+    }
+
+    const now = this.now()
+    const settings = this.settings()
+    const status = controller.getStatus()
+    const deadlines = [
+      this.lastScanAt + settings.scanIntervalMinutes * 60_000,
+      fallbackPollDueAt({
+        lastPollAt: this.lastPollAt,
+        lastSyncedAt: status.lastSyncedAt,
+        socketConnected: status.socketConnected,
+        disconnectedPollIntervalMs: settings.pollIntervalSeconds * 1_000,
+        consecutiveFailures: this.pollFailures,
+      }),
+    ]
+    if (!status.socketConnected) deadlines.push(this.nextReconnectAt)
+    const delay = Math.max(250, Math.min(...deadlines) - now)
+    this.scheduleTimer = window.setTimeout(() => void this.runScheduledWork(), delay)
+  }
+
+  private clearEventTimer(): void {
+    if (this.eventTimer !== null) window.clearTimeout(this.eventTimer)
+    this.eventTimer = null
+  }
+
+  private clearScheduleTimer(): void {
+    if (this.scheduleTimer !== null) window.clearTimeout(this.scheduleTimer)
+    this.scheduleTimer = null
   }
 }

@@ -1,6 +1,6 @@
 import "fake-indexeddb/auto"
 import { afterEach, describe, expect, it } from "vitest"
-import type { JournalEntry, LocalRevision } from "../src/model"
+import type { FileSnapshot, JournalEntry, LocalRevision } from "../src/model"
 import { IndexedDbJournal } from "../src/storage/journal"
 
 const databaseNames: string[] = []
@@ -148,6 +148,69 @@ describe("IndexedDB lossless compaction", () => {
     const reopened = new IndexedDbJournal(name)
     await reopened.open()
     expect(await reopened.getLastFingerprintAuditAt()).toBe(1_725_000_000_000)
+    reopened.close()
+  })
+
+  it("keeps the snapshot cache consistent with durable mutations", async () => {
+    const name = databaseName()
+    const journal = new IndexedDbJournal(name)
+    await journal.open()
+    const first: FileSnapshot = {
+      path: "first.md",
+      fileId: "first",
+      fingerprint: "one",
+      size: 1,
+      mtime: 1,
+      kind: "vault",
+    }
+    await journal.putSnapshot(first)
+    first.fingerprint = "mutated-after-write"
+
+    const view = await journal.getSnapshots()
+    expect(view.get("first.md")?.fingerprint).toBe("one")
+    expect(Object.isFrozen(view.get("first.md"))).toBe(true)
+    expect(() => (view as Map<string, FileSnapshot>).clear()).toThrow()
+    expect(await journal.getSnapshots()).toBe(view)
+    expect((await journal.getSnapshots()).size).toBe(1)
+
+    const second: FileSnapshot = {
+      ...first,
+      path: "second.md",
+      fileId: "second",
+      fingerprint: "two",
+    }
+    await journal.commitReconciliation({
+      entries: [],
+      putSnapshots: [second],
+      removeSnapshotPaths: ["first.md", "second.md"],
+      consumeDirtyPaths: [],
+    })
+    expect((await journal.getSnapshots()).size).toBe(0)
+
+    await journal.replaceSnapshots([second])
+    journal.close()
+    const reopened = new IndexedDbJournal(name)
+    await reopened.open()
+    expect((await reopened.getSnapshots()).get("second.md")).toMatchObject({
+      fileId: "second",
+      fingerprint: "two",
+    })
+    await reopened.clearSnapshots()
+    expect((await reopened.getSnapshots()).size).toBe(0)
+    reopened.close()
+  })
+
+  it("persists the last retention acknowledgement without a schema change", async () => {
+    const name = databaseName()
+    const journal = new IndexedDbJournal(name)
+    await journal.open()
+    expect(await journal.getLastRetentionAcknowledgementKey()).toBeNull()
+    await journal.setLastRetentionAcknowledgementKey("epoch:cursor:hash")
+    journal.close()
+
+    const reopened = new IndexedDbJournal(name)
+    await reopened.open()
+    expect(await reopened.getLastRetentionAcknowledgementKey()).toBe("epoch:cursor:hash")
     reopened.close()
   })
 

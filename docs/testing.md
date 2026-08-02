@@ -59,7 +59,7 @@ Until the repository and a release are public, the build produces `obsidian-plug
 
 ### Responsiveness and index recovery
 
-- Populate 10,000 small files, edit one file, and verify routine sync scans only that path.
+- Populate 10,000 small files, edit one file, and verify routine sync scans only that path while snapshots come from the journal's hydrated index instead of another IndexedDB `getAll()`.
 - Reconcile an unchanged 10,000-file vault; reuse every cached fingerprint without reading file contents or running full rename planning.
 - Change a file while Meridian is stopped or Obsidian is suspended; verify resume detects changed size or modification time.
 - Preserve both size and modification time while changing bytes; verify the daily complete fingerprint audit catches it.
@@ -68,6 +68,8 @@ Until the repository and a release are public, the build produces `obsidian-plug
 - Apply a remote revision and verify its resulting Obsidian event does not echo a duplicate revision.
 - Pause during a large scan; the Worker must terminate, no partial reconciliation may commit, and dirty paths must remain.
 - Test an 8 MiB chunk, a 10,000-file index, and a 500-operation pull batch with the Worker enabled and with Blob Workers unavailable.
+- Verify uploads and downloads never exceed four active chunk transfers, preserve chunk order, and never commit a revision after a failed chunk.
+- Verify one exact scheduler timer coalesces simultaneous scan/poll deadlines, reconnect backoff caps at five minutes, and suspension drains durable file-event writes.
 
 Automated responsiveness tests use generous wall-clock ceilings to detect pathological regressions and assert that cooperative fallbacks and batch pulls yield to timer heartbeats. They are not hardware performance claims.
 
@@ -133,4 +135,4 @@ Workspace/layout state, Meridian state, caches, and secret storage must remain d
 
 ## iOS expectations
 
-Obsidian suspends community plugins in the background. Meridian therefore promises foreground and resume synchronization, not continuous background delivery. Always check status after reopening Obsidian before assuming the remote device has received a change.
+Obsidian suspends community plugins in the background. Meridian makes a best-effort flush of pending durable file events when the app becomes hidden, but promises foreground and resume synchronization rather than continuous background delivery. Always check status after reopening Obsidian before assuming the remote device received a change.

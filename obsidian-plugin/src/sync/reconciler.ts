@@ -92,7 +92,7 @@ export class Reconciler {
 
   private async reconcileScanned(
     current: ScannedFileSnapshot[],
-    previous: Map<string, FileSnapshot>,
+    previous: ReadonlyMap<string, FileSnapshot>,
     categories: Record<ConfigCategory, boolean>,
     selection: SelectiveSyncSettings,
     scope: ReadonlySet<string> | null,

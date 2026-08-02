@@ -8,6 +8,7 @@ import type {
   VaultPort,
 } from "../model"
 import type { JournalPort } from "../storage/journal"
+import { uploadBlobsConcurrently } from "./blob-transfer"
 import { snapshotFor } from "./snapshots"
 
 const CHUNK_SIZE = 4 * 1024 * 1024
@@ -154,14 +155,17 @@ export class PushEngine {
       transferredBytes,
       totalBytes,
     })
-    for (const [index, blob] of blobs.entries()) {
-      await this.remote.putBlob(blob)
-      transferredBytes += blob.bytes.byteLength
-      onProgress({
-        currentChunk: index + 1,
-        transferredBytes,
-      })
-    }
+    await uploadBlobsConcurrently(
+      blobs,
+      (blob) => this.remote.putBlob(blob),
+      (progress) => {
+        transferredBytes = progress.transferredBytes
+        onProgress({
+          currentChunk: progress.completedChunks,
+          transferredBytes,
+        })
+      },
+    )
 
     await this.journal.updateEntry(entry.id, "committing")
     onProgress({ stage: "committing" })

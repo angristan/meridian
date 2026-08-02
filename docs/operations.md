@@ -14,6 +14,8 @@
 
 Use Workers Logs and Traces to diagnose request classes, latency, binding failures, cursor lag, reconnects, retries, and encrypted byte counts. Never log setup/session tokens, keys, recovery material, file paths, envelope bodies, or stable identifiers that are unnecessary for diagnosis.
 
+The foreground plugin uses one exact deadline timer. A healthy socket still receives an authoritative HTTP check every five minutes. Socket reconnects use jittered exponential backoff, and failed HTTP polls use exponential backoff; both cap at five minutes. The browser `online` event and app resume trigger an immediate retry.
+
 ## Protocol compatibility
 
 Current Meridian clients create and write only canonical generation-1 operation logs and current epoch transitions. The Worker rejects writes to a vault that is not already canonical.

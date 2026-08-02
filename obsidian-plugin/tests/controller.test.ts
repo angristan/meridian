@@ -109,6 +109,80 @@ describe("SyncController", () => {
     controller.stop()
   })
 
+  it("acknowledges retention only when the trusted state changes", async () => {
+    const vault = new FakeVault()
+    const journal = new MemoryJournal()
+    const remote = new FakeRemote()
+    const controller = new SyncController(
+      vault,
+      journal,
+      remote,
+      new FakeCrypto(),
+      () => ALL_CATEGORIES,
+      () => {},
+    )
+
+    await controller.start(TEST_DEVICE)
+    expect(remote.retentionAcknowledgements).toHaveLength(1)
+    await controller.sync("notification")
+    await controller.sync("notification")
+    expect(remote.retentionAcknowledgements).toHaveLength(1)
+
+    vault.files.set("note.md", new TextEncoder().encode("changed").buffer)
+    await controller.recordVaultChange("note.md")
+    await controller.sync("file-event")
+    expect(remote.retentionAcknowledgements).toHaveLength(2)
+    await controller.sync("notification")
+    expect(remote.retentionAcknowledgements).toHaveLength(2)
+    controller.stop()
+
+    const restarted = new SyncController(
+      vault,
+      journal,
+      remote,
+      new FakeCrypto(),
+      () => ALL_CATEGORIES,
+      () => {},
+    )
+    await restarted.start(TEST_DEVICE)
+    expect(remote.retentionAcknowledgements).toHaveLength(2)
+    restarted.stop()
+  })
+
+  it("retries a retention acknowledgement that did not reach the server", async () => {
+    class FlakyRetentionRemote extends FakeRemote {
+      private failures = 1
+
+      override async acknowledgeRetention(
+        acknowledgement: Parameters<FakeRemote["acknowledgeRetention"]>[0],
+      ): Promise<void> {
+        if (this.failures > 0) {
+          this.failures -= 1
+          throw new Error("temporary acknowledgement failure")
+        }
+        await super.acknowledgeRetention(acknowledgement)
+      }
+    }
+
+    const journal = new MemoryJournal()
+    const remote = new FlakyRetentionRemote()
+    const controller = new SyncController(
+      new FakeVault(),
+      journal,
+      remote,
+      new FakeCrypto(),
+      () => ALL_CATEGORIES,
+      () => {},
+    )
+
+    await controller.start(TEST_DEVICE)
+    expect(await journal.getLastRetentionAcknowledgementKey()).toBeNull()
+    await controller.sync("notification")
+    expect(remote.retentionAcknowledgements).toHaveLength(1)
+    expect(await journal.getLastRetentionAcknowledgementKey()).not.toBeNull()
+    controller.stop()
+  })
+
   it("restores the last successful sync time after a restart", async () => {
     const journal = new MemoryJournal()
     const syncedAt = 1_725_000_000_000

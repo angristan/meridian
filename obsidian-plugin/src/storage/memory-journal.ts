@@ -19,6 +19,7 @@ export class MemoryJournal implements JournalPort {
   private cursor = 0
   private lastSuccessfulSyncAt: number | null = null
   private lastFingerprintAuditAt: number | null = null
+  private lastRetentionAcknowledgementKey: string | null = null
   private checkpoint: TrustedCheckpoint | null = null
   private readonly revocations = new Map<string, DeviceRevocationRecord>()
   private readonly revisions = new Map<string, LocalRevision>()
@@ -156,6 +157,15 @@ export class MemoryJournal implements JournalPort {
 
   async getLastFingerprintAuditAt(): Promise<number | null> {
     return this.lastFingerprintAuditAt
+  }
+
+  async getLastRetentionAcknowledgementKey(): Promise<string | null> {
+    return this.lastRetentionAcknowledgementKey
+  }
+
+  async setLastRetentionAcknowledgementKey(key: string): Promise<void> {
+    if (key.length === 0) throw new Error("Retention acknowledgement key is invalid")
+    this.lastRetentionAcknowledgementKey = key
   }
 
   async getCheckpoint(): Promise<TrustedCheckpoint | null> {

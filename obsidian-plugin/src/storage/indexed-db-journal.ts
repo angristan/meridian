@@ -16,27 +16,45 @@ import { type MetadataRecord, sortRevisions } from "./types"
 
 export class IndexedDbJournal implements JournalPort {
   private database: IDBDatabase | null = null
+  private snapshotIndex: Map<string, FileSnapshot> | null = null
+  private snapshotView: ReadonlyMap<string, FileSnapshot> | null = null
 
   constructor(private readonly databaseName = "meridian") {}
 
   async open(): Promise<void> {
     if (this.database) return
-    this.database = await new Promise<IDBDatabase>((resolve, reject) => {
+    const database = await new Promise<IDBDatabase>((resolve, reject) => {
       const request = indexedDB.open(this.databaseName, DATABASE_VERSION)
       request.onerror = () => reject(request.error ?? new Error("Unable to open sync journal"))
       request.onblocked = () => reject(new Error("Sync journal upgrade is blocked"))
       request.onupgradeneeded = () => upgradeJournalSchema(request.result, request.transaction)
-      request.onsuccess = () => {
-        const database = request.result
-        database.onversionchange = () => database.close()
-        resolve(database)
-      }
+      request.onsuccess = () => resolve(request.result)
     })
+    this.database = database
+    database.onversionchange = () => {
+      database.close()
+      if (this.database === database) {
+        this.database = null
+        this.snapshotIndex = null
+        this.snapshotView = null
+      }
+    }
+    try {
+      const snapshots = await this.getAll<FileSnapshot>("files")
+      this.setSnapshotIndex(
+        new Map(snapshots.map((snapshot) => [snapshot.path, cachedSnapshot(snapshot)])),
+      )
+    } catch (error) {
+      this.close()
+      throw error
+    }
   }
 
   close(): void {
     this.database?.close()
     this.database = null
+    this.snapshotIndex = null
+    this.snapshotView = null
   }
 
   async listPending(): Promise<JournalEntry[]> {
@@ -139,6 +157,8 @@ export class IndexedDbJournal implements JournalPort {
   }
 
   async commitReconciliation(commit: ReconciliationCommit): Promise<void> {
+    const putSnapshots = commit.putSnapshots.map(cachedSnapshot)
+    const removeSnapshotPaths = [...commit.removeSnapshotPaths]
     const database = this.requireDatabase()
     const transaction = database.transaction(
       ["entries", "files", "dirty-paths", "meta"],
@@ -149,8 +169,8 @@ export class IndexedDbJournal implements JournalPort {
     const files = transaction.objectStore("files")
     const dirtyPaths = transaction.objectStore("dirty-paths")
     for (const entry of commit.entries) entries.put(entry)
-    for (const snapshot of commit.putSnapshots) files.put(snapshot)
-    for (const path of commit.removeSnapshotPaths) files.delete(path)
+    for (const snapshot of putSnapshots) files.put(snapshot)
+    for (const path of removeSnapshotPaths) files.delete(path)
     const currentDirtyPaths = await requestResult<DirtyPath[]>(dirtyPaths.getAll())
     const tokenByPath = new Map(currentDirtyPaths.map((change) => [change.path, change.token]))
     for (const change of commit.consumeDirtyPaths) {
@@ -163,25 +183,33 @@ export class IndexedDbJournal implements JournalPort {
       } satisfies MetadataRecord)
     }
     await done
+
+    const snapshotIndex = this.requireSnapshotIndex()
+    for (const snapshot of putSnapshots) snapshotIndex.set(snapshot.path, snapshot)
+    for (const path of removeSnapshotPaths) snapshotIndex.delete(path)
   }
 
-  async getSnapshots(): Promise<Map<string, FileSnapshot>> {
-    const snapshots = await this.getAll<FileSnapshot>("files")
-    return new Map(snapshots.map((snapshot) => [snapshot.path, snapshot]))
+  async getSnapshots(): Promise<ReadonlyMap<string, FileSnapshot>> {
+    if (!this.snapshotView) throw new Error("Sync journal is not open")
+    return this.snapshotView
   }
 
   async replaceSnapshots(snapshots: FileSnapshot[]): Promise<void> {
+    const replacements = snapshots.map(cachedSnapshot)
     const database = this.requireDatabase()
     const transaction = database.transaction("files", "readwrite")
     const done = transactionDone(transaction)
     const store = transaction.objectStore("files")
     store.clear()
-    for (const snapshot of snapshots) store.put(snapshot)
+    for (const snapshot of replacements) store.put(snapshot)
     await done
+    this.setSnapshotIndex(new Map(replacements.map((snapshot) => [snapshot.path, snapshot])))
   }
 
   async putSnapshot(snapshot: FileSnapshot): Promise<void> {
-    await this.put("files", snapshot)
+    const replacement = cachedSnapshot(snapshot)
+    await this.put("files", replacement)
+    this.requireSnapshotIndex().set(replacement.path, replacement)
   }
 
   async removeSnapshot(path: string): Promise<void> {
@@ -190,6 +218,7 @@ export class IndexedDbJournal implements JournalPort {
     const done = transactionDone(transaction)
     transaction.objectStore("files").delete(path)
     await done
+    this.requireSnapshotIndex().delete(path)
   }
 
   async getCursor(): Promise<number> {
@@ -212,6 +241,19 @@ export class IndexedDbJournal implements JournalPort {
   async getLastFingerprintAuditAt(): Promise<number | null> {
     const timestamp = await this.getMetadata<unknown>("last-fingerprint-audit-at")
     return isValidTimestamp(timestamp) ? timestamp : null
+  }
+
+  async getLastRetentionAcknowledgementKey(): Promise<string | null> {
+    const key = await this.getMetadata<unknown>("last-retention-acknowledgement-key")
+    return typeof key === "string" && key.length > 0 ? key : null
+  }
+
+  async setLastRetentionAcknowledgementKey(key: string): Promise<void> {
+    if (key.length === 0) throw new Error("Retention acknowledgement key is invalid")
+    await this.put("meta", {
+      key: "last-retention-acknowledgement-key",
+      value: key,
+    } satisfies MetadataRecord)
   }
 
   async getCheckpoint(): Promise<TrustedCheckpoint | null> {
@@ -339,6 +381,7 @@ export class IndexedDbJournal implements JournalPort {
     const transaction = database.transaction("files", "readwrite")
     transaction.objectStore("files").clear()
     await transactionDone(transaction)
+    this.requireSnapshotIndex().clear()
   }
 
   private async deleteCompleteEntryBatch(): Promise<number> {
@@ -401,9 +444,66 @@ export class IndexedDbJournal implements JournalPort {
     if (!this.database) throw new Error("Sync journal is not open")
     return this.database
   }
+
+  private requireSnapshotIndex(): Map<string, FileSnapshot> {
+    if (!this.snapshotIndex) throw new Error("Sync journal is not open")
+    return this.snapshotIndex
+  }
+
+  private setSnapshotIndex(index: Map<string, FileSnapshot>): void {
+    this.snapshotIndex = index
+    this.snapshotView = new ReadonlyMapView(index)
+  }
 }
 
 const COMPACTION_BATCH_SIZE = 500
+
+class ReadonlyMapView<Key, Value> implements ReadonlyMap<Key, Value> {
+  readonly [Symbol.toStringTag] = "ReadonlyMap"
+
+  constructor(private readonly source: ReadonlyMap<Key, Value>) {}
+
+  get size(): number {
+    return this.source.size
+  }
+
+  get(key: Key): Value | undefined {
+    return this.source.get(key)
+  }
+
+  has(key: Key): boolean {
+    return this.source.has(key)
+  }
+
+  entries(): MapIterator<[Key, Value]> {
+    return this.source.entries()
+  }
+
+  keys(): MapIterator<Key> {
+    return this.source.keys()
+  }
+
+  values(): MapIterator<Value> {
+    return this.source.values()
+  }
+
+  forEach(
+    callbackfn: (value: Value, key: Key, map: ReadonlyMap<Key, Value>) => void,
+    thisArg?: unknown,
+  ): void {
+    this.source.forEach((value, key) => {
+      callbackfn.call(thisArg, value, key, this)
+    })
+  }
+
+  [Symbol.iterator](): MapIterator<[Key, Value]> {
+    return this.entries()
+  }
+}
+
+function cachedSnapshot(snapshot: FileSnapshot): FileSnapshot {
+  return Object.freeze(structuredClone(snapshot))
+}
 
 function isValidTimestamp(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0

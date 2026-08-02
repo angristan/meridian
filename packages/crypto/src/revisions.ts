@@ -27,6 +27,7 @@ import { randomBytes } from "./runtime.js"
 
 const DEFAULT_CHUNK_SIZE = 4 * 1024 * 1024
 const MAX_CHUNK_SIZE = 8 * 1024 * 1024
+const BLOB_TRANSFER_CONCURRENCY = 4
 
 export interface EncryptFileRevisionInput {
   readonly device: DeviceKeyBundle
@@ -191,8 +192,10 @@ export async function decryptFileRevision(
   input: DecryptFileRevisionInput,
 ): Promise<DecryptedFileRevision> {
   const prepared = await prepareFileRevision(input)
-  const plaintextChunks = await Promise.all(
-    prepared.operation.chunks.map(async (chunk, index) => {
+  const plaintextChunks = await mapConcurrently(
+    prepared.operation.chunks,
+    BLOB_TRANSFER_CONCURRENCY,
+    async (chunk, index) => {
       const ciphertext = await input.loadBlob(chunk.blobId)
       const plaintext = await aesGcmDecrypt(
         prepared.key,
@@ -208,7 +211,7 @@ export async function decryptFileRevision(
         throw new AuthenticationError("Decrypted chunk length does not match its signed descriptor")
       }
       return plaintext
-    }),
+    },
   )
   const total = plaintextChunks.reduce((sum, chunk) => sum + chunk.byteLength, 0)
   if (total !== prepared.plaintextBytes) {
@@ -223,6 +226,38 @@ export async function decryptFileRevision(
     offset += chunk.byteLength
   }
   return { ...preparedResult(prepared), content }
+}
+
+async function mapConcurrently<Input, Output>(
+  inputs: readonly Input[],
+  concurrency: number,
+  transform: (input: Input, index: number) => Promise<Output>,
+): Promise<Output[]> {
+  const outputs = new Array<Output>(inputs.length)
+  let nextIndex = 0
+  let failed = false
+  let failure: unknown
+
+  const worker = async () => {
+    while (!failed) {
+      const index = nextIndex
+      nextIndex += 1
+      const input = inputs[index]
+      if (input === undefined) return
+      try {
+        outputs[index] = await transform(input, index)
+      } catch (error) {
+        failed = true
+        failure = error
+      }
+    }
+  }
+
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, inputs.length) }, async () => worker()),
+  )
+  if (failed) throw failure
+  return outputs
 }
 
 async function prepareFileRevision(input: InspectFileRevisionInput) {

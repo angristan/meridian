@@ -32,7 +32,7 @@ export interface JournalPort {
   consumeDirtyPaths(changes: readonly DirtyPath[]): Promise<void>
   clearDirtyPaths(): Promise<void>
   commitReconciliation(commit: ReconciliationCommit): Promise<void>
-  getSnapshots(): Promise<Map<string, FileSnapshot>>
+  getSnapshots(): Promise<ReadonlyMap<string, FileSnapshot>>
   replaceSnapshots(snapshots: FileSnapshot[]): Promise<void>
   putSnapshot(snapshot: FileSnapshot): Promise<void>
   removeSnapshot(path: string): Promise<void>
@@ -40,6 +40,8 @@ export interface JournalPort {
   getLastSuccessfulSyncAt(): Promise<number | null>
   setLastSuccessfulSyncAt(timestamp: number): Promise<void>
   getLastFingerprintAuditAt(): Promise<number | null>
+  getLastRetentionAcknowledgementKey(): Promise<string | null>
+  setLastRetentionAcknowledgementKey(key: string): Promise<void>
   getCheckpoint(): Promise<TrustedCheckpoint | null>
   setCheckpoint(checkpoint: TrustedCheckpoint): Promise<void>
   getDeviceRevocation(deviceId: string): Promise<DeviceRevocationRecord | null>

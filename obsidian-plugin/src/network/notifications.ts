@@ -9,14 +9,6 @@ export function connectCursorNotifications(
 ): () => void {
   let stopped = false
   let socket: WebSocket | null = null
-  let retryTimer: number | null = null
-  let retry = 0
-
-  const scheduleReconnect = () => {
-    if (stopped) return
-    retry += 1
-    retryTimer = window.setTimeout(() => void connect(), Math.min(30_000, 1_000 * 2 ** retry))
-  }
 
   const connect = async () => {
     if (stopped || navigator.onLine === false) return
@@ -24,8 +16,7 @@ export function connectCursorNotifications(
     try {
       token = await sessionToken()
     } catch {
-      onState(false)
-      scheduleReconnect()
+      if (!stopped) onState(false)
       return
     }
     if (stopped) return
@@ -34,10 +25,7 @@ export function connectCursorNotifications(
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:"
     url.searchParams.set("after", String(after))
     socket = new WebSocket(url, ["meridian.v1", `bearer.${token}`])
-    socket.addEventListener("open", () => {
-      retry = 0
-      onState(true)
-    })
+    socket.addEventListener("open", () => onState(true))
     socket.addEventListener("message", (event) => {
       try {
         const message: unknown = JSON.parse(String(event.data))
@@ -50,9 +38,8 @@ export function connectCursorNotifications(
       }
     })
     socket.addEventListener("close", () => {
-      onState(false)
       socket = null
-      scheduleReconnect()
+      if (!stopped) onState(false)
     })
     socket.addEventListener("error", () => socket?.close())
   }
@@ -60,7 +47,6 @@ export function connectCursorNotifications(
   void connect()
   return () => {
     stopped = true
-    if (retryTimer !== null) window.clearTimeout(retryTimer)
     socket?.close()
     onState(false)
   }

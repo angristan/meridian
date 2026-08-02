@@ -54,7 +54,7 @@ SyncController
 ```
 
 - `src/crypto/` adapts device, pairing, revision, and Worker wire workflows to `CryptoPort`.
-- `src/network/` separates the portable client, response parsing, WebSocket reconnects, transport contract, and Obsidian transport.
+- `src/network/` separates the portable client, response parsing, one-shot WebSocket connections, transport contract, and Obsidian transport. The plugin scheduler owns reconnect timing.
 - `src/storage/` separates contracts, IndexedDB, memory tests, migrations, and IDB helpers.
 - `src/ui/` separates status, settings, connection/recovery, history/conflicts, and device/pairing views.
 
@@ -75,7 +75,7 @@ A crash before secret replacement leaves the old cursor and replays the transiti
 
 ### Coordinated retention and upload integrity
 
-Committed user history has infinite retention. Signed device acknowledgements report the exact durable cursor/hash and current epoch for every active device, but are telemetry only. They cannot authorize truncation without an authenticated generation-aware archive and rebootstrap path.
+Committed user history has infinite retention. Signed device acknowledgements report the exact durable cursor/hash and current epoch for every active device, but are telemetry only. The client persists the last accepted acknowledgement identity and signs again only after the checkpoint or epoch changes. Acknowledgements cannot authorize truncation without an authenticated generation-aware archive and rebootstrap path.
 
 ```text
 upload request -> DO upload claim -> immutable R2 PUT -> DO confirmation
@@ -83,9 +83,9 @@ upload request -> DO upload claim -> immutable R2 PUT -> DO confirmation
 file operation commit <--- requires every blob ------┘
 ```
 
-The Durable Object reconciles an R2 blob catalog when storage is inspected. Upload claims protect in-flight blobs from orphan cleanup, and a revision cannot commit until every referenced blob is confirmed in R2.
+The Durable Object reconciles an R2 blob catalog when storage is inspected. Upload claims protect in-flight blobs from orphan cleanup, and a revision cannot commit until every referenced blob is confirmed in R2. Attachment uploads and downloads use at most four concurrent chunk transfers. A started revision upload still reaches its commit boundary before pause.
 
-IndexedDB compaction deletes only completed upload entries and history rows that exactly duplicate retained revision rows. It works in independent transactions of at most 500 deletions. Pending/prepared operations, dirty event tokens, DAG ancestry, conflicts, checkpoints, revocations, and file history remain untouched. Revision stores have `fileId` indexes, and the legacy stable-ID migration records an atomic completion marker instead of rescanning every startup.
+IndexedDB compaction deletes only completed upload entries and history rows that exactly duplicate retained revision rows. It works in independent transactions of at most 500 deletions. Pending/prepared operations, dirty event tokens, DAG ancestry, conflicts, checkpoints, revocations, and file history remain untouched. Revision stores have `fileId` indexes, and the legacy stable-ID migration records an atomic completion marker instead of rescanning every startup. The journal hydrates one immutable in-memory snapshot index when it opens and updates it only after successful IndexedDB transactions, avoiding repeated `files.getAll()` deserialization.
 
 ### Responsive local indexing
 
@@ -102,6 +102,8 @@ editor: Vault API reads/writes + final CAS      background: hash + index plan
 ```
 
 Periodic and startup reconciliation reuse stored fingerprints when path, size, modification time, and file kind match. New or metadata-changed files are read and hashed. When the complete path and fingerprint index is unchanged, reconciliation bypasses rename and collision planning after a linear collision check. A daily complete fingerprint audit detects same-size changes with preserved timestamps. The browser Worker receives required file buffers as transferables and performs SHA-256 fingerprinting and pure index planning away from the renderer. It never calls Obsidian APIs. Platforms that reject Blob Workers use the same planner cooperatively with bounded event-loop yields. Pause and unload terminate pending Worker work; token-safe dirty records remain recoverable.
+
+One exact deadline timer replaces periodic scheduler ticks. Short edit bursts wait 1.5 seconds, rapid events coalesce for up to five seconds, and a pending batch gets a best-effort flush when the app becomes hidden. HTTP polling remains authoritative. WebSocket reconnects use jittered exponential backoff, and failed HTTP polls use exponential backoff; both cap at five minutes and resume immediately after the browser reports that it is online.
 
 ## Invariants
 

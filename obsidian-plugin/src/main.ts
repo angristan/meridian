@@ -210,6 +210,7 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
 
   async saveSettings(): Promise<void> {
     await this.saveData(this.settings)
+    this.scheduling.settingsChanged()
   }
 
   openSettings(): void {
@@ -240,6 +241,7 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
         return
       }
     }
+    await this.scheduling.flushPendingFileEvents()
     await this.controller.sync("manual")
   }
 
@@ -818,6 +820,7 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
 
   private updateStatus(patch: Partial<SyncStatus>): void {
     this.status = { ...this.status, ...patch }
+    this.scheduling.statusChanged(patch)
     this.diagnostics.record(this.status)
     if (this.statusBar) this.statusBar.setText(`Meridian: ${this.status.message}`)
     for (const leaf of this.app.workspace.getLeavesOfType(STATUS_VIEW_TYPE)) {
