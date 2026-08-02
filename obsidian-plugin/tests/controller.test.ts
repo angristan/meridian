@@ -151,6 +151,14 @@ describe("SyncController", () => {
       expect.objectContaining({ message: "Ready to sync", lastSyncedAt: syncedAt }),
     )
     expect(restartedStatuses.at(-1)).toMatchObject({ phase: "error", lastSyncedAt: syncedAt })
+
+    await restarted.sync("file-event")
+
+    expect(restartedStatuses.at(-1)).toMatchObject({
+      phase: "error",
+      error: "Offline",
+      lastSyncedAt: syncedAt,
+    })
     restarted.stop()
   })
 

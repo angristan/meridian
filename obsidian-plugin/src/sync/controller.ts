@@ -455,6 +455,10 @@ export class SyncController {
 
   private async runOnce(reason: SyncReason): Promise<void> {
     const device = this.requireDevice()
+    const previousFailure =
+      this.status.phase === "error"
+        ? { message: this.status.message, error: this.status.error }
+        : null
     if (this.stopRequested) return
     this.updateStatus({
       phase: "scanning",
@@ -484,12 +488,22 @@ export class SyncController {
       progress: null,
     })
     if (reason === "file-event" && result.queued === 0 && pending.length === 0) {
-      this.updateStatus({
-        phase: "idle",
-        message: "Up to date",
-        cursor: await this.journal.getCursor(),
-        error: null,
-      })
+      if (previousFailure) {
+        this.updateStatus({
+          phase: "error",
+          message: previousFailure.message,
+          cursor: await this.journal.getCursor(),
+          error: previousFailure.error,
+          progress: null,
+        })
+      } else {
+        this.updateStatus({
+          phase: "idle",
+          message: "Up to date",
+          cursor: await this.journal.getCursor(),
+          error: null,
+        })
+      }
       return
     }
 
