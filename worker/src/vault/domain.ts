@@ -1,5 +1,5 @@
 import type { StoredOperation } from "@meridian/protocol"
-import { Schema } from "effect"
+import * as Schema from "effect/Schema"
 import { base64UrlDecode, hashToken } from "../encoding"
 import { assert, HttpError } from "../errors"
 

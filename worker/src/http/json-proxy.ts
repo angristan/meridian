@@ -1,4 +1,5 @@
-import { Effect, type Schema } from "effect"
+import * as Effect from "effect/Effect"
+import type * as Schema from "effect/Schema"
 import { decodeJsonEffect, runResponse } from "./effect-boundary"
 import { sessionToken } from "./session"
 import type { WorkerContext } from "./types"

@@ -1,5 +1,5 @@
 import { ErrorResponseSchema } from "@meridian/protocol"
-import { Schema } from "effect"
+import * as Schema from "effect/Schema"
 import type { HttpResponse } from "./transport"
 
 export class MeridianHttpError extends Error {

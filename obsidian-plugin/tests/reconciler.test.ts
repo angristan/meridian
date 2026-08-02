@@ -196,8 +196,21 @@ describe("Reconciler", () => {
   })
 
   it("rejects case-insensitive path collisions before queuing changes", async () => {
-    const vault = new FakeVault({ "Notes/Example.md": "one", "notes/example.md": "two" })
+    const files = { "Notes/Example.md": "one", "notes/example.md": "two" }
+    const vault = new FakeVault(files)
     const journal = new MemoryJournal()
+    await journal.replaceSnapshots(
+      await Promise.all(
+        Object.entries(files).map(async ([path, content]) => ({
+          path,
+          fileId: randomId(),
+          fingerprint: await fingerprint(new TextEncoder().encode(content).buffer),
+          size: content.length,
+          mtime: 1,
+          kind: "vault" as const,
+        })),
+      ),
+    )
 
     await expect(new Reconciler(vault, journal).reconcile(ALL_CATEGORIES)).rejects.toThrow(
       /Case or Unicode path collision/,

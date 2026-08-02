@@ -114,6 +114,23 @@ export class Reconciler {
         inScope(snapshot.path) &&
         snapshotEnabled(snapshot, categories, selection, this.vault.configDir),
     )
+    const unchangedSnapshots =
+      scope === null
+        ? await unchangedFullIndex(current, enabledScopedPrevious, options.shouldStop)
+        : null
+    if (unchangedSnapshots) {
+      await this.journal.commitReconciliation({
+        entries: [],
+        putSnapshots: unchangedSnapshots.filter(
+          (snapshot) => !sameSnapshot(previous.get(snapshot.path), snapshot),
+        ),
+        removeSnapshotPaths: [],
+        consumeDirtyPaths: dirtyPaths.filter((change) => !preparedPendingPaths.has(change.path)),
+        ...(fingerprintAuditedAt === undefined ? {} : { fingerprintAuditedAt }),
+      })
+      return { queued: 0, files: current.length }
+    }
+
     const indexPlan = await this.compute.planIndex(
       {
         current: current.map(({ path, fingerprint }) => ({ path, fingerprint })),
@@ -264,6 +281,33 @@ export class Reconciler {
       parentRevisionIds: heads.map((revision) => revision.revisionId),
     }
   }
+}
+
+async function unchangedFullIndex(
+  current: readonly ScannedFileSnapshot[],
+  previous: readonly FileSnapshot[],
+  shouldStop: () => boolean = () => false,
+): Promise<FileSnapshot[] | null> {
+  if (current.length !== previous.length) return null
+  const previousByPath = new Map(previous.map((snapshot) => [snapshot.path, snapshot]))
+  const pathByCollisionKey = new Map<string, string>()
+  const snapshots: FileSnapshot[] = []
+
+  for (const [index, snapshot] of current.entries()) {
+    if (shouldStop()) throw new Error("Vault reconciliation canceled")
+    if (index > 0 && index % 100 === 0) await yieldToEventLoop()
+    const collisionKey = snapshot.path.toLocaleLowerCase("en-US")
+    const collision = pathByCollisionKey.get(collisionKey)
+    if (collision !== undefined && collision !== snapshot.path) {
+      throw new Error(`Case or Unicode path collision: ${collision} and ${snapshot.path}`)
+    }
+    pathByCollisionKey.set(collisionKey, snapshot.path)
+
+    const prior = previousByPath.get(snapshot.path)
+    if (!prior || prior.fingerprint !== snapshot.fingerprint) return null
+    snapshots.push({ ...snapshot, fileId: prior.fileId })
+  }
+  return snapshots
 }
 
 function sameSnapshot(left: FileSnapshot | undefined, right: FileSnapshot): boolean {

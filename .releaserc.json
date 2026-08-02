@@ -38,6 +38,10 @@
             "label": "Obsidian plugin"
           },
           {
+            "path": "obsidian-plugin/dist/main.js.map",
+            "label": "Obsidian plugin source map"
+          },
+          {
             "path": "obsidian-plugin/dist/manifest.json",
             "label": "Obsidian manifest"
           },

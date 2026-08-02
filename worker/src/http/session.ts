@@ -1,4 +1,4 @@
-import { Effect } from "effect"
+import * as Effect from "effect/Effect"
 import { HttpError } from "../errors"
 import type { WorkerContext, WorkerEnv } from "./types"
 import { callVaultEffect } from "./vault-proxy"

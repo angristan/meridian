@@ -1,4 +1,4 @@
-import { Schema } from "effect"
+import * as Schema from "effect/Schema"
 
 const NonEmptyString = Schema.String.pipe(Schema.check(Schema.isMinLength(1)))
 const NonNegativeInteger = Schema.Number.pipe(

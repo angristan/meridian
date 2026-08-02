@@ -2,7 +2,7 @@ import { zipSync } from "fflate"
 
 const pluginDirectory = `${import.meta.dir}/../obsidian-plugin`
 const distributionDirectory = `${pluginDirectory}/dist`
-const releaseFiles = ["main.js", "manifest.json", "styles.css"] as const
+const releaseFiles = ["main.js", "main.js.map", "manifest.json", "styles.css"] as const
 
 const archiveEntries = Object.fromEntries(
   await Promise.all(

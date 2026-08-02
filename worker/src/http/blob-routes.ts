@@ -1,5 +1,5 @@
 import { tracing } from "cloudflare:workers"
-import { Effect } from "effect"
+import * as Effect from "effect/Effect"
 import { HttpError } from "../errors"
 import { runResponse } from "./effect-boundary"
 import { requiredParam } from "./request"

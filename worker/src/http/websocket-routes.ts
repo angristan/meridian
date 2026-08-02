@@ -1,4 +1,4 @@
-import { Effect } from "effect"
+import * as Effect from "effect/Effect"
 import { HttpError } from "../errors"
 import { runResponse } from "./effect-boundary"
 import { sessionToken, validateSessionEffect } from "./session"

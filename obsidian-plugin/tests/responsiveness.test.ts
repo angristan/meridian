@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest"
 import type { RemoteOperation, RemotePort, ScannedFileSnapshot } from "../src/model"
-import { BackgroundSyncCompute, planIndexCooperatively } from "../src/platform/background-sync"
+import {
+  BackgroundSyncCompute,
+  planIndexCooperatively,
+  type SyncComputePort,
+} from "../src/platform/background-sync"
 import { MemoryJournal } from "../src/storage/journal"
 import type { OperationApplier } from "../src/sync/operation-applier"
 import { PullEngine } from "../src/sync/pull-engine"
@@ -49,10 +53,19 @@ describe("sync responsiveness budgets", () => {
         kind: "vault" as const,
       })),
     )
+    const compute: SyncComputePort = {
+      fingerprint: async () => {
+        throw new Error("Unchanged files must not be fingerprinted")
+      },
+      planIndex: async () => {
+        throw new Error("Unchanged indexes must bypass full planning")
+      },
+      close: () => {},
+    }
     const heartbeat = startHeartbeat()
     const startedAt = performance.now()
 
-    const result = await new Reconciler(vault, journal).reconcile(ALL_CATEGORIES)
+    const result = await new Reconciler(vault, journal, compute).reconcile(ALL_CATEGORIES)
     const elapsed = performance.now() - startedAt
     const heartbeatTicks = heartbeat.stop()
 

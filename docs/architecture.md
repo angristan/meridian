@@ -101,7 +101,7 @@ Obsidian events -> durable dirty paths -> targeted hash ---┐
 editor: Vault API reads/writes + final CAS      background: hash + index plan
 ```
 
-Periodic and startup reconciliation reuse stored fingerprints when path, size, modification time, and file kind match. New or metadata-changed files are read and hashed. A daily complete fingerprint audit detects same-size changes with preserved timestamps. The browser Worker receives required file buffers as transferables and performs SHA-256 fingerprinting and pure index planning away from the renderer. It never calls Obsidian APIs. Platforms that reject Blob Workers use the same planner cooperatively with bounded event-loop yields. Pause and unload terminate pending Worker work; token-safe dirty records remain recoverable.
+Periodic and startup reconciliation reuse stored fingerprints when path, size, modification time, and file kind match. New or metadata-changed files are read and hashed. When the complete path and fingerprint index is unchanged, reconciliation bypasses rename and collision planning after a linear collision check. A daily complete fingerprint audit detects same-size changes with preserved timestamps. The browser Worker receives required file buffers as transferables and performs SHA-256 fingerprinting and pure index planning away from the renderer. It never calls Obsidian APIs. Platforms that reject Blob Workers use the same planner cooperatively with bounded event-loop yields. Pause and unload terminate pending Worker work; token-safe dirty records remain recoverable.
 
 ## Invariants
 

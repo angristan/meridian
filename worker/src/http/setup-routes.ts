@@ -1,5 +1,5 @@
 import { SetupClaimSchema, SetupSessionRequestSchema } from "@meridian/protocol"
-import { Effect } from "effect"
+import * as Effect from "effect/Effect"
 import { constantTimeSecretEquals } from "../encoding"
 import { HttpError } from "../errors"
 import { SECURITY_HEADERS, SETUP_PAGE, SETUP_SCRIPT } from "../setup-page"
