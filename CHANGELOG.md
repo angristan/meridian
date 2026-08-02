@@ -1,3 +1,10 @@
+## [1.11.9](https://github.com/angristan/meridian/compare/1.11.8...1.11.9) (2026-08-02)
+
+
+### Performance Improvements
+
+* reduce idle sync and transfer work ([06c0190](https://github.com/angristan/meridian/commit/06c0190123d69c8be0838c3fc33ff351816614d4))
+
 ## [1.11.8](https://github.com/angristan/meridian/compare/1.11.7...1.11.8) (2026-08-02)
 
 
