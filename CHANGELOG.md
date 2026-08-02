@@ -1,3 +1,10 @@
+## [1.11.7](https://github.com/angristan/meridian/compare/1.11.6...1.11.7) (2026-08-02)
+
+
+### Performance Improvements
+
+* reuse unchanged file fingerprints ([ef6f321](https://github.com/angristan/meridian/commit/ef6f3217a31112d47a68e93af3c6d2be9fdcb9e6))
+
 ## [1.11.6](https://github.com/angristan/meridian/compare/1.11.5...1.11.6) (2026-08-02)
 
 
