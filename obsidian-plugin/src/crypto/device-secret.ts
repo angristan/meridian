@@ -8,6 +8,7 @@ import {
 import {
   bytesEqual,
   bytesToHex,
+  type DeviceCertificate,
   decodeDeviceCertificate,
   ed25519PublicKey,
   encodeDeviceCertificate,
@@ -29,11 +30,15 @@ export function serializeStoredDeviceSecret(
     device.certificate,
   ],
 ): string {
+  const completeChain = exactDeviceAuthorizationChain(
+    device.certificate,
+    checkpointAuthorizationChain,
+  )
   const stored = {
     version: 2,
     deviceBundle: toBase64Url(serializeDeviceKeyBundle(device)),
     recoveryPublicKey: toBase64Url(recoveryPublicKey),
-    checkpointAuthorizationChain: checkpointAuthorizationChain.map((certificate) =>
+    checkpointAuthorizationChain: completeChain.map((certificate) =>
       toBase64Url(encodeDeviceCertificate(certificate)),
     ),
   } satisfies StoredDeviceSecret
@@ -148,6 +153,50 @@ export function trustedAuthorCertificate(
     atTime: Date.now(),
   })
   return author
+}
+
+function exactDeviceAuthorizationChain(
+  deviceCertificate: DeviceCertificate,
+  certificates: readonly DeviceCertificate[],
+): DeviceCertificate[] {
+  const registry = new Map<string, DeviceCertificate>()
+  for (const certificate of certificates) {
+    const id = bytesToHex(certificate.body.certificateId)
+    const existing = registry.get(id)
+    if (
+      existing &&
+      !bytesEqual(encodeDeviceCertificate(existing), encodeDeviceCertificate(certificate))
+    ) {
+      throw new Error("Device authorization chain contains conflicting certificates")
+    }
+    registry.set(id, certificate)
+  }
+
+  const deviceId = bytesToHex(deviceCertificate.body.certificateId)
+  const storedDevice = registry.get(deviceId)
+  if (
+    storedDevice &&
+    !bytesEqual(encodeDeviceCertificate(storedDevice), encodeDeviceCertificate(deviceCertificate))
+  ) {
+    throw new Error("Stored device certificate conflicts with the key bundle")
+  }
+  registry.set(deviceId, deviceCertificate)
+
+  const chain: DeviceCertificate[] = []
+  const visited = new Set<string>()
+  let current = deviceCertificate
+  for (let depth = 0; depth < 32; depth += 1) {
+    const currentId = bytesToHex(current.body.certificateId)
+    if (visited.has(currentId)) throw new Error("Device authorization chain contains a cycle")
+    visited.add(currentId)
+    chain.push(current)
+    if (current.body.issuer.kind === "recovery") return chain
+
+    const issuer = registry.get(bytesToHex(current.body.issuer.certificateId))
+    if (!issuer) throw new Error("Device authorization chain is incomplete")
+    current = issuer
+  }
+  throw new Error("Device authorization chain exceeds the maximum depth")
 }
 
 function stringArray(value: unknown): value is string[] {

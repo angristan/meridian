@@ -400,12 +400,33 @@ describe("shared crypto adapter", () => {
     const member = await crypto.loadDevice(paired.keyBundle)
     expect(member.trustedCheckpointAuthorized).toBe(true)
     expect(member.trustedCheckpoint).toEqual(trustedHead)
+
+    const legacySecret = JSON.parse(paired.keyBundle) as Record<string, unknown>
+    const completeChain = legacySecret.checkpointAuthorizationChain
+    if (!Array.isArray(completeChain)) throw new Error("Expected stored authorization chain")
+    expect(completeChain).toHaveLength(2)
+    legacySecret.checkpointAuthorizationChain = completeChain.slice(1)
+    const legacyMember = await crypto.loadDevice(JSON.stringify(legacySecret))
+    expect(legacyMember.trustedCheckpointAuthorized).toBe(true)
+    const memberHead = {
+      ...trustedHead,
+      cursor: 6,
+      logHash: randomId(32),
+    }
+    const repairedMember = await crypto.refreshTrustedCheckpoint(legacyMember, memberHead)
+    expect(repairedMember).toMatchObject({
+      trustedCheckpoint: memberHead,
+      trustedCheckpointAuthorized: true,
+    })
+    const repairedSecret = JSON.parse(repairedMember.serialized) as Record<string, unknown>
+    expect(repairedSecret.checkpointAuthorizationChain).toHaveLength(2)
+
     const tamperedSecret = JSON.parse(paired.keyBundle) as Record<string, unknown>
     tamperedSecret.checkpointAuthorizationChain = []
     await expect(crypto.loadDevice(JSON.stringify(tamperedSecret))).resolves.toMatchObject({
       trustedCheckpointAuthorized: false,
     })
-    const encrypted = await crypto.encryptRevision(member, {
+    const encrypted = await crypto.encryptRevision(repairedMember, {
       operationId: randomId(),
       revisionId: randomId(),
       fileId: randomId(),
@@ -434,8 +455,8 @@ describe("shared crypto adapter", () => {
       },
     )
 
-    expect(member.vaultId).toBe(owner.vaultId)
-    expect(decrypted.authorDeviceId).toBe(member.deviceId)
+    expect(repairedMember.vaultId).toBe(owner.vaultId)
+    expect(decrypted.authorDeviceId).toBe(repairedMember.deviceId)
     expect(new TextDecoder().decode(decrypted.bytes ?? undefined)).toBe("member content")
   })
 })
