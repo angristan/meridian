@@ -193,6 +193,7 @@ class PausedDeleteBucket {
   private readonly objects = new Map<string, { bytes: Uint8Array; uploaded: Date }>()
   private markDeleteStarted: (() => void) | undefined
   private releasePendingDelete: (() => void) | undefined
+  private nextDeleteError: Error | undefined
   readonly deleteStarted = new Promise<void>((resolve) => {
     this.markDeleteStarted = resolve
   })
@@ -207,6 +208,10 @@ class PausedDeleteBucket {
 
   releaseDelete(): void {
     this.releasePendingDelete?.()
+  }
+
+  failNextDelete(error = new Error("Injected R2 deletion failure")): void {
+    this.nextDeleteError = error
   }
 
   pauseNextHead(): { reached: Promise<void>; release: () => void } {
@@ -253,6 +258,9 @@ class PausedDeleteBucket {
   async delete(keys: string | string[]): Promise<void> {
     this.markDeleteStarted?.()
     await this.deleteGate
+    const error = this.nextDeleteError
+    this.nextDeleteError = undefined
+    if (error) throw error
     for (const key of Array.isArray(keys) ? keys : [keys]) this.objects.delete(key)
   }
 }
@@ -301,6 +309,199 @@ describe("deterministic Worker fault injection", () => {
         .exec<{ count: number }>("SELECT COUNT(*) AS count FROM operations")
         .one().count
       expect(operationCount).toBe(commitResult === 201 ? 1 : 0)
+    })
+  })
+
+  it("clears deletion fences when R2 deletion fails", async () => {
+    const stub = env.VAULT.get(env.VAULT.idFromName(`blob-delete-failure-${randomToken(8)}`))
+    const owner = await setupOwner(stub)
+
+    await runInDurableObject(stub, async (_instance, state) => {
+      const transactionSync: TransactionSync = (callback) => state.storage.transactionSync(callback)
+      const bucket = new PausedDeleteBucket()
+      const blobIdentifier = protocolBlobId(randomBytes(16))
+      const blobId = base64UrlEncode(blobIdentifier)
+      const blobKey = `vaults/${owner.vaultId}/blobs/${blobId}`
+      bucket.seed(blobKey, new Uint8Array([7, 8, 9]))
+      bucket.failNextDelete()
+      bucket.releaseDelete()
+      const blobs = new VaultBlobs(
+        state.storage.sql,
+        bucket as unknown as R2Bucket,
+        transactionSync,
+      )
+      const authorization = { authorization: `Bearer ${owner.sessionToken}` }
+
+      await expect(
+        blobs.pruneOrphanBlobs(
+          new Request("https://vault.internal/v1/storage/prune", { headers: authorization }),
+        ),
+      ).rejects.toThrow("Injected R2 deletion failure")
+
+      expect(await bucket.head(blobKey)).not.toBeNull()
+      expect(
+        state.storage.sql
+          .exec<{ count: number }>(
+            "SELECT COUNT(*) AS count FROM blob_claims WHERE blob_id = ?",
+            blobId,
+          )
+          .one().count,
+      ).toBe(0)
+
+      const retry = await blobs.pruneOrphanBlobs(
+        new Request("https://vault.internal/v1/storage/prune", { headers: authorization }),
+      )
+      await expect(retry.json()).resolves.toMatchObject({ deletedCount: 1 })
+      expect(await bucket.head(blobKey)).toBeNull()
+    })
+  })
+
+  it("recovers a fence stranded after R2 deletion", async () => {
+    const stub = env.VAULT.get(env.VAULT.idFromName(`blob-delete-crash-${randomToken(8)}`))
+    const owner = await setupOwner(stub)
+
+    await runInDurableObject(stub, async (_instance, state) => {
+      const durableTransaction: TransactionSync = (callback) =>
+        state.storage.transactionSync(callback)
+      let transactionCount = 0
+      const crashAfterDelete: TransactionSync = (callback) => {
+        transactionCount += 1
+        if (transactionCount === 2) throw new Error("Injected crash after R2 deletion")
+        return durableTransaction(callback)
+      }
+      const bucket = new PausedDeleteBucket()
+      const blobIdentifier = protocolBlobId(randomBytes(16))
+      const blobId = base64UrlEncode(blobIdentifier)
+      const blobKey = `vaults/${owner.vaultId}/blobs/${blobId}`
+      bucket.seed(blobKey, new Uint8Array([10, 11, 12]))
+      bucket.releaseDelete()
+      const interrupted = new VaultBlobs(
+        state.storage.sql,
+        bucket as unknown as R2Bucket,
+        crashAfterDelete,
+      )
+      const authorization = { authorization: `Bearer ${owner.sessionToken}` }
+
+      await expect(
+        interrupted.pruneOrphanBlobs(
+          new Request("https://vault.internal/v1/storage/prune", { headers: authorization }),
+        ),
+      ).rejects.toThrow("Injected crash after R2 deletion")
+      expect(await bucket.head(blobKey)).toBeNull()
+      expect(
+        state.storage.sql
+          .exec<{ expected_size: number }>(
+            "SELECT expected_size FROM blob_claims WHERE blob_id = ?",
+            blobId,
+          )
+          .one().expected_size,
+      ).toBe(-1)
+
+      const restarted = new VaultBlobs(
+        state.storage.sql,
+        bucket as unknown as R2Bucket,
+        durableTransaction,
+      )
+      const claim = await restarted.claimBlob(
+        new Request(`https://vault.internal/v1/blobs/${blobId}/claim?size=3`, {
+          method: "POST",
+          headers: authorization,
+        }),
+        blobId,
+      )
+      expect(claim.status).toBe(200)
+      await expect(claim.json()).resolves.toEqual({ exists: false })
+      expect(
+        state.storage.sql
+          .exec<{ expected_size: number }>(
+            "SELECT expected_size FROM blob_claims WHERE blob_id = ?",
+            blobId,
+          )
+          .one().expected_size,
+      ).toBe(3)
+    })
+  })
+
+  it("retries safely after the operation transaction fails", async () => {
+    const stub = env.VAULT.get(env.VAULT.idFromName(`blob-commit-failure-${randomToken(8)}`))
+    const owner = await setupOwner(stub)
+
+    await runInDurableObject(stub, async (_instance, state) => {
+      const durableTransaction: TransactionSync = (callback) =>
+        state.storage.transactionSync(callback)
+      const bucket = new PausedDeleteBucket()
+      const blobIdentifier = protocolBlobId(randomBytes(16))
+      const blobId = base64UrlEncode(blobIdentifier)
+      const blobKey = `vaults/${owner.vaultId}/blobs/${blobId}`
+      bucket.seed(blobKey, new Uint8Array([13, 14, 15]))
+      const blobs = new VaultBlobs(
+        state.storage.sql,
+        bucket as unknown as R2Bucket,
+        durableTransaction,
+      )
+      let failNextTransaction = true
+      const failingTransaction: TransactionSync = (callback) => {
+        if (failNextTransaction) {
+          failNextTransaction = false
+          return durableTransaction(() => {
+            callback()
+            throw new Error("Injected operation transaction failure")
+          })
+        }
+        return durableTransaction(callback)
+      }
+      const interrupted = new VaultOperations(
+        state.storage.sql,
+        failingTransaction,
+        () => {},
+        () => {},
+        blobs,
+      )
+      const operation = signedBlobOperation(owner, blobIdentifier)
+
+      await expect(commitStatus(interrupted, owner, operation)).rejects.toThrow(
+        "Injected operation transaction failure",
+      )
+      expect(
+        state.storage.sql.exec<{ count: number }>("SELECT COUNT(*) AS count FROM operations").one()
+          .count,
+      ).toBe(0)
+      expect(
+        state.storage.sql.exec<{ cursor: number }>("SELECT cursor FROM vault_state").one().cursor,
+      ).toBe(0)
+      expect(
+        state.storage.sql
+          .exec<{ expected_size: number }>(
+            "SELECT expected_size FROM blob_claims WHERE blob_id = ?",
+            blobId,
+          )
+          .one().expected_size,
+      ).toBe(3)
+      expect(await bucket.head(blobKey)).not.toBeNull()
+
+      const restarted = new VaultOperations(
+        state.storage.sql,
+        durableTransaction,
+        () => {},
+        () => {},
+        blobs,
+      )
+      expect(await commitStatus(restarted, owner, operation)).toBe(201)
+      expect(
+        state.storage.sql.exec<{ count: number }>("SELECT COUNT(*) AS count FROM operations").one()
+          .count,
+      ).toBe(1)
+      expect(
+        state.storage.sql.exec<{ cursor: number }>("SELECT cursor FROM vault_state").one().cursor,
+      ).toBe(1)
+      expect(
+        state.storage.sql
+          .exec<{ count: number }>(
+            "SELECT COUNT(*) AS count FROM blob_claims WHERE blob_id = ?",
+            blobId,
+          )
+          .one().count,
+      ).toBe(0)
     })
   })
 

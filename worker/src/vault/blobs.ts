@@ -25,8 +25,18 @@ export class VaultBlobs {
       Number.isSafeInteger(expectedSize) && expectedSize > 0,
       new HttpError(400, "invalid_length", "Blob reservation size is invalid"),
     )
-    this.reserveBlobUpload(blobId, expectedSize, session.deviceId)
     const key = `vaults/${session.vaultId}/blobs/${blobId}`
+    if (this.blobClaim(blobId)?.expected_size === BLOB_DELETION_FENCE_SIZE) {
+      const deletingObject = await this.headBlob(key)
+      assert(
+        !deletingObject,
+        new HttpError(409, "blob_deleting", "Blob cleanup is in progress; retry the upload"),
+      )
+      this.recoverDeletedBlobForUpload(blobId, expectedSize, session.deviceId)
+      return json({ exists: false })
+    }
+
+    this.reserveBlobUpload(blobId, expectedSize, session.deviceId)
     const existingObject = await this.headBlob(key)
     if (existingObject) {
       assert(
@@ -283,6 +293,30 @@ export class VaultBlobs {
       new HttpError(409, "blob_size_conflict", "Blob reservation size changed"),
     )
     this.rememberBlobClaim(blobId, expectedSize, deviceId)
+  }
+
+  private recoverDeletedBlobForUpload(
+    blobId: string,
+    expectedSize: number,
+    deviceId: string,
+  ): void {
+    this.transactionSync(() => {
+      const claim = this.blobClaim(blobId)
+      if (claim?.expected_size === BLOB_DELETION_FENCE_SIZE) {
+        this.sql.exec(
+          `UPDATE blob_claims
+           SET claimed_at = ?, expected_size = ?, device_id = ?
+           WHERE blob_id = ? AND expected_size = ?`,
+          Date.now(),
+          expectedSize,
+          deviceId,
+          blobId,
+          BLOB_DELETION_FENCE_SIZE,
+        )
+        return
+      }
+      this.reserveBlobUpload(blobId, expectedSize, deviceId)
+    })
   }
 
   private reserveBlobForCommit(blobId: string, deviceId: string): void {

@@ -117,6 +117,9 @@ Automated responsiveness tests use generous wall-clock ceilings to detect pathol
 - Run orphan cleanup during upload and after interrupted upload; recent claims survive, while old unreferenced objects are removed idempotently.
 - Pause cleanup after its SQL deletion fence, then try to commit the same blob; the commit must retry and no missing-blob operation may appear.
 - Pause a commit after its provisional SQL claim but before R2 `HEAD` returns; cleanup must preserve the blob and the commit must succeed.
+- Fail R2 deletion after fencing; the fence must clear and an exact cleanup retry must succeed.
+- Stop after successful R2 deletion but before SQL cleanup; the next upload must atomically recover the stranded fence.
+- Fail the operation transaction after blob confirmation; no operation may appear, the blob must remain reserved, and an exact retry must commit once.
 - Fill IndexedDB and inject quota errors at entry, revision, conflict, and checkpoint writes; transactions abort, prepared work remains exact, and the cursor never passes unavailable local state.
 - Crash between local compaction batches; reopening and rerunning removes only completed entries and exact duplicate history rows. Pending work, dirty tokens, DAG parents, tombstones, conflicts, checkpoints, revocations, and old-epoch history remain usable.
 - Test missing `navigator.storage` APIs on mobile, warning at 80%, critical pressure at 90%, and user-gesture persistent-storage requests.
