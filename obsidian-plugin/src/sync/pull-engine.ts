@@ -79,7 +79,13 @@ export class PullEngine {
         ) {
           throw new Error("Server history conflicts with the signed checkpoint")
         }
-        const nextDevice = await this.applier.apply(currentDevice, operation, (blob) =>
+        const predecessor: TrustedCheckpoint = {
+          cursor,
+          logHash: previousHash,
+          initialLogFormat,
+          logFormat,
+        }
+        const nextDevice = await this.applier.apply(currentDevice, operation, predecessor, (blob) =>
           onProgress({
             ...pullProgress(startCursor, cursor, targetCursor),
             currentChunk: blob.completedChunks,

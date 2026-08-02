@@ -63,7 +63,7 @@ export class HistoryBackfillService {
         ) {
           throw new Error("History conflicts with the signed device checkpoint")
         }
-        const inspected = await this.inspectOperation(device, operation)
+        const inspected = await this.inspectOperation(device, operation, checkpoint)
         if (inspected.revision) {
           await this.journal.putHistoryRevision(inspected.revision)
           added += 1
@@ -83,6 +83,7 @@ export class HistoryBackfillService {
   private async inspectOperation(
     device: DeviceKeyMaterial,
     operation: RemoteOperation,
+    predecessor: TrustedCheckpoint,
   ): Promise<{
     revision: LocalRevision | null
     nextLogFormat: "canonical-cbor-v1" | null
@@ -97,7 +98,7 @@ export class HistoryBackfillService {
       return { revision: null, nextLogFormat }
     }
     if (type === "key-epoch") {
-      await this.crypto.applyEpochTransition(device, operation)
+      await this.crypto.applyEpochTransition(device, operation, predecessor)
       return { revision: null, nextLogFormat: null }
     }
     if (type !== "revision" && type !== "restore" && type !== "tombstone") {

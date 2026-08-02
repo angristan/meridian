@@ -447,6 +447,53 @@ describe("SyncController", () => {
     controller.stop()
   })
 
+  it("passes the verified predecessor when an offline device reaches a key transition", async () => {
+    const remote = new FakeRemote()
+    await remote.commit({
+      operationId: "old-device-revocation",
+      authorDeviceId: TEST_DEVICE.deviceId,
+      type: "device-revocation",
+      subjectDeviceId: "old-device",
+    })
+    await remote.commit({
+      operationId: "epoch-transition",
+      authorDeviceId: TEST_DEVICE.deviceId,
+      epochId: TEST_DEVICE.epochId,
+      type: "key-epoch",
+    })
+    let predecessor: DeviceKeyMaterial["trustedCheckpoint"] | null = null
+    class PredecessorCrypto extends FakeCrypto {
+      override async applyEpochTransition(
+        device: DeviceKeyMaterial,
+        operation: RemoteOperation,
+        verifiedPredecessor: DeviceKeyMaterial["trustedCheckpoint"],
+      ): Promise<DeviceKeyMaterial> {
+        predecessor = verifiedPredecessor
+        return super.applyEpochTransition(device, operation, verifiedPredecessor)
+      }
+    }
+    const journal = new MemoryJournal()
+    const controller = new SyncController(
+      new FakeVault(),
+      journal,
+      remote,
+      new PredecessorCrypto(),
+      () => ALL_CATEGORIES,
+      () => {},
+    )
+
+    await controller.start(TEST_DEVICE)
+
+    expect(predecessor).toEqual({
+      cursor: 1,
+      logHash: "hash-1",
+      initialLogFormat: "legacy-http-v1",
+      logFormat: "legacy-http-v1",
+    })
+    expect(await journal.getCursor()).toBe(2)
+    controller.stop()
+  })
+
   it("does not advance the cursor before the successor secret persists", async () => {
     class EpochReadyRemote extends FakeRemote {
       override async listDevices() {
@@ -518,6 +565,78 @@ describe("SyncController", () => {
     expect(pending).toBeNull()
     expect(remote.operations).toHaveLength(1)
     controller.stop()
+  })
+
+  it("replays a transition after the successor secret persists before its cursor", async () => {
+    class InterruptedJournal extends MemoryJournal {
+      interrupt = true
+
+      override async setCheckpoint(
+        checkpoint: DeviceKeyMaterial["trustedCheckpoint"],
+      ): Promise<void> {
+        if (checkpoint.cursor === 2 && this.interrupt) {
+          this.interrupt = false
+          throw new Error("Simulated crash before cursor persistence")
+        }
+        await super.setCheckpoint(checkpoint)
+      }
+    }
+    class ReplayCrypto extends FakeCrypto {
+      override async applyEpochTransition(
+        device: DeviceKeyMaterial,
+        operation: RemoteOperation,
+        predecessor: DeviceKeyMaterial["trustedCheckpoint"],
+      ): Promise<DeviceKeyMaterial> {
+        if (device.epochActivatedAtCursor === operation.cursor && device.epochSequence > 0) {
+          return device
+        }
+        return super.applyEpochTransition(device, operation, predecessor)
+      }
+    }
+    const remote = new FakeRemote()
+    await remote.commit({
+      operationId: "old-device-revocation",
+      authorDeviceId: TEST_DEVICE.deviceId,
+      type: "device-revocation",
+      subjectDeviceId: "old-device",
+    })
+    await remote.commit({
+      operationId: "epoch-transition",
+      authorDeviceId: TEST_DEVICE.deviceId,
+      epochId: TEST_DEVICE.epochId,
+      type: "key-epoch",
+    })
+    const journal = new InterruptedJournal()
+    let storedDevice = TEST_DEVICE
+    const createController = () =>
+      new SyncController(
+        new FakeVault(),
+        journal,
+        remote,
+        new ReplayCrypto(),
+        () => ALL_CATEGORIES,
+        () => {},
+        undefined,
+        {
+          persistDevice: async (device) => {
+            storedDevice = device
+          },
+        },
+      )
+
+    const interrupted = createController()
+    await interrupted.start(storedDevice)
+    interrupted.stop()
+
+    expect(storedDevice).toMatchObject({ epochSequence: 1, epochActivatedAtCursor: 2 })
+    expect(await journal.getCursor()).toBe(1)
+
+    const resumed = createController()
+    await resumed.start(storedDevice)
+
+    expect(storedDevice.epochSequence).toBe(1)
+    expect(await journal.getCursor()).toBe(2)
+    resumed.stop()
   })
 
   it("switches formats only after applying a signed log transition", async () => {

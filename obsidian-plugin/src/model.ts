@@ -608,6 +608,7 @@ export interface CryptoPort {
   applyEpochTransition(
     device: DeviceKeyMaterial,
     operation: RemoteOperation,
+    predecessor: TrustedCheckpoint,
   ): Promise<DeviceKeyMaterial>
   createPairingJoin(
     pairing: PairingCapability,

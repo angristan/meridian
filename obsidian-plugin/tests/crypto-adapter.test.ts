@@ -139,7 +139,7 @@ describe("shared crypto adapter", () => {
     })
   })
 
-  it("applies epoch transitions and retains old revision keys", async () => {
+  it("applies epoch transitions after an offline checkpoint and retries safely", async () => {
     const crypto = createPackageCryptoPort()
     const claim = await crypto.createFirstDevice("setup-session", "claim-challenge")
     const device = await crypto.loadDevice(claim.keyBundle)
@@ -155,8 +155,10 @@ describe("shared crypto adapter", () => {
       bytes: new TextEncoder().encode("old epoch").buffer,
       chunkSize: 4 * 1024 * 1024,
     })
+    const predecessor = { cursor: 5, logHash: randomId(32) }
+    const caughtUpDevice = await crypto.refreshTrustedCheckpoint(device, predecessor)
     const material = await crypto.createEpochTransition(
-      device,
+      caughtUpDevice,
       [
         {
           deviceId: device.deviceId,
@@ -175,14 +177,34 @@ describe("shared crypto adapter", () => {
       randomId(32),
       "migration",
     )
-    const rotated = await crypto.applyEpochTransition(device, {
-      cursor: 1,
+    const operation = {
+      cursor: 6,
       logHash: randomId(32),
       envelope: material.envelope,
-    })
+    }
+    await expect(
+      crypto.applyEpochTransition(device, operation, {
+        ...predecessor,
+        logHash: randomId(32),
+      }),
+    ).rejects.toThrow(/verified predecessor/)
 
+    const rotated = await crypto.applyEpochTransition(device, operation, predecessor)
+
+    expect(device.trustedCheckpoint.cursor).toBe(0)
     expect(rotated.epochSequence).toBe(1)
     expect(rotated.epochId).toBe(material.nextEpochId)
+    expect(rotated.trustedCheckpoint).toMatchObject({
+      cursor: operation.cursor,
+      logHash: operation.logHash,
+    })
+    await expect(
+      crypto.applyEpochTransition(rotated, operation, predecessor),
+    ).resolves.toMatchObject({
+      serialized: rotated.serialized,
+      epochId: rotated.epochId,
+      epochSequence: rotated.epochSequence,
+    })
     const blobs = new Map(oldRevision.blobs.map((blob) => [blob.blobId, blob.bytes]))
     const decrypted = await crypto.decryptRevision(
       rotated,

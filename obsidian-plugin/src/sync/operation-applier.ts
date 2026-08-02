@@ -10,6 +10,7 @@ import type {
   RemoteOperation,
   RemotePort,
   SelectiveSyncSettings,
+  TrustedCheckpoint,
   VaultPort,
 } from "../model"
 import { fingerprint, randomId } from "../platform/bytes"
@@ -43,6 +44,7 @@ export class OperationApplier {
   async apply(
     device: DeviceKeyMaterial,
     operation: RemoteOperation,
+    predecessor: TrustedCheckpoint,
     onBlobProgress?: (progress: BlobTransferProgress) => void,
   ): Promise<DeviceKeyMaterial> {
     const wire = record(operation.envelope)
@@ -63,7 +65,7 @@ export class OperationApplier {
       return device
     }
     if (wire?.type === "key-epoch") {
-      const updated = await this.crypto.applyEpochTransition(device, operation)
+      const updated = await this.crypto.applyEpochTransition(device, operation, predecessor)
       if (updated.epochId !== device.epochId) await this.journal.invalidatePreparedRevisions()
       return updated
     }

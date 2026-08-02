@@ -166,8 +166,9 @@ class PackageCryptoPort implements CryptoPort {
   applyEpochTransition(
     device: DeviceKeyMaterial,
     operation: RemoteOperation,
+    predecessor: DeviceKeyMaterial["trustedCheckpoint"],
   ): Promise<DeviceKeyMaterial> {
-    return applyEpochTransition(device, operation)
+    return applyEpochTransition(device, operation, predecessor)
   }
 
   createPairingJoin(

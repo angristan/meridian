@@ -402,6 +402,7 @@ export class FakeCrypto implements CryptoPort {
   async applyEpochTransition(
     device: DeviceKeyMaterial,
     operation: RemoteOperation,
+    predecessor: TrustedCheckpoint,
   ): Promise<DeviceKeyMaterial> {
     const sequence = device.epochSequence + 1
     return {
@@ -411,7 +412,11 @@ export class FakeCrypto implements CryptoPort {
       epochSequence: sequence,
       epochActivatedAtCursor: operation.cursor,
       requiredTransitionOperationId: null,
-      trustedCheckpoint: { ...device.trustedCheckpoint, cursor: operation.cursor },
+      trustedCheckpoint: {
+        ...predecessor,
+        cursor: operation.cursor,
+        logHash: operation.logHash,
+      },
     }
   }
 

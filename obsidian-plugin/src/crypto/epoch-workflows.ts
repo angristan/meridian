@@ -19,6 +19,7 @@ import type {
   EpochTransitionMaterial,
   RemoteDevice,
   RemoteOperation,
+  TrustedCheckpoint,
 } from "../model"
 import { fromBase64Url, toBase64Url } from "../platform/bytes"
 import {
@@ -28,7 +29,7 @@ import {
   serializeStoredDeviceSecret,
   trustedAuthorCertificate,
 } from "./device-secret"
-import { loadDevice } from "./device-workflows"
+import { loadDevice, refreshTrustedCheckpoint } from "./device-workflows"
 import {
   parseWorkerOperation,
   type WorkerOperation,
@@ -83,6 +84,7 @@ export async function createEpochTransition(
 export async function applyEpochTransition(
   device: DeviceKeyMaterial,
   operation: RemoteOperation,
+  predecessor: TrustedCheckpoint,
 ): Promise<DeviceKeyMaterial> {
   const wire = parseWorkerOperation(operation.envelope)
   if (wire.type !== "key-epoch") throw new Error("Remote operation is not an epoch transition")
@@ -118,14 +120,24 @@ export async function applyEpochTransition(
   ) {
     throw new Error("Epoch transition does not match its operation-log entry")
   }
+  if (
+    predecessor.cursor !== signed.body.previousCursor ||
+    predecessor.logHash !== toBase64Url(signed.body.previousLogHash)
+  ) {
+    throw new Error("Epoch transition does not match the verified predecessor")
+  }
+  const applyingDevice =
+    signed.body.declaration.body.sequence > device.epochSequence
+      ? await refreshTrustedCheckpoint(device, predecessor)
+      : device
   const updated = await applyPackageEpochTransition({
-    device: bundle,
+    device: deviceBundle(applyingDevice),
     operation: signed,
     authorCertificate,
     cursor: operation.cursor,
     logHash: hashBytes(fromBase64Url(operation.logHash, 32)),
   })
-  const stored = parseStoredSecret(device.serialized)
+  const stored = parseStoredSecret(applyingDevice.serialized)
   const serialized = serializeStoredDeviceSecret(
     updated,
     ed25519PublicKey(fromBase64Url(stored.recoveryPublicKey, 32)),
