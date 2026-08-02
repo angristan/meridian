@@ -1,3 +1,10 @@
+## [1.11.10](https://github.com/angristan/meridian/compare/1.11.9...1.11.10) (2026-08-02)
+
+
+### Bug Fixes
+
+* fence sync maintenance races ([2f45620](https://github.com/angristan/meridian/commit/2f456209f5d3f7923c18e27a9a6c4378850a48d6))
+
 ## [1.11.9](https://github.com/angristan/meridian/compare/1.11.8...1.11.9) (2026-08-02)
 
 
