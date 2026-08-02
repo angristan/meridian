@@ -126,9 +126,12 @@ export async function applyEpochTransition(
   ) {
     throw new Error("Epoch transition does not match the verified predecessor")
   }
+  const registryCertificates = (operation.certificateChain ?? []).map((certificate) =>
+    decodeDeviceCertificate(fromBase64Url(certificate)),
+  )
   const applyingDevice =
     signed.body.declaration.body.sequence > device.epochSequence
-      ? await refreshTrustedCheckpoint(device, predecessor)
+      ? await refreshTrustedCheckpoint(device, predecessor, registryCertificates)
       : device
   const updated = await applyPackageEpochTransition({
     device: deviceBundle(applyingDevice),

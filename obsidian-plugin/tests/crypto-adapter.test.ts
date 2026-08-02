@@ -421,6 +421,62 @@ describe("shared crypto adapter", () => {
     const repairedSecret = JSON.parse(repairedMember.serialized) as Record<string, unknown>
     expect(repairedSecret.checkpointAuthorizationChain).toHaveLength(2)
 
+    const incompleteSecret = JSON.parse(paired.keyBundle) as Record<string, unknown>
+    incompleteSecret.checkpointAuthorizationChain = []
+    const incompleteMember = await crypto.loadDevice(JSON.stringify(incompleteSecret))
+    expect(incompleteMember.trustedCheckpointAuthorized).toBe(false)
+    const initialOwner = record(record(ownerClaim.publicClaim).initialDevice)
+    const candidate = record(JSON.parse(joining.candidatePackage))
+    const memberCertificate = stringField(approvalPayload, "certificate")
+    const transition = await crypto.createEpochTransition(
+      refreshedOwner,
+      [
+        {
+          deviceId: owner.deviceId,
+          signingPublicKey: stringField(initialOwner, "signingPublicKey"),
+          hpkePublicKey: stringField(initialOwner, "hpkePublicKey"),
+          certificate: ownerCertificate,
+          role: "owner",
+          authorizedAt: 0,
+          revokedAt: null,
+          deviceName: "Owner",
+          platform: "Test",
+          supportsCanonicalLog: true,
+          supportsEpochTransitions: true,
+        },
+        {
+          deviceId: member.deviceId,
+          signingPublicKey: stringField(candidate, "signingPublicKey"),
+          hpkePublicKey: stringField(candidate, "hpkePublicKey"),
+          certificate: memberCertificate,
+          role: "member",
+          authorizedAt: trustedHead.cursor,
+          revokedAt: null,
+          deviceName: "Test iPhone",
+          platform: "iOS",
+          supportsCanonicalLog: true,
+          supportsEpochTransitions: true,
+        },
+      ],
+      randomId(32),
+      "migration",
+    )
+    const transitionedMember = await crypto.applyEpochTransition(
+      incompleteMember,
+      {
+        cursor: trustedHead.cursor + 1,
+        logHash: randomId(32),
+        envelope: transition.envelope,
+        authorCertificate: ownerCertificate,
+        certificateChain: [memberCertificate, ownerCertificate],
+      },
+      trustedHead,
+    )
+    expect(transitionedMember).toMatchObject({
+      epochSequence: 1,
+      trustedCheckpointAuthorized: true,
+    })
+
     const tamperedSecret = JSON.parse(paired.keyBundle) as Record<string, unknown>
     tamperedSecret.checkpointAuthorizationChain = []
     await expect(crypto.loadDevice(JSON.stringify(tamperedSecret))).resolves.toMatchObject({

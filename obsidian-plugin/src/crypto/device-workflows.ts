@@ -10,6 +10,7 @@ import {
 } from "@meridian/crypto"
 import {
   checkpointLogFormats,
+  type DeviceCertificate,
   decodeDeviceCertificate,
   deviceAuthSigningBytes,
   encodeDeviceCertificate,
@@ -107,6 +108,7 @@ export async function loadDevice(serializedKeyBundle: string): Promise<DeviceKey
 export async function refreshTrustedCheckpoint(
   device: DeviceKeyMaterial,
   checkpoint: TrustedCheckpoint,
+  registryCertificates: readonly DeviceCertificate[] = [],
 ): Promise<DeviceKeyMaterial> {
   const secret = parseStoredSecret(device.serialized)
   const bundle = deviceBundle(device)
@@ -142,12 +144,12 @@ export async function refreshTrustedCheckpoint(
     },
     bundle.signingPrivateKey,
   )
-  const chain =
-    secret.checkpointAuthorizationChain.length > 0
-      ? secret.checkpointAuthorizationChain.map((encoded) =>
-          decodeDeviceCertificate(fromBase64Url(encoded)),
-        )
-      : [bundle.certificate]
+  const chain = [
+    ...secret.checkpointAuthorizationChain.map((encoded) =>
+      decodeDeviceCertificate(fromBase64Url(encoded)),
+    ),
+    ...registryCertificates,
+  ]
   const serialized = serializeStoredDeviceSecret(
     { ...bundle, checkpoint: signed },
     fromBase64Url(secret.recoveryPublicKey, 32),
