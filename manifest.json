@@ -1,7 +1,7 @@
 {
   "id": "meridian",
   "name": "Meridian",
-  "version": "1.11.3",
+  "version": "1.11.4",
   "minAppVersion": "1.11.4",
   "description": "Self-hosted, end-to-end encrypted vault sync on Cloudflare.",
   "author": "Stanislas",

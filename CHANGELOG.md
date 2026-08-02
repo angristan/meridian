@@ -1,3 +1,11 @@
+## [1.11.4](https://github.com/angristan/meridian/compare/1.11.3...1.11.4) (2026-08-02)
+
+
+### Bug Fixes
+
+* keep sync failures visible ([daf5827](https://github.com/angristan/meridian/commit/daf58271bf637eae9fa0fcddd7809d3c94c7883c))
+* recover incomplete device certificate chains ([4a20b4b](https://github.com/angristan/meridian/commit/4a20b4b77a5f5875535afb7b94d5b9d8d05d4833))
+
 ## [1.11.3](https://github.com/angristan/meridian/compare/1.11.2...1.11.3) (2026-08-02)
 
 
