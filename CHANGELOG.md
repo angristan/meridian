@@ -1,3 +1,10 @@
+## [1.11.11](https://github.com/angristan/meridian/compare/1.11.10...1.11.11) (2026-08-02)
+
+
+### Bug Fixes
+
+* recover interrupted blob cleanup ([c414504](https://github.com/angristan/meridian/commit/c41450484851ed2bab4941a23637febbf8dab9de))
+
 ## [1.11.10](https://github.com/angristan/meridian/compare/1.11.9...1.11.10) (2026-08-02)
 
 
