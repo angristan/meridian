@@ -57,6 +57,18 @@ Until the repository and a release are public, the build produces `obsidian-plug
 - Leave a device offline across many operations.
 - Disable WebSockets and verify polling catches up from the persisted cursor.
 
+### Deterministic fault injection
+
+Run the focused fault tests on demand:
+
+```bash
+bun run fault:test
+bun run fault:test:plugin
+bun run fault:test:worker
+```
+
+These tests use promise barriers instead of timing sleeps. They force index repair to race with an active reconciliation, and force blob pruning to race with a commit on both sides of the R2 `HEAD` boundary. A committed revision must always keep its blob, and repair must never erase a planned deletion.
+
 ### Responsiveness and index recovery
 
 - Populate 10,000 small files, edit one file, and verify routine sync scans only that path while snapshots come from the journal's hydrated index instead of another IndexedDB `getAll()`.
@@ -103,6 +115,8 @@ Automated responsiveness tests use generous wall-clock ceilings to detect pathol
 - Lose responses before R2 PUT, after R2 PUT, and before Durable Object confirmation; exact retry must reconcile the immutable object and upload claim without duplicating catalog entries.
 - Commit an operation whose chunk is absent from R2; it must fail before the authoritative cursor advances.
 - Run orphan cleanup during upload and after interrupted upload; recent claims survive, while old unreferenced objects are removed idempotently.
+- Pause cleanup after its SQL deletion fence, then try to commit the same blob; the commit must retry and no missing-blob operation may appear.
+- Pause a commit after its provisional SQL claim but before R2 `HEAD` returns; cleanup must preserve the blob and the commit must succeed.
 - Fill IndexedDB and inject quota errors at entry, revision, conflict, and checkpoint writes; transactions abort, prepared work remains exact, and the cursor never passes unavailable local state.
 - Crash between local compaction batches; reopening and rerunning removes only completed entries and exact duplicate history rows. Pending work, dirty tokens, DAG parents, tombstones, conflicts, checkpoints, revocations, and old-epoch history remain usable.
 - Test missing `navigator.storage` APIs on mobile, warning at 80%, critical pressure at 90%, and user-gesture persistent-storage requests.

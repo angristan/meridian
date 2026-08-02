@@ -8,11 +8,13 @@ type RevisionEnvelopeRow = Pick<OperationRow, "cursor" | "envelope">
 const ORPHAN_GRACE_MS = 7 * 24 * 60 * 60 * 1_000
 const BLOB_RESERVATION_MS = 24 * 60 * 60 * 1_000
 const PRUNE_PAGE_SIZE = 1_000
+const BLOB_DELETION_FENCE_SIZE = -1
 
 export class VaultBlobs {
   constructor(
     private readonly sql: SqlStorage,
     private readonly bucket: R2Bucket,
+    private readonly transactionSync: <T>(callback: () => T) => T,
   ) {}
 
   async claimBlob(request: Request, blobId: string): Promise<Response> {
@@ -23,6 +25,7 @@ export class VaultBlobs {
       Number.isSafeInteger(expectedSize) && expectedSize > 0,
       new HttpError(400, "invalid_length", "Blob reservation size is invalid"),
     )
+    this.reserveBlobUpload(blobId, expectedSize, session.deviceId)
     const key = `vaults/${session.vaultId}/blobs/${blobId}`
     const existingObject = await this.headBlob(key)
     if (existingObject) {
@@ -31,34 +34,10 @@ export class VaultBlobs {
         new HttpError(409, "blob_size_conflict", "Blob ID already exists with another size"),
       )
       this.rememberStoredBlob(blobId, existingObject.size)
-      this.sql.exec("DELETE FROM blob_claims WHERE blob_id = ?", blobId)
+      this.rememberBlobClaim(blobId, existingObject.size, session.deviceId)
       return json({ exists: true })
     }
 
-    const existingClaim = this.sql
-      .exec<{ expected_size: number }>(
-        "SELECT expected_size FROM blob_claims WHERE blob_id = ?",
-        blobId,
-      )
-      .toArray()[0]
-    assert(
-      !existingClaim ||
-        existingClaim.expected_size === 0 ||
-        existingClaim.expected_size === expectedSize,
-      new HttpError(409, "blob_size_conflict", "Blob reservation size changed"),
-    )
-    this.sql.exec(
-      `INSERT INTO blob_claims(blob_id, claimed_at, expected_size, device_id)
-       VALUES (?, ?, ?, ?)
-       ON CONFLICT(blob_id) DO UPDATE SET
-         claimed_at = excluded.claimed_at,
-         expected_size = excluded.expected_size,
-         device_id = excluded.device_id`,
-      blobId,
-      Date.now(),
-      expectedSize,
-      session.deviceId,
-    )
     return json({ exists: false })
   }
 
@@ -92,23 +71,48 @@ export class VaultBlobs {
       new HttpError(409, "blob_reservation_missing", "Blob upload reservation is missing"),
     )
     this.rememberStoredBlob(blobId, expectedSize)
-    this.sql.exec("DELETE FROM blob_claims WHERE blob_id = ?", blobId)
+    this.rememberBlobClaim(blobId, expectedSize, session.deviceId)
     return new Response(null, { status: 204 })
   }
 
   async ensureStoredRevisionBlobs(
     vaultId: string,
+    deviceId: string,
     chunks: readonly { readonly blobId: Uint8Array }[],
   ): Promise<void> {
     for (const chunk of chunks) {
       const blobId = base64UrlEncode(chunk.blobId)
+      this.reserveBlobForCommit(blobId, deviceId)
       const object = await this.headBlob(`vaults/${vaultId}/blobs/${blobId}`)
       assert(
         object,
         new HttpError(409, "blob_not_stored", "Revision references a blob that is not stored"),
       )
+      assert(
+        this.blobClaim(blobId)?.expected_size !== BLOB_DELETION_FENCE_SIZE,
+        new HttpError(409, "blob_deleting", "Revision blob cleanup is in progress; retry safely"),
+      )
       this.rememberStoredBlob(blobId, object.size)
-      this.sql.exec("DELETE FROM blob_claims WHERE blob_id = ?", blobId)
+      this.rememberBlobClaim(blobId, object.size, deviceId)
+    }
+  }
+
+  assertRevisionBlobsCommitReady(chunks: readonly { readonly blobId: Uint8Array }[]): void {
+    for (const chunk of chunks) {
+      const claim = this.blobClaim(base64UrlEncode(chunk.blobId))
+      assert(
+        claim && claim.expected_size > 0,
+        new HttpError(409, "blob_deleting", "Revision blob is not fenced for commit; retry safely"),
+      )
+    }
+  }
+
+  releaseRevisionBlobClaims(chunks: readonly { readonly blobId: Uint8Array }[]): void {
+    for (const chunk of chunks) {
+      this.sql.exec(
+        "DELETE FROM blob_claims WHERE blob_id = ? AND expected_size > 0",
+        base64UrlEncode(chunk.blobId),
+      )
     }
   }
 
@@ -135,28 +139,62 @@ export class VaultBlobs {
       const candidates = page.objects.filter((object) => {
         const blobId = object.key.slice(prefix.length)
         if (!/^[A-Za-z0-9_-]{16,128}$/.test(blobId)) return false
-        const claimedAt = this.sql
-          .exec<{ claimed_at: number }>(
-            "SELECT claimed_at FROM blob_claims WHERE blob_id = ?",
-            blobId,
-          )
-          .toArray()[0]?.claimed_at
         return isSafeOrphanCandidate(
           object.uploaded.getTime(),
-          claimedAt,
+          this.blobClaim(blobId)?.claimed_at,
           cutoff,
           referenced.has(blobId),
         )
       })
-      if (candidates.length > 0) {
-        await this.bucket.delete(candidates.map((object) => object.key))
-        deletedBytes += candidates.reduce((total, object) => total + object.size, 0)
-        deletedCount += candidates.length
-        for (const object of candidates) {
+      const fenced = this.transactionSync(() => {
+        const latestReferenced = this.referencedBlobIds()
+        return candidates.filter((object) => {
           const blobId = object.key.slice(prefix.length)
-          this.sql.exec("DELETE FROM blob_claims WHERE blob_id = ?", blobId)
-          this.sql.exec("DELETE FROM blob_catalog WHERE blob_id = ?", blobId)
+          const claim = this.blobClaim(blobId)
+          if (
+            !isSafeOrphanCandidate(
+              object.uploaded.getTime(),
+              claim?.claimed_at,
+              cutoff,
+              latestReferenced.has(blobId),
+            )
+          ) {
+            return false
+          }
+          this.sql.exec(
+            `INSERT INTO blob_claims(blob_id, claimed_at, expected_size, device_id)
+             VALUES (?, ?, ?, NULL)
+             ON CONFLICT(blob_id) DO UPDATE SET
+               claimed_at = excluded.claimed_at,
+               expected_size = excluded.expected_size,
+               device_id = NULL`,
+            blobId,
+            Date.now(),
+            BLOB_DELETION_FENCE_SIZE,
+          )
+          return true
+        })
+      })
+      if (fenced.length > 0) {
+        try {
+          await this.bucket.delete(fenced.map((object) => object.key))
+        } catch (error) {
+          this.clearDeletionFences(fenced)
+          throw error
         }
+        deletedBytes += fenced.reduce((total, object) => total + object.size, 0)
+        deletedCount += fenced.length
+        this.transactionSync(() => {
+          for (const object of fenced) {
+            const blobId = object.key.slice(prefix.length)
+            this.sql.exec(
+              "DELETE FROM blob_claims WHERE blob_id = ? AND expected_size = ?",
+              blobId,
+              BLOB_DELETION_FENCE_SIZE,
+            )
+            this.sql.exec("DELETE FROM blob_catalog WHERE blob_id = ?", blobId)
+          }
+        })
       }
       cursor = page.truncated ? page.cursor : undefined
     } while (cursor !== undefined)
@@ -182,7 +220,9 @@ export class VaultBlobs {
       .exec<{ count: number }>("SELECT COUNT(*) AS count FROM devices WHERE revoked_at IS NULL")
       .one().count
     const reservedBlobBytes = this.sql
-      .exec<{ total: number }>("SELECT COALESCE(SUM(expected_size), 0) AS total FROM blob_claims")
+      .exec<{ total: number }>(
+        "SELECT COALESCE(SUM(expected_size), 0) AS total FROM blob_claims WHERE expected_size > 0",
+      )
       .one().total
     const totalBytes = this.sql.databaseSize + blobs.blobBytes
     const acknowledged = this.sql
@@ -219,6 +259,75 @@ export class VaultBlobs {
     } catch {
       throw new HttpError(503, "blob_store_unavailable", "Blob storage is unavailable")
     }
+  }
+
+  private blobClaim(
+    blobId: string,
+  ): { claimed_at: number; expected_size: number; device_id: string | null } | undefined {
+    return this.sql
+      .exec<{ claimed_at: number; expected_size: number; device_id: string | null }>(
+        "SELECT claimed_at, expected_size, device_id FROM blob_claims WHERE blob_id = ?",
+        blobId,
+      )
+      .toArray()[0]
+  }
+
+  private reserveBlobUpload(blobId: string, expectedSize: number, deviceId: string): void {
+    const claim = this.blobClaim(blobId)
+    assert(
+      claim?.expected_size !== BLOB_DELETION_FENCE_SIZE,
+      new HttpError(409, "blob_deleting", "Blob cleanup is in progress; retry the upload"),
+    )
+    assert(
+      !claim || claim.expected_size === 0 || claim.expected_size === expectedSize,
+      new HttpError(409, "blob_size_conflict", "Blob reservation size changed"),
+    )
+    this.rememberBlobClaim(blobId, expectedSize, deviceId)
+  }
+
+  private reserveBlobForCommit(blobId: string, deviceId: string): void {
+    const claim = this.blobClaim(blobId)
+    assert(
+      claim?.expected_size !== BLOB_DELETION_FENCE_SIZE,
+      new HttpError(409, "blob_deleting", "Revision blob cleanup is in progress; retry safely"),
+    )
+    if (claim) {
+      this.sql.exec(
+        "UPDATE blob_claims SET claimed_at = ?, device_id = ? WHERE blob_id = ?",
+        Date.now(),
+        deviceId,
+        blobId,
+      )
+      return
+    }
+    this.rememberBlobClaim(blobId, 0, deviceId)
+  }
+
+  private rememberBlobClaim(blobId: string, size: number, deviceId: string): void {
+    this.sql.exec(
+      `INSERT INTO blob_claims(blob_id, claimed_at, expected_size, device_id)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(blob_id) DO UPDATE SET
+         claimed_at = excluded.claimed_at,
+         expected_size = excluded.expected_size,
+         device_id = excluded.device_id`,
+      blobId,
+      Date.now(),
+      size,
+      deviceId,
+    )
+  }
+
+  private clearDeletionFences(objects: readonly R2Object[]): void {
+    this.transactionSync(() => {
+      for (const object of objects) {
+        this.sql.exec(
+          "DELETE FROM blob_claims WHERE blob_id = ? AND expected_size = ?",
+          object.key.slice(object.key.lastIndexOf("/") + 1),
+          BLOB_DELETION_FENCE_SIZE,
+        )
+      }
+    })
   }
 
   private rememberStoredBlob(blobId: string, size: number): void {

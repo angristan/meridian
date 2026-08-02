@@ -43,7 +43,7 @@ export class VaultDurableObject extends DurableObject<VaultDurableObjectEnv> {
     this.auth = new VaultAuth(this.sql, transactionSync, () =>
       this.notifications.closeForRecovery(),
     )
-    this.blobs = new VaultBlobs(this.sql, env.BLOBS)
+    this.blobs = new VaultBlobs(this.sql, env.BLOBS, transactionSync)
     this.pairing = new VaultPairing(this.sql, transactionSync)
     this.operations = new VaultOperations(
       this.sql,

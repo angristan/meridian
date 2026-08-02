@@ -393,8 +393,10 @@ export class SyncController {
   }
 
   async repairLocalIndex(): Promise<void> {
-    await this.journal.clearSnapshots()
-    await this.sync("manual")
+    await this.runMaintenance(async () => {
+      await this.journal.clearSnapshots()
+      await this.runLoop("manual")
+    })
   }
 
   private async ensureCompleteHistory(): Promise<void> {

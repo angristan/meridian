@@ -212,6 +212,8 @@ export class VaultOperations {
     )
     const epochTransition =
       signedOperation.body.type === "epoch-transition" ? signedOperation.body : null
+    const revisionChunks =
+      signedOperation.body.type === "revision" ? signedOperation.body.chunks : []
     let nextRecoveryStateId: string | null = null
     if (epochTransition) {
       let certificate: ReturnType<typeof decodeDeviceCertificate>
@@ -303,8 +305,12 @@ export class VaultOperations {
         return { operation: duplicate, inserted: false }
       }
 
-      if (signedOperation.body.type === "revision") {
-        await this.blobs.ensureStoredRevisionBlobs(session.vaultId, signedOperation.body.chunks)
+      if (revisionChunks.length > 0) {
+        await this.blobs.ensureStoredRevisionBlobs(
+          session.vaultId,
+          session.deviceId,
+          revisionChunks,
+        )
       }
 
       const state = vaultState(this.sql)
@@ -398,6 +404,10 @@ export class VaultOperations {
             throw new RetryAppend()
           }
 
+          if (revisionChunks.length > 0) {
+            this.blobs.assertRevisionBlobsCommitReady(revisionChunks)
+          }
+
           if (epochTransition) {
             assert(
               sameDeviceSet(
@@ -476,6 +486,9 @@ export class VaultOperations {
               target.device_id,
             )
             this.sql.exec("DELETE FROM sessions WHERE device_id = ?", target.device_id)
+          }
+          if (revisionChunks.length > 0) {
+            this.blobs.releaseRevisionBlobClaims(revisionChunks)
           }
 
           const row = this.sql
