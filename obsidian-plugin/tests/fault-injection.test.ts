@@ -2,6 +2,7 @@ import "fake-indexeddb/auto"
 import { describe, expect, it } from "vitest"
 import type {
   ConfigCategory,
+  EncryptedBlob,
   ScannedFileSnapshot,
   SelectiveSyncSettings,
   VaultScanOptions,
@@ -138,6 +139,87 @@ describe("deterministic local fault injection", () => {
     })
     expect(await journal.listPending()).toEqual([])
     controller.stop()
+  })
+
+  it("drains an exact committed retry after restart", async () => {
+    class LostCommitResponseRemote extends FakeRemote {
+      readonly attempts: { envelope: unknown; idempotencyKey: string }[] = []
+      readonly blobAttempts: EncryptedBlob[] = []
+      private committed: { cursor: number; logHash: string } | null = null
+
+      override async putBlob(blob: EncryptedBlob): Promise<void> {
+        this.blobAttempts.push(structuredClone(blob))
+        await super.putBlob(blob)
+      }
+
+      override async commit(
+        envelope: unknown,
+        idempotencyKey = "",
+      ): Promise<{ cursor: number; logHash: string }> {
+        this.attempts.push({ envelope: structuredClone(envelope), idempotencyKey })
+        if (this.committed) return this.committed
+        this.committed = await super.commit(envelope)
+        throw new Error("Injected response loss after commit")
+      }
+    }
+
+    const databaseName = `meridian-response-loss-${crypto.randomUUID()}`
+    const vault = new FakeVault({ "note.md": "durable content" })
+    const remote = new LostCommitResponseRemote()
+    const firstJournal = new IndexedDbJournal(databaseName)
+    const first = new SyncController(
+      vault,
+      firstJournal,
+      remote,
+      new FakeCrypto(),
+      () => ALL_CATEGORIES,
+      () => {},
+    )
+
+    await first.start(TEST_DEVICE)
+    expect(first.getStatus().error).toMatch(/Injected response loss after commit/)
+    expect(remote.operations).toHaveLength(1)
+    const stranded = await firstJournal.listPending()
+    expect(stranded).toHaveLength(1)
+    expect(stranded[0]).toMatchObject({ state: "failed" })
+    expect(stranded[0]?.preparedRevision).not.toBeNull()
+    expect(await firstJournal.getCheckpoint()).toBeNull()
+    await first.quiesce()
+
+    const restartedJournal = new IndexedDbJournal(databaseName)
+    const restarted = new SyncController(
+      vault,
+      restartedJournal,
+      remote,
+      new FakeCrypto(),
+      () => ALL_CATEGORIES,
+      () => {},
+    )
+    await restarted.start(TEST_DEVICE)
+
+    expect(remote.attempts).toHaveLength(2)
+    expect(remote.attempts[1]).toEqual(remote.attempts[0])
+    expect(remote.attempts[0]?.idempotencyKey).not.toBe("")
+    expect(remote.blobAttempts).toHaveLength(2)
+    expect(remote.blobAttempts[1]).toEqual(remote.blobAttempts[0])
+    expect(remote.blobs.size).toBe(1)
+    expect(remote.operations).toHaveLength(1)
+    expect(await restartedJournal.listPending()).toEqual([])
+    expect(await restartedJournal.listConflicts(true)).toEqual([])
+    expect(await restartedJournal.getCheckpoint()).toMatchObject({ cursor: 1, logHash: "hash-1" })
+    expect(await restartedJournal.listRevisions("note.md")).toHaveLength(1)
+    expect((await restartedJournal.getSnapshots()).get("note.md")).toMatchObject({
+      path: "note.md",
+    })
+    await restarted.quiesce()
+
+    const reopened = new IndexedDbJournal(databaseName)
+    await reopened.open()
+    expect(await reopened.listPending()).toEqual([])
+    expect(await reopened.getCheckpoint()).toMatchObject({ cursor: 1, logHash: "hash-1" })
+    expect(await reopened.listRevisions("note.md")).toHaveLength(1)
+    reopened.close()
+    await deleteDatabase(databaseName)
   })
 
   it("preserves a deletion when repair starts after planning", async () => {

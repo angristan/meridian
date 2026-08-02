@@ -67,7 +67,7 @@ bun run fault:test:plugin
 bun run fault:test:worker
 ```
 
-These tests use promise barriers instead of timing sleeps. They force index repair to race with an active reconciliation, and force blob pruning to race with a commit on both sides of the R2 `HEAD` boundary. A committed revision must always keep its blob, and repair must never erase a planned deletion.
+These tests use promise barriers and explicit injected failures instead of timing sleeps. They force index repair to race with an active reconciliation, force blob pruning to race with a commit on both sides of the R2 `HEAD` boundary, and discard a successful operation response before restarting the client from the same IndexedDB database. A committed revision must always keep its blob, repair must never erase a planned deletion, and an exact response-loss retry must preserve one cursor and hash while draining pending work.
 
 ### Responsiveness and index recovery
 

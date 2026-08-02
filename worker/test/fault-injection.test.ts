@@ -505,6 +505,71 @@ describe("deterministic Worker fault injection", () => {
     })
   })
 
+  it("returns the same receipt after a committed response is lost", async () => {
+    const stub = env.VAULT.get(env.VAULT.idFromName(`blob-commit-response-${randomToken(8)}`))
+    const owner = await setupOwner(stub)
+
+    await runInDurableObject(stub, async (_instance, state) => {
+      const transactionSync: TransactionSync = (callback) => state.storage.transactionSync(callback)
+      const bucket = new PausedDeleteBucket()
+      const blobIdentifier = protocolBlobId(randomBytes(16))
+      const blobId = base64UrlEncode(blobIdentifier)
+      const blobKey = `vaults/${owner.vaultId}/blobs/${blobId}`
+      bucket.seed(blobKey, new Uint8Array([16, 17, 18]))
+      const blobs = new VaultBlobs(
+        state.storage.sql,
+        bucket as unknown as R2Bucket,
+        transactionSync,
+      )
+      const operations = new VaultOperations(
+        state.storage.sql,
+        transactionSync,
+        () => {},
+        () => {},
+        blobs,
+      )
+      const operation = signedBlobOperation(owner, blobIdentifier)
+      const request = () =>
+        new Request("https://vault.internal/v1/operations", {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${owner.sessionToken}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify(operation),
+        })
+
+      await operations.commitOperation(request())
+      const committed = state.storage.sql
+        .exec<{ chain_hash: string }>("SELECT chain_hash FROM operations WHERE cursor = 1")
+        .one()
+
+      const retry = await operations.commitOperation(request())
+      expect(retry.status).toBe(200)
+      await expect(retry.json()).resolves.toMatchObject({
+        cursor: 1,
+        chainHash: committed.chain_hash,
+        duplicate: true,
+      })
+      expect(
+        state.storage.sql.exec<{ count: number }>("SELECT COUNT(*) AS count FROM operations").one()
+          .count,
+      ).toBe(1)
+      expect(
+        state.storage.sql.exec<{ cursor: number }>("SELECT cursor FROM vault_state").one().cursor,
+      ).toBe(1)
+      expect(
+        state.storage.sql
+          .exec<{ count: number }>(
+            "SELECT COUNT(*) AS count FROM blob_claims WHERE blob_id = ?",
+            blobId,
+          )
+          .one().count,
+      ).toBe(0)
+      expect(await bucket.head(blobKey)).not.toBeNull()
+    })
+  })
+
   it("does not prune a blob reserved before an R2 head response", async () => {
     const stub = env.VAULT.get(env.VAULT.idFromName(`blob-head-race-${randomToken(8)}`))
     const owner = await setupOwner(stub)
