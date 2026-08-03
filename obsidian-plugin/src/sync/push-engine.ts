@@ -66,6 +66,7 @@ export class PushEngine {
         totalBytes: null,
       })
       try {
+        await this.requireCommittedParents(entry)
         const result = await this.pushEntry(device, entry, emit, shouldStop)
         if (result.stopped) return { stopped: true, committed, error: firstError }
         committed = true
@@ -97,6 +98,14 @@ export class PushEngine {
       }
     }
     return { stopped: false, committed, error: firstError }
+  }
+
+  private async requireCommittedParents(entry: JournalEntry): Promise<void> {
+    for (const parentId of entry.parentRevisionIds) {
+      const parent = await this.journal.getRetainedRevision(parentId)
+      if (parent && parent.cursor !== null) continue
+      throw new Error("Queued revision is waiting for a parent revision to upload")
+    }
   }
 
   private async pushEntry(

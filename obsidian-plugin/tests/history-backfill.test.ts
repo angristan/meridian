@@ -141,6 +141,93 @@ describe("HistoryBackfillService", () => {
     ])
   })
 
+  it("rejects a parent that appears later in remote history", async () => {
+    const remote = new FakeRemote()
+    remote.addRemoteRevision(
+      {
+        operationId: "child-operation",
+        revisionId: "child",
+        fileId: "file-id",
+        action: "upsert",
+        path: "note.md",
+        previousPath: null,
+        parents: ["future-parent"],
+        authorDeviceId: TEST_DEVICE.deviceId,
+        blobId: "child-blob",
+        isText: true,
+      },
+      new TextEncoder().encode("child").buffer,
+    )
+    remote.addRemoteRevision(
+      {
+        operationId: "parent-operation",
+        revisionId: "future-parent",
+        fileId: "file-id",
+        action: "upsert",
+        path: "note.md",
+        previousPath: null,
+        parents: [],
+        authorDeviceId: TEST_DEVICE.deviceId,
+        blobId: "parent-blob",
+        isText: true,
+      },
+      new TextEncoder().encode("parent").buffer,
+    )
+    const journal = new MemoryJournal()
+    await journal.setCheckpoint({ cursor: 2, logHash: "hash-2" })
+
+    await expect(
+      new HistoryBackfillService(journal, remote, new FakeCrypto()).backfill(TEST_DEVICE),
+    ).rejects.toThrow("Remote revision history is incomplete")
+    expect(await journal.getHistoryCheckpoint()).toBeNull()
+    expect(await journal.listRetainedRevisions()).toEqual([])
+  })
+
+  it("rejects revision ID reuse while replaying retained history", async () => {
+    const remote = new FakeRemote()
+    remote.addRemoteRevision(
+      {
+        operationId: "first-operation",
+        revisionId: "reused",
+        fileId: "first-file",
+        action: "upsert",
+        path: "first.md",
+        previousPath: null,
+        parents: [],
+        authorDeviceId: TEST_DEVICE.deviceId,
+        blobId: "first-blob",
+        isText: true,
+      },
+      new TextEncoder().encode("first").buffer,
+    )
+    remote.addRemoteRevision(
+      {
+        operationId: "second-operation",
+        revisionId: "reused",
+        fileId: "second-file",
+        action: "upsert",
+        path: "second.md",
+        previousPath: null,
+        parents: [],
+        authorDeviceId: TEST_DEVICE.deviceId,
+        blobId: "second-blob",
+        isText: true,
+      },
+      new TextEncoder().encode("second").buffer,
+    )
+    const journal = new MemoryJournal()
+    await journal.setCheckpoint({ cursor: 2, logHash: "hash-2" })
+
+    await expect(
+      new HistoryBackfillService(journal, remote, new FakeCrypto()).backfill(TEST_DEVICE),
+    ).rejects.toThrow("Remote history reused a revision ID")
+    expect(await journal.getHistoryCheckpoint()).toMatchObject({ cursor: 1 })
+    expect(await journal.getRetainedRevision("reused")).toMatchObject({
+      fileId: "first-file",
+      cursor: 1,
+    })
+  })
+
   it("carries epoch state through one history traversal", async () => {
     class EpochTrackingCrypto extends FakeCrypto {
       inspectedEpochSequences: number[] = []

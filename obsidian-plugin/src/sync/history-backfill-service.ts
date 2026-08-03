@@ -8,6 +8,7 @@ import type {
 } from "../model"
 import type { JournalPort } from "../storage/contracts"
 import { checkpointFormats, initialCheckpoint } from "./checkpoints"
+import { assertRevisionAncestry, sameRevisionIdentity } from "./revision-ancestry"
 import {
   acceptVerifiedLogPage,
   advanceVerifiedLogCursor,
@@ -97,12 +98,12 @@ export class HistoryBackfillService {
     device: DeviceKeyMaterial,
     operation: RemoteOperation,
     type: string,
-  ): Promise<LocalRevision> {
+  ): Promise<LocalRevision | null> {
     if (type !== "revision" && type !== "restore" && type !== "tombstone") {
       throw new Error("Complete history contains an unknown operation type")
     }
     const metadata = await this.crypto.inspectRevision(device, operation, Number.MAX_SAFE_INTEGER)
-    return {
+    const revision: LocalRevision = {
       revisionId: metadata.revisionId,
       fileId: metadata.fileId,
       path: metadata.path,
@@ -116,6 +117,17 @@ export class HistoryBackfillService {
       isConflict: false,
       operation,
     }
+    const existing = await this.journal.getRetainedRevision(revision.revisionId)
+    if (existing && !sameRevisionIdentity(existing, revision)) {
+      throw new Error("Remote history reused a revision ID with different content")
+    }
+    await assertRevisionAncestry(
+      this.journal,
+      revision,
+      operation.cursor,
+      () => new Error("Remote revision history is incomplete"),
+    )
+    return existing ? null : revision
   }
 }
 

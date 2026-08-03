@@ -36,7 +36,7 @@ import {
 } from "./epoch-transition-coordinator"
 import { HistoryBackfillService } from "./history-backfill-service"
 import { HistoryService } from "./history-service"
-import { OperationApplier } from "./operation-applier"
+import { MissingRevisionAncestryError, OperationApplier } from "./operation-applier"
 import { PullEngine } from "./pull-engine"
 import { PushEngine } from "./push-engine"
 import { Reconciler } from "./reconciler"
@@ -120,7 +120,10 @@ export class SyncController {
       applier,
       (device, operation, previousHash, logFormat) =>
         crypto.verifyOperationLogLink(device, operation, previousHash, logFormat),
-      this.persistDevice,
+      async (device) => {
+        await this.persistDevice(device)
+        this.device = device
+      },
     )
     this.pushEngine = new PushEngine(vault, journal, remote, crypto)
     this.epochTransitions = new EpochTransitionCoordinator(
@@ -579,19 +582,33 @@ export class SyncController {
     if (this.stopRequested) return false
 
     this.updateStatus({ phase: "pulling", message: "Downloading changes", progress: null })
-    const pull = await this.pullEngine.pull(
-      device,
-      (progress) =>
-        this.updateProgress({
-          phase: this.stopRequested ? "pausing" : "pulling",
-          message: this.stopRequested
-            ? "Pausing after the current safe boundary"
-            : "Downloading changes",
-          cursor: progress.currentCursor,
-          progress,
-        }),
-      () => this.stopRequested,
-    )
+    const pullOnce = () =>
+      this.pullEngine.pull(
+        this.requireDevice(),
+        (progress) =>
+          this.updateProgress({
+            phase: this.stopRequested ? "pausing" : "pulling",
+            message: this.stopRequested
+              ? "Pausing after the current safe boundary"
+              : "Downloading changes",
+            cursor: progress.currentCursor,
+            progress,
+          }),
+        () => this.stopRequested,
+      )
+    let pull: Awaited<ReturnType<typeof pullOnce>>
+    try {
+      pull = await pullOnce()
+    } catch (error) {
+      if (!(error instanceof MissingRevisionAncestryError)) throw error
+      this.updateStatus({
+        phase: "pulling",
+        message: "Repairing local revision history",
+        progress: null,
+      })
+      await this.historyBackfill.backfill(this.requireDevice())
+      pull = await pullOnce()
+    }
     this.device = pull.device
     if (pull.stopped || this.stopRequested) return false
     await this.conflictService.resolveEquivalent()

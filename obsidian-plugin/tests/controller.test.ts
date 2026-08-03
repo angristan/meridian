@@ -1797,7 +1797,7 @@ describe("SyncController", () => {
 
     expect(vault.text("remote.md")).toBeNull()
     expect(await journal.getCursor()).toBe(0)
-    expect(controller.getStatus().error).toMatch(/parent missing-parent is unknown/)
+    expect(controller.getStatus().error).toBe("Remote revision history is incomplete")
     controller.stop()
   })
 
@@ -1886,7 +1886,7 @@ describe("SyncController", () => {
     expect(vault.text("first.md")).toBe("first content")
     expect(vault.text("second.md")).toBeNull()
     expect(await journal.getCursor()).toBe(1)
-    expect(controller.getStatus().error).toMatch(/reused with different content/)
+    expect(controller.getStatus().error).toMatch(/reused a revision ID with different content/)
     controller.stop()
   })
 

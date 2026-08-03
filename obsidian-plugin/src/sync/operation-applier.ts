@@ -7,7 +7,6 @@ import type {
   DeviceKeyMaterial,
   FileSnapshot,
   JournalEntry,
-  LocalRevision,
   RemoteOperation,
   RemotePort,
   TrustedCheckpoint,
@@ -23,9 +22,12 @@ import {
   pathsCollide,
 } from "../vault/path-policy"
 import { queuedEntry } from "./queued-entry"
+import { assertRevisionAncestry, sameRevisionIdentity } from "./revision-ancestry"
 import { revisionHeads } from "./revision-heads"
 import type { RevisionLoader } from "./revision-loader"
 import { snapshotFor } from "./snapshots"
+
+export { MissingRevisionAncestryError } from "./revision-ancestry"
 
 export class OperationApplier {
   constructor(
@@ -352,49 +354,28 @@ export class OperationApplier {
     revision: DecryptedRevision,
     operation: RemoteOperation,
   ): Promise<boolean> {
+    const identity = {
+      revisionId: revision.revisionId,
+      fileId: revision.fileId,
+      parents: revision.parents,
+      deviceId: revision.authorDeviceId,
+      cursor: operation.cursor,
+      tombstone: revision.action === "delete",
+    }
     const existing = await this.journal.getRevision(revision.revisionId)
     if (existing) {
-      if (!sameRevision(existing, revision, operation.cursor)) {
-        throw new Error(`Revision ID ${revision.revisionId} was reused with different content`)
+      if (!sameRevisionIdentity(existing, identity)) {
+        throw new Error("Remote history reused a revision ID with different content")
       }
       await this.settleKnownPendingEffects(revision)
       return true
     }
 
-    if (new Set(revision.parents).size !== revision.parents.length) {
-      throw new Error("Remote revision contains duplicate parents")
+    const retained = await this.journal.getRetainedRevision(revision.revisionId)
+    if (retained && !sameRevisionIdentity(retained, identity)) {
+      throw new Error("Remote history reused a revision ID with different content")
     }
-    if (revision.parents.includes(revision.revisionId)) {
-      throw new Error("Remote revision cannot reference itself as a parent")
-    }
-
-    const revisions = await this.journal.listFileRevisions(revision.fileId)
-    const byId = new Map(revisions.map((candidate) => [candidate.revisionId, candidate]))
-    for (const parentId of revision.parents) {
-      const parent = await this.journal.getRevision(parentId)
-      if (!parent) throw new Error(`Remote revision parent ${parentId} is unknown`)
-      if (parent.fileId !== revision.fileId) {
-        throw new Error("Remote revision parent belongs to another file")
-      }
-      byId.set(parent.revisionId, parent)
-    }
-
-    const visiting = new Set<string>()
-    const visited = new Set<string>()
-    const visit = (revisionId: string): void => {
-      if (revisionId === revision.revisionId) {
-        throw new Error("Remote revision would create an ancestry cycle")
-      }
-      if (visited.has(revisionId)) return
-      if (visiting.has(revisionId)) throw new Error("Stored revision ancestry contains a cycle")
-      const candidate = byId.get(revisionId)
-      if (!candidate) throw new Error(`Stored revision parent ${revisionId} is unknown`)
-      visiting.add(revisionId)
-      for (const parentId of candidate.parents) visit(parentId)
-      visiting.delete(revisionId)
-      visited.add(revisionId)
-    }
-    for (const parentId of revision.parents) visit(parentId)
+    await assertRevisionAncestry(this.journal, revision, operation.cursor)
     return false
   }
 
@@ -584,27 +565,6 @@ export class OperationApplier {
       return false
     }
   }
-}
-
-function sameRevision(
-  existing: LocalRevision,
-  revision: DecryptedRevision,
-  cursor: number,
-): boolean {
-  return (
-    existing.cursor === cursor &&
-    existing.fileId === revision.fileId &&
-    existing.deviceId === revision.authorDeviceId &&
-    existing.tombstone === (revision.action === "delete") &&
-    sameIds(existing.parents, revision.parents)
-  )
-}
-
-function sameIds(left: readonly string[], right: readonly string[]): boolean {
-  if (left.length !== right.length) return false
-  const sortedLeft = [...left].sort()
-  const sortedRight = [...right].sort()
-  return sortedLeft.every((value, index) => value === sortedRight[index])
 }
 
 function record(value: unknown): Record<string, unknown> | null {

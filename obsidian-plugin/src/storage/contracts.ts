@@ -77,6 +77,7 @@ export interface JournalPort {
   ): Promise<void>
   getRetainedRevision(revisionId: string): Promise<LocalRevision | null>
   listRetainedRevisions(): Promise<LocalRevision[]>
+  listRetainedFileRevisions(fileId: string): Promise<LocalRevision[]>
   listConflicts(unresolvedOnly?: boolean): Promise<ConflictRecord[]>
   clearSnapshots(): Promise<void>
 }

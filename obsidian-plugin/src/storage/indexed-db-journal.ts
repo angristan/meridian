@@ -406,13 +406,24 @@ export class IndexedDbJournal implements JournalPort {
   }
 
   async listRetainedRevisions(): Promise<LocalRevision[]> {
+    return this.listRetained()
+  }
+
+  async listRetainedFileRevisions(fileId: string): Promise<LocalRevision[]> {
+    return this.listRetained(fileId)
+  }
+
+  private async listRetained(fileId?: string): Promise<LocalRevision[]> {
     const database = this.requireDatabase()
     const transaction = database.transaction(["revisions", "history-revisions"], "readonly")
     const done = transactionDone(transaction)
-    const [history, current] = await Promise.all([
-      requestResult<LocalRevision[]>(transaction.objectStore("history-revisions").getAll()),
-      requestResult<LocalRevision[]>(transaction.objectStore("revisions").getAll()),
-    ])
+    const read = (storeName: "revisions" | "history-revisions") => {
+      const store = transaction.objectStore(storeName)
+      return requestResult<LocalRevision[]>(
+        fileId === undefined ? store.getAll() : store.index("fileId").getAll(fileId),
+      )
+    }
+    const [history, current] = await Promise.all([read("history-revisions"), read("revisions")])
     await done
     const byId = new Map(history.map((revision) => [revision.revisionId, revision]))
     for (const revision of current) byId.set(revision.revisionId, revision)
