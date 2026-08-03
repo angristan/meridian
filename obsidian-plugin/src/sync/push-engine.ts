@@ -170,35 +170,34 @@ export class PushEngine {
     await this.journal.updateEntry(entry.id, "committing")
     onProgress({ stage: "committing" })
     const committed = await this.remote.commit(encrypted.envelope, entry.id)
-    if (bytes) {
-      await this.journal.putSnapshot(
-        await snapshotFor(entry.path, entry.fileId, bytes, this.vault.configDir),
-      )
-    } else {
-      await this.journal.removeSnapshot(entry.path)
-    }
-    if (entry.previousPath) await this.journal.removeSnapshot(entry.previousPath)
-    // Pull replay treats an existing revision as proof that its local index effects are durable.
-    // Keep this marker after every snapshot update so a checkpoint cannot skip partial settlement.
-    await this.journal.putRevision({
-      revisionId: entry.revisionId,
-      fileId: entry.fileId,
-      path: entry.path,
-      action,
-      previousPath: entry.previousPath,
-      parents: entry.parentRevisionIds,
-      deviceId: device.deviceId,
-      createdAt: entry.createdAt,
-      cursor: committed.cursor,
-      tombstone: action === "delete",
-      isConflict: false,
-      operation: { ...committed, envelope: encrypted.envelope },
-    })
-    await this.journal.putEntry({
-      ...entry,
-      state: "complete",
-      error: null,
-      preparedRevision: null,
+    await this.journal.finishPushedRevision({
+      entry: {
+        ...entry,
+        state: "complete",
+        error: null,
+        preparedRevision: null,
+      },
+      revision: {
+        revisionId: entry.revisionId,
+        fileId: entry.fileId,
+        path: entry.path,
+        action,
+        previousPath: entry.previousPath,
+        parents: entry.parentRevisionIds,
+        deviceId: device.deviceId,
+        createdAt: entry.createdAt,
+        cursor: committed.cursor,
+        tombstone: action === "delete",
+        isConflict: false,
+        operation: { ...committed, envelope: encrypted.envelope },
+      },
+      snapshot: bytes
+        ? await snapshotFor(entry.path, entry.fileId, bytes, this.vault.configDir)
+        : null,
+      removeSnapshotPaths: [
+        ...(bytes ? [] : [entry.path]),
+        ...(entry.previousPath ? [entry.previousPath] : []),
+      ],
     })
     return { stopped: false, checkpoint: committed }
   }

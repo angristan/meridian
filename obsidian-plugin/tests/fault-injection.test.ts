@@ -3,10 +3,7 @@ import { describe, expect, it } from "vitest"
 import type {
   ConfigCategory,
   EncryptedBlob,
-  FileSnapshot,
-  JournalEntry,
   JournalState,
-  LocalRevision,
   ScannedFileSnapshot,
   SelectiveSyncSettings,
   TrustedCheckpoint,
@@ -19,6 +16,7 @@ import {
   type IndexPlanningInput,
   type SyncComputePort,
 } from "../src/platform/background-sync"
+import type { PushedRevisionCommit } from "../src/storage/contracts"
 import { IndexedDbJournal } from "../src/storage/indexed-db-journal"
 import { MemoryJournal } from "../src/storage/memory-journal"
 import { SyncController } from "../src/sync/controller"
@@ -127,24 +125,19 @@ class PostCommitCrashJournal extends IndexedDbJournal {
     super(name)
   }
 
-  override async putRevision(revision: LocalRevision): Promise<void> {
-    await super.putRevision(revision)
-    if (this.boundary === "revision") this.crash()
-  }
+  override async finishPushedRevision(commit: PushedRevisionCommit): Promise<void> {
+    if (this.boundary === "completion" || this.boundary === "checkpoint") {
+      await super.finishPushedRevision(commit)
+      if (this.boundary === "completion") this.crash()
+      return
+    }
 
-  override async putSnapshot(snapshot: FileSnapshot): Promise<void> {
-    await super.putSnapshot(snapshot)
+    // Recreate partial states written by older releases so restart compatibility remains covered.
+    if (commit.snapshot) await super.putSnapshot(commit.snapshot)
+    for (const path of commit.removeSnapshotPaths) await super.removeSnapshot(path)
     if (this.boundary === "snapshot") this.crash()
-  }
-
-  override async removeSnapshot(path: string): Promise<void> {
-    await super.removeSnapshot(path)
-    if (this.boundary === "snapshot") this.crash()
-  }
-
-  override async putEntry(entry: JournalEntry): Promise<void> {
-    await super.putEntry(entry)
-    if (this.boundary === "completion" && entry.state === "complete") this.crash()
+    await super.putRevision(commit.revision)
+    this.crash()
   }
 
   override async updateEntry(

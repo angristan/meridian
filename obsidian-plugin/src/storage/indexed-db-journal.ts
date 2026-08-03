@@ -9,7 +9,7 @@ import type {
   LocalRevision,
   TrustedCheckpoint,
 } from "../model"
-import type { JournalPort, ReconciliationCommit } from "./contracts"
+import type { JournalPort, PushedRevisionCommit, ReconciliationCommit } from "./contracts"
 import { requestResult, transactionDone } from "./idb-helpers"
 import { DATABASE_VERSION, upgradeJournalSchema } from "./migration"
 import { type MetadataRecord, sortRevisions } from "./types"
@@ -256,6 +256,23 @@ export class IndexedDbJournal implements JournalPort {
 
   async putRevision(revision: LocalRevision): Promise<void> {
     await this.put("revisions", revision)
+  }
+
+  async finishPushedRevision(commit: PushedRevisionCommit): Promise<void> {
+    const snapshot = commit.snapshot ? cachedSnapshot(commit.snapshot) : null
+    const removeSnapshotPaths = [...commit.removeSnapshotPaths]
+    const database = this.requireDatabase()
+    const transaction = database.transaction(["entries", "files", "revisions"], "readwrite")
+    const files = transaction.objectStore("files")
+    transaction.objectStore("entries").put(commit.entry)
+    transaction.objectStore("revisions").put(commit.revision)
+    if (snapshot) files.put(snapshot)
+    for (const path of removeSnapshotPaths) files.delete(path)
+    await transactionDone(transaction)
+
+    const snapshotIndex = this.requireSnapshotIndex()
+    if (snapshot) snapshotIndex.set(snapshot.path, snapshot)
+    for (const path of removeSnapshotPaths) snapshotIndex.delete(path)
   }
 
   async getRevision(revisionId: string): Promise<LocalRevision | null> {

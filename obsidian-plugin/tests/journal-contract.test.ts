@@ -114,6 +114,46 @@ describe.each(implementations)("$0 journal contract", (_name, createHarness) => 
     })
   })
 
+  it("settles a pushed revision with its index and entry effects", async () => {
+    await withJournal(createHarness, async (journal) => {
+      const snapshot = {
+        fileId: "file",
+        path: "renamed.md",
+        fingerprint: "fingerprint",
+        size: 4,
+        mtime: 1,
+        kind: "vault" as const,
+      }
+      const revision = {
+        revisionId: "revision",
+        fileId: "file",
+        path: "renamed.md",
+        action: "upsert" as const,
+        previousPath: "note.md",
+        parents: [],
+        deviceId: "device",
+        createdAt: 1,
+        cursor: 1,
+        tombstone: false,
+        isConflict: false,
+        operation: null,
+      }
+      await journal.putEntry(entry())
+      await journal.putSnapshot({ ...snapshot, path: "note.md" })
+
+      await journal.finishPushedRevision({
+        entry: entry({ state: "complete" }),
+        revision,
+        snapshot,
+        removeSnapshotPaths: ["note.md"],
+      })
+
+      expect(await journal.listPending()).toEqual([])
+      expect([...(await journal.getSnapshots()).keys()]).toEqual(["renamed.md"])
+      expect(await journal.getRevision("revision")).toEqual(revision)
+    })
+  })
+
   it("keeps cursor and checkpoint updates together", async () => {
     await withJournal(createHarness, async (journal) => {
       const checkpoint = {

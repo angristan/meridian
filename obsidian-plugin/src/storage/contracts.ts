@@ -18,6 +18,13 @@ export interface ReconciliationCommit {
   fingerprintAuditedAt?: number
 }
 
+export interface PushedRevisionCommit {
+  entry: JournalEntry
+  revision: LocalRevision
+  snapshot: FileSnapshot | null
+  removeSnapshotPaths: string[]
+}
+
 export interface JournalPort {
   open(): Promise<void>
   close(): void
@@ -44,6 +51,7 @@ export interface JournalPort {
   listDeviceRevocations(): Promise<DeviceRevocationRecord[]>
   putDeviceRevocation(revocation: DeviceRevocationRecord): Promise<void>
   putRevision(revision: LocalRevision): Promise<void>
+  finishPushedRevision(commit: PushedRevisionCommit): Promise<void>
   getRevision(revisionId: string): Promise<LocalRevision | null>
   listRevisions(path?: string): Promise<LocalRevision[]>
   listFileRevisions(fileId: string): Promise<LocalRevision[]>
