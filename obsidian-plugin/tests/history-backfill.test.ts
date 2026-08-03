@@ -57,7 +57,7 @@ describe("HistoryBackfillService", () => {
 
     expect(await journal.listRevisions()).toEqual([])
     expect(await journal.getCheckpoint()).toEqual({ cursor: 7, logHash: "live-sync-hash" })
-    expect((await journal.listHistoryRevisions()).map((revision) => revision.revisionId)).toEqual([
+    expect((await journal.listRetainedRevisions()).map((revision) => revision.revisionId)).toEqual([
       "revision-two",
       "revision-one",
     ])
@@ -95,7 +95,7 @@ describe("HistoryBackfillService", () => {
     })
     crypto.interrupted = false
     await expect(service.backfill(TEST_DEVICE)).resolves.toEqual({ added: 1, throughCursor: 2 })
-    expect(await journal.listHistoryRevisions()).toHaveLength(2)
+    expect(await journal.listRetainedRevisions()).toHaveLength(2)
   })
 
   it("resumes after history state commits before the caller continues", async () => {
@@ -123,7 +123,7 @@ describe("HistoryBackfillService", () => {
       "Injected crash after history commit",
     )
     expect(await journal.getHistoryCheckpoint()).toMatchObject({ cursor: 1, logHash: "hash-1" })
-    expect(await journal.listHistoryRevisions()).toHaveLength(1)
+    expect(await journal.listRetainedRevisions()).toHaveLength(1)
     journal.close()
 
     const restartedJournal = new IndexedDbJournal(databaseName)
@@ -134,7 +134,7 @@ describe("HistoryBackfillService", () => {
       cursor: 2,
       logHash: "hash-2",
     })
-    expect(await restartedJournal.listHistoryRevisions()).toHaveLength(2)
+    expect(await restartedJournal.listRetainedRevisions()).toHaveLength(2)
     restartedJournal.close()
     await deleteDatabase(databaseName)
   })
@@ -154,7 +154,7 @@ describe("HistoryBackfillService", () => {
         trustedCheckpoint: { cursor: 1, logHash: "different-signed-hash" },
       }),
     ).rejects.toThrow(/signed device checkpoint/)
-    expect(await journal.listHistoryRevisions()).toEqual([])
+    expect(await journal.listRetainedRevisions()).toEqual([])
   })
 })
 

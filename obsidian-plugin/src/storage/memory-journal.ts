@@ -235,15 +235,15 @@ export class MemoryJournal implements JournalPort {
     this.historyCheckpoint = structuredClone(checkpoint)
   }
 
-  async getHistoryRevision(revisionId: string): Promise<LocalRevision | null> {
-    const revision = this.historyRevisions.get(revisionId)
+  async getRetainedRevision(revisionId: string): Promise<LocalRevision | null> {
+    const revision = this.revisions.get(revisionId) ?? this.historyRevisions.get(revisionId)
     return revision ? structuredClone(revision) : null
   }
 
-  async listHistoryRevisions(): Promise<LocalRevision[]> {
-    return sortRevisions([...this.historyRevisions.values()]).map((revision) =>
-      structuredClone(revision),
-    )
+  async listRetainedRevisions(): Promise<LocalRevision[]> {
+    const byId = new Map(this.historyRevisions)
+    for (const [revisionId, revision] of this.revisions) byId.set(revisionId, revision)
+    return sortRevisions([...byId.values()]).map((revision) => structuredClone(revision))
   }
 
   async putConflict(conflict: ConflictRecord): Promise<void> {

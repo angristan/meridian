@@ -350,7 +350,9 @@ export class IndexedDbJournal implements JournalPort {
     await transactionDone(transaction)
   }
 
-  async getHistoryRevision(revisionId: string): Promise<LocalRevision | null> {
+  async getRetainedRevision(revisionId: string): Promise<LocalRevision | null> {
+    const current = await this.getRevision(revisionId)
+    if (current) return current
     const database = this.requireDatabase()
     const transaction = database.transaction("history-revisions", "readonly")
     const done = transactionDone(transaction)
@@ -361,8 +363,17 @@ export class IndexedDbJournal implements JournalPort {
     return revision ?? null
   }
 
-  async listHistoryRevisions(): Promise<LocalRevision[]> {
-    return sortRevisions(await this.getAll<LocalRevision>("history-revisions"))
+  async listRetainedRevisions(): Promise<LocalRevision[]> {
+    const byId = new Map(
+      (await this.getAll<LocalRevision>("history-revisions")).map((revision) => [
+        revision.revisionId,
+        revision,
+      ]),
+    )
+    for (const revision of await this.getAll<LocalRevision>("revisions")) {
+      byId.set(revision.revisionId, revision)
+    }
+    return sortRevisions([...byId.values()])
   }
 
   async putConflict(conflict: ConflictRecord): Promise<void> {

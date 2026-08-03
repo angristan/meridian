@@ -69,8 +69,8 @@ export interface JournalPort {
     revision: LocalRevision | null,
     checkpoint: TrustedCheckpoint,
   ): Promise<void>
-  getHistoryRevision(revisionId: string): Promise<LocalRevision | null>
-  listHistoryRevisions(): Promise<LocalRevision[]>
+  getRetainedRevision(revisionId: string): Promise<LocalRevision | null>
+  listRetainedRevisions(): Promise<LocalRevision[]>
   putConflict(conflict: ConflictRecord): Promise<void>
   listConflicts(unresolvedOnly?: boolean): Promise<ConflictRecord[]>
   resolveConflict(id: string): Promise<void>

@@ -247,21 +247,8 @@ export class HistoryService {
     return (await this.vault.exists(path)) ? this.vault.read(path) : null
   }
 
-  private async allRevisions(): Promise<LocalRevision[]> {
-    const live = await this.journal.listRevisions()
-    const byId = new Map(
-      (await this.journal.listHistoryRevisions()).map((revision) => [
-        revision.revisionId,
-        revision,
-      ]),
-    )
-    for (const revision of live) byId.set(revision.revisionId, revision)
-    return [...byId.values()].sort(
-      (left, right) =>
-        right.createdAt - left.createdAt ||
-        (right.cursor ?? -1) - (left.cursor ?? -1) ||
-        right.revisionId.localeCompare(left.revisionId),
-    )
+  private allRevisions(): Promise<LocalRevision[]> {
+    return this.journal.listRetainedRevisions()
   }
 
   private async fileRevisions(fileId: string): Promise<LocalRevision[]> {
@@ -269,9 +256,7 @@ export class HistoryService {
   }
 
   private async requireRevision(revisionId: string): Promise<LocalRevision> {
-    const revision =
-      (await this.journal.getRevision(revisionId)) ??
-      (await this.journal.getHistoryRevision(revisionId))
+    const revision = await this.journal.getRetainedRevision(revisionId)
     if (!revision) throw new Error("The selected revision is no longer in local history")
     return revision
   }

@@ -107,9 +107,11 @@ describe("IndexedDB lossless compaction", () => {
     expect(await journal.getCheckpoint()).toMatchObject({ cursor: 2, logHash: "hash-2" })
     expect(await journal.listDeviceRevocations()).toHaveLength(1)
     expect(await journal.listFileRevisions("file-1")).toHaveLength(2)
-    expect((await journal.listHistoryRevisions()).map((item) => item.revisionId)).toEqual([
+    expect((await journal.listRetainedRevisions()).map((item) => item.revisionId)).toEqual([
       "revision-2",
+      "revision-1",
     ])
+    expect(await journal.getRetainedRevision("revision-2")).toMatchObject({ path: "note.md" })
     expect(await journal.listConflicts(true)).toHaveLength(1)
     await expect(journal.compactLocalStorage()).resolves.toEqual({
       completedEntries: 0,
