@@ -69,7 +69,7 @@ Shared packages never import Cloudflare, Obsidian, browser UI, or runtime adapte
 
 - Normal settings show connection, device management, and configuration sync only.
 - Polling, full scans, and mobile-safe file limits use internal automatic policy.
-- New installations sync every eligible vault file. Existing exclusion rules remain enforced as hidden read-only compatibility state.
+- Meridian syncs every eligible vault file. It refuses to start if an upgrade still contains old exclusion rules.
 - History and the sync log stay visible. Technical status, storage, logs, and repair live under Troubleshooting.
 - `SyncController` owns accepted vault-event writes, sync, serialized maintenance, quiescence, and journal lifetime.
 - The scheduler owns only deadlines, debounce, and reconnect policy.

@@ -76,7 +76,7 @@ Open **Meridian status** from the ribbon or command palette:
 - **Devices and recovery** handles pairing, names, revocation, removal, and recovery.
 - **Troubleshooting** contains technical status, a privacy-safe session log, storage details, and repair tools.
 
-Meridian chooses safe polling, scan, and file-size limits automatically. Configuration sync remains customizable in settings. New installations sync every eligible vault file. Upgrades preserve old exclusion rules as hidden compatibility state to prevent unexpected uploads or deletions.
+Meridian chooses safe polling, scan, and file-size limits automatically. Configuration sync remains customizable in settings. Meridian syncs every eligible vault file. If an old installation still has exclusion rules, clear and fully sync them with Meridian 1.11.13 before upgrading.
 
 ## Develop
 

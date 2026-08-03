@@ -118,7 +118,9 @@ Vault events are grouped by normalized path in the IndexedDB `dirty-paths` store
 
 Startup, resume, manual sync, settings changes, repair, and periodic sync still scan every eligible vault file. This recovers missed events, direct file changes, and plugin downtime.
 
-New installations have no selective-sync controls. Existing exclusion rules remain enforced as hidden read-only compatibility state. Removing them without replaying skipped remote heads could upload excluded data or infer false deletions.
+Meridian has no selective-sync controls. Every eligible vault file is synchronized.
+
+Meridian refuses to start if saved settings still contain old exclusion rules. The user must clear those rules and complete a sync with Meridian 1.11.13 before upgrading. This fail-closed step prevents skipped remote heads, unexpected uploads, and false deletions.
 
 ```text
 vault events --> durable dirty paths --> targeted hash ----.

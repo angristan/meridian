@@ -169,7 +169,7 @@ Automated tests use generous time limits to find pathological regressions. They 
 
 - [ ] Normal settings show only Connection, Devices and recovery, Obsidian configuration, and Troubleshooting.
 - [ ] No selective-sync, polling, scan-interval, file-limit, encryption-epoch, storage, pruning, recovery, or repair control appears at the top level.
-- [ ] Existing selective-sync rules remain enforced and appear only as a warning in Troubleshooting.
+- [ ] Saved selective-sync rules block startup and remain available to Meridian 1.11.13 for a safe downgrade and final sync.
 - [ ] Technical logs and copied reports exclude paths, endpoints, device identifiers, raw errors, secrets, and recovery data.
 - [ ] Sync log entries may show paths but never enter copied support data.
 
