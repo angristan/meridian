@@ -5,6 +5,7 @@ import type { ReconciliationCommit } from "../src/storage/contracts"
 import { MemoryJournal } from "../src/storage/memory-journal"
 import { FINGERPRINT_AUDIT_INTERVAL_MS, Reconciler } from "../src/sync/reconciler"
 import { ALL_CATEGORIES, FakeVault } from "./fakes"
+import { seedSnapshots } from "./journal-fixtures"
 
 describe("Reconciler", () => {
   it("queues initial content without storing plaintext in the journal", async () => {
@@ -23,7 +24,7 @@ describe("Reconciler", () => {
     const bytes = new TextEncoder().encode("unchanged").buffer
     const vault = new FakeVault({ "note.md": "unchanged" })
     const journal = new MemoryJournal()
-    await journal.replaceSnapshots([
+    await seedSnapshots(journal, [
       {
         path: "note.md",
         fileId: randomId(),
@@ -47,7 +48,7 @@ describe("Reconciler", () => {
     const original = new TextEncoder().encode("old").buffer
     const vault = new FakeVault({ "note.md": "old" })
     const journal = new MemoryJournal()
-    await journal.replaceSnapshots([
+    await seedSnapshots(journal, [
       {
         path: "note.md",
         fileId: randomId(),
@@ -72,15 +73,9 @@ describe("Reconciler", () => {
     expect(await journal.getLastFingerprintAuditAt()).toBe(now)
   })
 
-  it("uses the initial pending index instead of rescanning the journal per file", async () => {
-    class IndexedPendingJournal extends MemoryJournal {
-      override hasPendingPath(): Promise<boolean> {
-        throw new Error("Reconciliation should not rescan all journal entries")
-      }
-    }
-
+  it("reuses the initial pending index while reconciling files", async () => {
     const vault = new FakeVault({ "note.md": "pending content" })
-    const journal = new IndexedPendingJournal()
+    const journal = new MemoryJournal()
     const fileId = randomId()
     await journal.putEntry({
       id: randomId(),
@@ -137,7 +132,7 @@ describe("Reconciler", () => {
     const baseBytes = new TextEncoder().encode("base").buffer
     const vault = new FakeVault({ "note.md": "local edit" })
     const journal = new MemoryJournal()
-    await journal.replaceSnapshots([
+    await seedSnapshots(journal, [
       {
         path: "note.md",
         fileId: identity,
@@ -199,7 +194,8 @@ describe("Reconciler", () => {
     const files = { "Notes/Example.md": "one", "notes/example.md": "two" }
     const vault = new FakeVault(files)
     const journal = new MemoryJournal()
-    await journal.replaceSnapshots(
+    await seedSnapshots(
+      journal,
       await Promise.all(
         Object.entries(files).map(async ([path, content]) => ({
           path,
@@ -222,7 +218,7 @@ describe("Reconciler", () => {
     const vault = new FakeVault({ "new/name.md": "same content" })
     const journal = new MemoryJournal()
     const bytes = new TextEncoder().encode("same content").buffer
-    await journal.replaceSnapshots([
+    await seedSnapshots(journal, [
       {
         path: "old/name.md",
         fileId: randomId(),
@@ -249,7 +245,7 @@ describe("Reconciler", () => {
     const bytes = new TextEncoder().encode("settings").buffer
     const vault = new FakeVault({ ".config/app.json": "settings" })
     const journal = new MemoryJournal()
-    await journal.replaceSnapshots([
+    await seedSnapshots(journal, [
       {
         path: ".config/app.json",
         fileId: identity,
@@ -279,7 +275,7 @@ describe("Reconciler", () => {
     const bytes = new TextEncoder().encode("private content").buffer
     const vault = new FakeVault({ "Archive/private/note.md": "private content" })
     const journal = new MemoryJournal()
-    await journal.replaceSnapshots([
+    await seedSnapshots(journal, [
       {
         path: "Archive/private/note.md",
         fileId: identity,
@@ -332,7 +328,7 @@ describe("Reconciler", () => {
     const oldBytes = new TextEncoder().encode("old").buffer
     const vault = new IncrementalOnlyVault({ "changed.md": "new", "untouched.md": "same" })
     const journal = new MemoryJournal()
-    await journal.replaceSnapshots([
+    await seedSnapshots(journal, [
       {
         path: "changed.md",
         fileId: "changed-id",
@@ -367,7 +363,7 @@ describe("Reconciler", () => {
     const bytes = new TextEncoder().encode("same content").buffer
     const vault = new FakeVault({ "new/name.md": "same content" })
     const journal = new MemoryJournal()
-    await journal.replaceSnapshots([
+    await seedSnapshots(journal, [
       {
         path: "old/name.md",
         fileId: "stable-id",
@@ -399,7 +395,7 @@ describe("Reconciler", () => {
     const bytes = new TextEncoder().encode("private").buffer
     const vault = new FakeVault()
     const journal = new MemoryJournal()
-    await journal.replaceSnapshots([
+    await seedSnapshots(journal, [
       {
         path: "Archive/private.md",
         fileId: "private-id",
@@ -425,7 +421,7 @@ describe("Reconciler", () => {
     const original = new TextEncoder().encode("original").buffer
     const vault = new FakeVault({ "note.md": "newer edit" })
     const journal = new MemoryJournal()
-    await journal.replaceSnapshots([
+    await seedSnapshots(journal, [
       {
         path: "note.md",
         fileId: "stable-id",
@@ -487,7 +483,7 @@ describe("Reconciler", () => {
 
   it("queues tombstones for disappeared files", async () => {
     const journal = new MemoryJournal()
-    await journal.replaceSnapshots([
+    await seedSnapshots(journal, [
       {
         path: "gone.pdf",
         fileId: randomId(),

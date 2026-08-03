@@ -26,14 +26,10 @@ export interface JournalPort {
   compactLocalStorage(): Promise<LocalCompactionResult>
   putEntry(entry: JournalEntry): Promise<void>
   updateEntry(id: string, state: JournalState, error?: string | null): Promise<void>
-  hasPendingPath(path: string): Promise<boolean>
   putDirtyPath(change: DirtyPath): Promise<void>
   listDirtyPaths(): Promise<DirtyPath[]>
-  consumeDirtyPaths(changes: readonly DirtyPath[]): Promise<void>
-  clearDirtyPaths(): Promise<void>
   commitReconciliation(commit: ReconciliationCommit): Promise<void>
   getSnapshots(): Promise<ReadonlyMap<string, FileSnapshot>>
-  replaceSnapshots(snapshots: FileSnapshot[]): Promise<void>
   putSnapshot(snapshot: FileSnapshot): Promise<void>
   removeSnapshot(path: string): Promise<void>
   getCursor(): Promise<number>

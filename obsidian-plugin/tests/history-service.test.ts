@@ -3,6 +3,7 @@ import { MemoryJournal } from "../src/storage/memory-journal"
 import { HistoryService } from "../src/sync/history-service"
 import { RevisionLoader } from "../src/sync/revision-loader"
 import { FakeCrypto, FakeRemote, FakeVault, TEST_DEVICE } from "./fakes"
+import { seedSnapshots } from "./journal-fixtures"
 
 function service(
   vault: FakeVault,
@@ -20,7 +21,7 @@ describe("HistoryService", () => {
   it("follows stable file identity across renames", async () => {
     const vault = new FakeVault({ "Archive/note.md": "current" })
     const journal = new MemoryJournal()
-    await journal.replaceSnapshots([
+    await seedSnapshots(journal, [
       {
         path: "Archive/note.md",
         fileId: "file-id",
@@ -73,7 +74,7 @@ describe("HistoryService", () => {
     const remote = new FakeRemote()
     const sourceBytes = new TextEncoder().encode("one\nold\nthree").buffer
     remote.blobs.set("source-blob", sourceBytes)
-    await journal.replaceSnapshots([
+    await seedSnapshots(journal, [
       {
         path: "note.md",
         fileId: "file-id",

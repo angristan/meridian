@@ -120,11 +120,6 @@ export class IndexedDbJournal implements JournalPort {
     await done
   }
 
-  async hasPendingPath(path: string): Promise<boolean> {
-    const entries = await this.getAll<JournalEntry>("entries")
-    return entries.some((entry) => entry.path === path && entry.state !== "complete")
-  }
-
   async putDirtyPath(change: DirtyPath): Promise<void> {
     await this.put("dirty-paths", change)
   }
@@ -133,27 +128,6 @@ export class IndexedDbJournal implements JournalPort {
     return (await this.getAll<DirtyPath>("dirty-paths")).sort(
       (left, right) => left.observedAt - right.observedAt || left.path.localeCompare(right.path),
     )
-  }
-
-  async consumeDirtyPaths(changes: readonly DirtyPath[]): Promise<void> {
-    if (changes.length === 0) return
-    const database = this.requireDatabase()
-    const transaction = database.transaction("dirty-paths", "readwrite")
-    const done = transactionDone(transaction)
-    const store = transaction.objectStore("dirty-paths")
-    const current = await requestResult<DirtyPath[]>(store.getAll())
-    const tokenByPath = new Map(current.map((change) => [change.path, change.token]))
-    for (const change of changes) {
-      if (tokenByPath.get(change.path) === change.token) store.delete(change.path)
-    }
-    await done
-  }
-
-  async clearDirtyPaths(): Promise<void> {
-    const database = this.requireDatabase()
-    const transaction = database.transaction("dirty-paths", "readwrite")
-    transaction.objectStore("dirty-paths").clear()
-    await transactionDone(transaction)
   }
 
   async commitReconciliation(commit: ReconciliationCommit): Promise<void> {
@@ -192,18 +166,6 @@ export class IndexedDbJournal implements JournalPort {
   async getSnapshots(): Promise<ReadonlyMap<string, FileSnapshot>> {
     if (!this.snapshotView) throw new Error("Sync journal is not open")
     return this.snapshotView
-  }
-
-  async replaceSnapshots(snapshots: FileSnapshot[]): Promise<void> {
-    const replacements = snapshots.map(cachedSnapshot)
-    const database = this.requireDatabase()
-    const transaction = database.transaction("files", "readwrite")
-    const done = transactionDone(transaction)
-    const store = transaction.objectStore("files")
-    store.clear()
-    for (const snapshot of replacements) store.put(snapshot)
-    await done
-    this.setSnapshotIndex(new Map(replacements.map((snapshot) => [snapshot.path, snapshot])))
   }
 
   async putSnapshot(snapshot: FileSnapshot): Promise<void> {

@@ -10,6 +10,7 @@ import type { OperationApplier } from "../src/sync/operation-applier"
 import { PullEngine } from "../src/sync/pull-engine"
 import { Reconciler } from "../src/sync/reconciler"
 import { ALL_CATEGORIES, FakeVault, TEST_DEVICE } from "./fakes"
+import { seedSnapshots } from "./journal-fixtures"
 
 const RESPONSIVENESS_BUDGET_MS = 10_000
 
@@ -43,7 +44,8 @@ describe("sync responsiveness budgets", () => {
       ),
     )
     const journal = new MemoryJournal()
-    await journal.replaceSnapshots(
+    await seedSnapshots(
+      journal,
       Array.from({ length: fileCount }, (_, index) => ({
         path: `Notes/file-${index}.md`,
         fileId: `file-id-${index}`,
@@ -92,7 +94,8 @@ describe("sync responsiveness budgets", () => {
     const dirtyPath = "Notes/file-5000.md"
     const vault = new OneFileVault({ [dirtyPath]: "edited" })
     const journal = new MemoryJournal()
-    await journal.replaceSnapshots(
+    await seedSnapshots(
+      journal,
       Array.from({ length: 10_000 }, (_, index) => ({
         path: `Notes/file-${index}.md`,
         fileId: `file-id-${index}`,

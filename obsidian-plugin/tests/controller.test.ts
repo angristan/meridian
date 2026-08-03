@@ -22,6 +22,7 @@ import { fingerprint, randomId } from "../src/platform/bytes"
 import { MemoryJournal } from "../src/storage/memory-journal"
 import { SyncController } from "../src/sync/controller"
 import { ALL_CATEGORIES, FakeCrypto, FakeRemote, FakeVault, TEST_DEVICE } from "./fakes"
+import { seedSnapshots } from "./journal-fixtures"
 
 async function seedTrackedText(
   journal: MemoryJournal,
@@ -29,7 +30,7 @@ async function seedTrackedText(
   identity: string,
   baseBytes: ArrayBuffer,
 ): Promise<void> {
-  await journal.replaceSnapshots([
+  await seedSnapshots(journal, [
     {
       path: "note.md",
       fileId: identity,
@@ -1311,7 +1312,7 @@ describe("SyncController", () => {
     })
     const vault = new FakeVault({ "note.md": "newer local edit" })
     const journal = new MemoryJournal()
-    await journal.replaceSnapshots([
+    await seedSnapshots(journal, [
       {
         path: "note.md",
         fileId,
@@ -1679,7 +1680,7 @@ describe("SyncController", () => {
     const baseBytes = new TextEncoder().encode("base content").buffer
     const vault = new CaseInsensitiveVault({ "Note.md": "base content" })
     const journal = new MemoryJournal()
-    await journal.replaceSnapshots([
+    await seedSnapshots(journal, [
       {
         path: "Note.md",
         fileId: identity,
@@ -1920,7 +1921,7 @@ describe("SyncController", () => {
     const identity = randomId()
     const vault = new FakeVault({ "note.md": "ONE\ntwo\n" })
     const journal = new MemoryJournal()
-    await journal.replaceSnapshots([
+    await seedSnapshots(journal, [
       {
         path: "note.md",
         fileId: identity,
@@ -2001,7 +2002,7 @@ describe("SyncController", () => {
     const occupiedBytes = new TextEncoder().encode("occupied content").buffer
     const vault = new FakeVault({ "shared.md": "occupied content" })
     const journal = new MemoryJournal()
-    await journal.replaceSnapshots([
+    await seedSnapshots(journal, [
       {
         path: "shared.md",
         fileId: occupiedIdentity,
@@ -2063,7 +2064,7 @@ describe("SyncController", () => {
     const identity = randomId()
     const vault = new FakeVault({ "note.md": "current content" })
     const journal = new MemoryJournal()
-    await journal.replaceSnapshots([
+    await seedSnapshots(journal, [
       {
         path: "note.md",
         fileId: identity,
@@ -2152,7 +2153,7 @@ describe("SyncController", () => {
     const occupiedBytes = new TextEncoder().encode("occupied content").buffer
     const vault = new FakeVault({ "shared.md": "occupied content" })
     const journal = new MemoryJournal()
-    await journal.replaceSnapshots([
+    await seedSnapshots(journal, [
       {
         path: "shared.md",
         fileId: occupiedIdentity,
@@ -2215,7 +2216,7 @@ describe("SyncController", () => {
     const identity = randomId()
     const vault = new FakeVault({ ".config/app.json": '{"spellcheck":true}' })
     const journal = new MemoryJournal()
-    await journal.replaceSnapshots([
+    await seedSnapshots(journal, [
       {
         path: ".config/app.json",
         fileId: identity,
@@ -2279,7 +2280,7 @@ describe("SyncController", () => {
     const identity = randomId()
     const vault = new FakeVault({ "note.md": "local edit" })
     const journal = new MemoryJournal()
-    await journal.replaceSnapshots([
+    await seedSnapshots(journal, [
       {
         path: "note.md",
         fileId: identity,
@@ -2401,7 +2402,7 @@ describe("SyncController", () => {
     const localBytes = new TextEncoder().encode("local edit").buffer
     const vault = new FakeVault({ "note.md": "local edit" })
     const journal = new InspectingJournal()
-    await journal.replaceSnapshots([
+    await seedSnapshots(journal, [
       {
         path: "note.md",
         fileId: identity,

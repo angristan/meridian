@@ -80,12 +80,6 @@ export class MemoryJournal implements JournalPort {
     })
   }
 
-  async hasPendingPath(path: string): Promise<boolean> {
-    return [...this.entries.values()].some(
-      (entry) => entry.path === path && entry.state !== "complete",
-    )
-  }
-
   async putDirtyPath(change: DirtyPath): Promise<void> {
     this.dirtyPaths.set(change.path, structuredClone(change))
   }
@@ -98,18 +92,6 @@ export class MemoryJournal implements JournalPort {
       .map((change) => structuredClone(change))
   }
 
-  async consumeDirtyPaths(changes: readonly DirtyPath[]): Promise<void> {
-    for (const change of changes) {
-      if (this.dirtyPaths.get(change.path)?.token === change.token) {
-        this.dirtyPaths.delete(change.path)
-      }
-    }
-  }
-
-  async clearDirtyPaths(): Promise<void> {
-    this.dirtyPaths.clear()
-  }
-
   async commitReconciliation(commit: ReconciliationCommit): Promise<void> {
     for (const entry of commit.entries) this.entries.set(entry.id, structuredClone(entry))
     for (const snapshot of commit.putSnapshots) {
@@ -119,17 +101,15 @@ export class MemoryJournal implements JournalPort {
     if (commit.fingerprintAuditedAt !== undefined) {
       this.lastFingerprintAuditAt = commit.fingerprintAuditedAt
     }
-    await this.consumeDirtyPaths(commit.consumeDirtyPaths)
+    for (const change of commit.consumeDirtyPaths) {
+      if (this.dirtyPaths.get(change.path)?.token === change.token) {
+        this.dirtyPaths.delete(change.path)
+      }
+    }
   }
 
   async getSnapshots(): Promise<Map<string, FileSnapshot>> {
     return new Map([...this.snapshots].map(([path, snapshot]) => [path, structuredClone(snapshot)]))
-  }
-
-  async replaceSnapshots(snapshots: FileSnapshot[]): Promise<void> {
-    this.snapshots = new Map(
-      snapshots.map((snapshot) => [snapshot.path, structuredClone(snapshot)]),
-    )
   }
 
   async putSnapshot(snapshot: FileSnapshot): Promise<void> {

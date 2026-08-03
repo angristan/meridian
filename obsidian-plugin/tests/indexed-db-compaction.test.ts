@@ -2,6 +2,7 @@ import "fake-indexeddb/auto"
 import { afterEach, describe, expect, it } from "vitest"
 import type { FileSnapshot, JournalEntry, LocalRevision } from "../src/model"
 import { IndexedDbJournal } from "../src/storage/indexed-db-journal"
+import { seedSnapshots } from "./journal-fixtures"
 
 const databaseNames: string[] = []
 
@@ -187,7 +188,7 @@ describe("IndexedDB lossless compaction", () => {
     })
     expect((await journal.getSnapshots()).size).toBe(0)
 
-    await journal.replaceSnapshots([second])
+    await seedSnapshots(journal, [second])
     journal.close()
     const reopened = new IndexedDbJournal(name)
     await reopened.open()
