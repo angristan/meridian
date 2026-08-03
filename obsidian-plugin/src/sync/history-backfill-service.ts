@@ -1,3 +1,4 @@
+import type { LogFormat } from "@meridian/protocol"
 import type {
   CryptoPort,
   DeviceKeyMaterial,
@@ -10,6 +11,7 @@ import type { JournalPort } from "../storage/contracts"
 import { checkpointFormats, initialCheckpoint } from "./checkpoints"
 import {
   assertRevisionAncestry,
+  repairLegacyTombstoneParents,
   sameRemoteLogEntry,
   sameRevisionIdentity,
 } from "./revision-ancestry"
@@ -93,7 +95,12 @@ export class HistoryBackfillService {
             log.checkpoint,
           )
         } else {
-          revision = await this.inspectFileOperation(currentDevice, operation, type)
+          revision = await this.inspectFileOperation(
+            currentDevice,
+            operation,
+            type,
+            formats.logFormat,
+          )
         }
         log = nextLog
         await this.journal.commitHistoryOperation(revision, log.checkpoint, revocation)
@@ -105,18 +112,20 @@ export class HistoryBackfillService {
     device: DeviceKeyMaterial,
     operation: RemoteOperation,
     type: string,
+    logFormat: LogFormat,
   ): Promise<LocalRevision | null> {
     if (type !== "revision" && type !== "restore" && type !== "tombstone") {
       throw new Error("Complete history contains an unknown operation type")
     }
     const metadata = await this.crypto.inspectRevision(device, operation, Number.MAX_SAFE_INTEGER)
+    const parents = await repairLegacyTombstoneParents(this.journal, metadata, operation, logFormat)
     const revision: LocalRevision = {
       revisionId: metadata.revisionId,
       fileId: metadata.fileId,
       path: metadata.path,
       action: metadata.action,
       previousPath: metadata.previousPath,
-      parents: metadata.parents,
+      parents,
       deviceId: metadata.authorDeviceId,
       createdAt: metadata.createdAt,
       cursor: operation.cursor,

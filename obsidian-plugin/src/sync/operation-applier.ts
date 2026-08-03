@@ -21,9 +21,11 @@ import {
   isSyncablePath,
   pathsCollide,
 } from "../vault/path-policy"
+import { checkpointFormats } from "./checkpoints"
 import { queuedEntry } from "./queued-entry"
 import {
   assertRevisionAncestry,
+  repairLegacyTombstoneParents,
   sameRemoteLogEntry,
   sameRevisionIdentity,
 } from "./revision-ancestry"
@@ -72,13 +74,22 @@ export class OperationApplier {
       return updated
     }
 
-    const revision = await this.crypto.decryptRevision(
+    const decrypted = await this.crypto.decryptRevision(
       device,
       operation,
       this.vault.maxFileBytes(),
       (blobId) => this.remote.getBlob(blobId),
       onBlobProgress,
     )
+    const revision = {
+      ...decrypted,
+      parents: await repairLegacyTombstoneParents(
+        this.journal,
+        decrypted,
+        operation,
+        checkpointFormats(predecessor).logFormat,
+      ),
+    }
     if (await this.validateRevisionGraph(revision, operation)) return device
 
     const category = configCategoryForPath(revision.path, this.vault.configDir)

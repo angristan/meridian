@@ -127,6 +127,144 @@ describe("HistoryBackfillService", () => {
     controller.stop()
   })
 
+  it("repairs the observed legacy cross-file tombstone parent", async () => {
+    const remote = new FakeRemote()
+    remote.addRemoteRevision(
+      {
+        operationId: "foreign-operation",
+        revisionId: "foreign-revision",
+        fileId: "foreign-file",
+        action: "upsert",
+        path: "note.md",
+        previousPath: null,
+        parents: [],
+        authorDeviceId: "other-device",
+        blobId: "foreign-blob",
+        isText: true,
+      },
+      new TextEncoder().encode("foreign").buffer,
+    )
+    remote.addRemoteRevision(
+      {
+        operationId: "root-operation",
+        revisionId: "own-root",
+        fileId: "own-file",
+        action: "upsert",
+        path: "note.md",
+        previousPath: null,
+        parents: [],
+        authorDeviceId: TEST_DEVICE.deviceId,
+        blobId: "root-blob",
+        isText: true,
+      },
+      new TextEncoder().encode("root").buffer,
+    )
+    remote.addRemoteRevision(
+      {
+        operationId: "head-operation",
+        revisionId: "own-head",
+        fileId: "own-file",
+        action: "upsert",
+        path: "note.md",
+        previousPath: null,
+        parents: ["own-root"],
+        authorDeviceId: TEST_DEVICE.deviceId,
+        blobId: "head-blob",
+        isText: true,
+      },
+      new TextEncoder().encode("head").buffer,
+    )
+    const legacyDelete = {
+      revisionId: "legacy-delete",
+      fileId: "own-file",
+      action: "delete" as const,
+      path: "note.md",
+      previousPath: null,
+      parents: ["foreign-revision"],
+      authorDeviceId: TEST_DEVICE.deviceId,
+      epochId: "epoch-id",
+      envelope: "same-signed-legacy-delete",
+      blobId: null,
+      isText: true,
+    }
+    remote.addRemoteRevision({ ...legacyDelete, operationId: "delete-operation" }, null)
+    remote.addRemoteRevision({ ...legacyDelete, operationId: "delete-retry-operation" }, null)
+    const journal = new MemoryJournal()
+    await journal.setCheckpoint({ cursor: 5, logHash: "hash-5" })
+
+    await new HistoryBackfillService(journal, remote, new FakeCrypto()).backfill(TEST_DEVICE)
+
+    expect(await journal.getHistoryCheckpoint()).toMatchObject({ cursor: 5 })
+    expect(await journal.getRetainedRevision("legacy-delete")).toMatchObject({
+      cursor: 4,
+      fileId: "own-file",
+      parents: ["own-head"],
+      tombstone: true,
+    })
+  })
+
+  it("rejects the same cross-file tombstone in canonical history", async () => {
+    const remote = new FakeRemote()
+    remote.addRemoteRevision(
+      {
+        operationId: "foreign-operation",
+        revisionId: "foreign-revision",
+        fileId: "foreign-file",
+        action: "upsert",
+        path: "note.md",
+        previousPath: null,
+        parents: [],
+        authorDeviceId: "other-device",
+        blobId: "foreign-blob",
+        isText: true,
+      },
+      new TextEncoder().encode("foreign").buffer,
+    )
+    remote.addRemoteRevision(
+      {
+        operationId: "root-operation",
+        revisionId: "own-root",
+        fileId: "own-file",
+        action: "upsert",
+        path: "note.md",
+        previousPath: null,
+        parents: [],
+        authorDeviceId: TEST_DEVICE.deviceId,
+        blobId: "root-blob",
+        isText: true,
+      },
+      new TextEncoder().encode("root").buffer,
+    )
+    remote.addLogFormatTransition()
+    remote.addRemoteRevision(
+      {
+        operationId: "delete-operation",
+        revisionId: "canonical-delete",
+        fileId: "own-file",
+        action: "delete",
+        path: "note.md",
+        previousPath: null,
+        parents: ["foreign-revision"],
+        authorDeviceId: TEST_DEVICE.deviceId,
+        blobId: null,
+        isText: true,
+      },
+      null,
+    )
+    const journal = new MemoryJournal()
+    await journal.setCheckpoint({
+      cursor: 4,
+      logHash: "hash-4",
+      initialLogFormat: "legacy-http-v1",
+      logFormat: "canonical-cbor-v1",
+    })
+
+    await expect(
+      new HistoryBackfillService(journal, remote, new FakeCrypto()).backfill(TEST_DEVICE),
+    ).rejects.toThrow("Remote revision parent belongs to another file")
+    expect(await journal.getHistoryCheckpoint()).toMatchObject({ cursor: 3 })
+  })
+
   it("does not backfill operations beyond the live checkpoint", async () => {
     const remote = new FakeRemote()
     addHistory(remote)
