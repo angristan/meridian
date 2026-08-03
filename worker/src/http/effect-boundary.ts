@@ -47,6 +47,20 @@ export function decodeJsonEffect<S extends Schema.ConstraintDecoder<unknown, nev
   })
 }
 
+export function decodeJsonResponseEffect<S extends Schema.ConstraintDecoder<unknown, never>>(
+  response: Response,
+  schema: S,
+  invalidResponse: HttpError,
+) {
+  return Effect.tryPromise({
+    try: () => response.json() as Promise<unknown>,
+    catch: () => invalidResponse,
+  }).pipe(
+    Effect.flatMap(Schema.decodeUnknownEffect(schema, { onExcessProperty: "error" })),
+    Effect.mapError(() => invalidResponse),
+  )
+}
+
 async function readBoundedBody(request: Request): Promise<string> {
   if (!request.body) return ""
 

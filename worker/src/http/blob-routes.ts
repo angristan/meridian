@@ -1,14 +1,17 @@
 import { tracing } from "cloudflare:workers"
 import * as Effect from "effect/Effect"
+import * as Schema from "effect/Schema"
 import { HttpError } from "../errors"
-import { runHttpEffect } from "./effect-boundary"
+import { decodeJsonResponseEffect, runHttpEffect } from "./effect-boundary"
 import { requiredParam } from "./request"
-import { extractSessionToken, validateSessionEffect } from "./session"
+import { extractSessionToken } from "./session"
 import { observeStreamOutcome, type StreamOutcome } from "./stream-lifecycle"
 import type { WorkerApp } from "./types"
 import { callVaultEffect } from "./vault-proxy"
 
 const MAX_BLOB_BYTES = 10 * 1024 * 1024
+const BlobClaimSchema = Schema.Struct({ exists: Schema.Boolean, key: Schema.String })
+const BlobAccessSchema = Schema.Struct({ key: Schema.String })
 
 function validateBlobId(blobId: string): void {
   if (!/^[A-Za-z0-9_-]{16,128}$/.test(blobId)) {
@@ -21,7 +24,6 @@ export function registerBlobRoutes(app: WorkerApp): void {
     runHttpEffect(
       Effect.gen(function* () {
         const token = extractSessionToken(c.req.raw)
-        const auth = yield* validateSessionEffect(c.env, token)
         const blobId = requiredParam(c, "blobId")
         validateBlobId(blobId)
         const contentType = c.req.header("content-type")?.toLowerCase() ?? ""
@@ -68,21 +70,16 @@ export function registerBlobRoutes(app: WorkerApp): void {
           token,
         )
         if (!claim.ok) return claim
-        const claimBody = yield* Effect.tryPromise({
-          try: () => claim.json<unknown>(),
-          catch: () => new HttpError(503, "vault_unavailable", "Blob reservation was invalid"),
-        })
-        if (!isRecord(claimBody) || typeof claimBody.exists !== "boolean") {
-          return yield* Effect.fail(
-            new HttpError(503, "vault_unavailable", "Blob reservation was invalid"),
-          )
-        }
+        const claimBody = yield* decodeJsonResponseEffect(
+          claim,
+          BlobClaimSchema,
+          new HttpError(503, "vault_unavailable", "Blob reservation was invalid"),
+        )
         if (claimBody.exists) return new Response(null, { status: 204 })
 
-        const key = `vaults/${auth.vaultId}/blobs/${blobId}`
         const stored = yield* Effect.tryPromise({
           try: () =>
-            c.env.BLOBS.put(key, c.req.raw.body, {
+            c.env.BLOBS.put(claimBody.key, c.req.raw.body, {
               onlyIf: { etagDoesNotMatch: "*" },
               httpMetadata: { contentType: "application/octet-stream" },
             }),
@@ -113,10 +110,22 @@ export function registerBlobRoutes(app: WorkerApp): void {
   app.get("/v1/blobs/:blobId", (c) =>
     runHttpEffect(
       Effect.gen(function* () {
-        const auth = yield* validateSessionEffect(c.env, extractSessionToken(c.req.raw))
+        const token = extractSessionToken(c.req.raw)
         const blobId = requiredParam(c, "blobId")
         validateBlobId(blobId)
-        const key = `vaults/${auth.vaultId}/blobs/${blobId}`
+        const access = yield* callVaultEffect(
+          c.env,
+          `/internal/blobs/${encodeURIComponent(blobId)}/access`,
+          "GET",
+          undefined,
+          token,
+        )
+        if (!access.ok) return access
+        const { key } = yield* decodeJsonResponseEffect(
+          access,
+          BlobAccessSchema,
+          new HttpError(503, "vault_unavailable", "Blob access was invalid"),
+        )
         const object = yield* Effect.tryPromise({
           try: () => c.env.BLOBS.get(key),
           catch: () => new HttpError(503, "blob_store_unavailable", "Blob download failed"),
@@ -150,8 +159,4 @@ export function registerBlobRoutes(app: WorkerApp): void {
       }),
     ),
   )
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
 }

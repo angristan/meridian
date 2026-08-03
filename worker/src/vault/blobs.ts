@@ -17,6 +17,12 @@ export class VaultBlobs {
     private readonly transactionSync: <T>(callback: () => T) => T,
   ) {}
 
+  async accessBlob(request: Request, blobId: string): Promise<Response> {
+    assertIdentifier(blobId, "blobId")
+    const session = await authenticate(this.sql, request)
+    return json({ key: `vaults/${session.vaultId}/blobs/${blobId}` })
+  }
+
   async claimBlob(request: Request, blobId: string): Promise<Response> {
     assertIdentifier(blobId, "blobId")
     const session = await authenticate(this.sql, request)
@@ -33,7 +39,7 @@ export class VaultBlobs {
         new HttpError(409, "blob_deleting", "Blob cleanup is in progress; retry the upload"),
       )
       this.recoverDeletedBlobForUpload(blobId, expectedSize, session.deviceId)
-      return json({ exists: false })
+      return json({ exists: false, key })
     }
 
     this.reserveBlobUpload(blobId, expectedSize, session.deviceId)
@@ -45,10 +51,10 @@ export class VaultBlobs {
       )
       this.rememberStoredBlob(blobId, existingObject.size)
       this.rememberBlobClaim(blobId, existingObject.size, session.deviceId)
-      return json({ exists: true })
+      return json({ exists: true, key })
     }
 
-    return json({ exists: false })
+    return json({ exists: false, key })
   }
 
   async finalizeBlob(request: Request, blobId: string): Promise<Response> {

@@ -456,7 +456,7 @@ describe("deterministic Worker fault injection", () => {
         blobId,
       )
       expect(claim.status).toBe(200)
-      await expect(claim.json()).resolves.toEqual({ exists: false })
+      await expect(claim.json()).resolves.toEqual({ exists: false, key: blobKey })
       expect(
         state.storage.sql
           .exec<{ expected_size: number }>(
