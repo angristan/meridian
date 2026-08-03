@@ -1,3 +1,10 @@
+## [1.12.5](https://github.com/angristan/meridian/compare/1.12.4...1.12.5) (2026-08-03)
+
+
+### Bug Fixes
+
+* repair legacy tombstone ancestry ([3b09251](https://github.com/angristan/meridian/commit/3b09251fffa5e3cf7dd5d866f12cea55a2c5fd8a))
+
 ## [1.12.4](https://github.com/angristan/meridian/compare/1.12.3...1.12.4) (2026-08-03)
 
 
