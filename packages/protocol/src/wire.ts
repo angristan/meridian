@@ -361,7 +361,9 @@ export function checkpointBodyToCbor(body: CheckpointBody): CborValue {
   }
 }
 
-export function checkpointLogFormats(body: CheckpointBody): {
+export function checkpointLogFormats(
+  body: Pick<CheckpointBody, "initialLogFormat" | "logFormat">,
+): {
   initialLogFormat: LogFormat
   logFormat: LogFormat
 } {

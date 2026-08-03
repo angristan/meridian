@@ -7,6 +7,7 @@ import type {
 } from "../model"
 import { MeridianHttpError } from "../network/response-parsers"
 import type { JournalPort } from "../storage/contracts"
+import { checkpointFormats } from "./checkpoints"
 
 export interface EpochTransitionStore {
   load(): EpochTransitionMaterial | null
@@ -104,6 +105,6 @@ export class EpochTransitionCoordinator {
     device: DeviceKeyMaterial,
   ): Promise<"legacy-http-v1" | "canonical-cbor-v1"> {
     const checkpoint = (await this.journal.getCheckpoint()) ?? device.trustedCheckpoint
-    return checkpoint.logFormat ?? "legacy-http-v1"
+    return checkpointFormats(checkpoint).logFormat
   }
 }

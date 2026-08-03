@@ -6,9 +6,9 @@ import type {
   RemotePort,
   TrustedCheckpoint,
 } from "../model"
-import { toBase64Url } from "../platform/bytes"
 import { yieldToEventLoop } from "../platform/scheduling"
 import type { JournalPort } from "../storage/contracts"
+import { checkpointFormats, INITIAL_LOG_HASH } from "./checkpoints"
 import type { OperationApplier } from "./operation-applier"
 
 export interface PullResult {
@@ -41,7 +41,7 @@ export class PullEngine {
     if (startCursor > 0 && startingCheckpoint?.cursor !== startCursor) {
       throw new Error("Local operation log checkpoint is missing")
     }
-    let previousHash = startingCheckpoint?.logHash ?? toBase64Url(new Uint8Array(32))
+    let previousHash = startingCheckpoint?.logHash ?? INITIAL_LOG_HASH
     const trustedFormats = checkpointFormats(device.trustedCheckpoint)
     const startingFormats = startingCheckpoint
       ? checkpointFormats(startingCheckpoint)
@@ -130,16 +130,6 @@ export class PullEngine {
         throw new Error("Server omitted operations before its advertised latest cursor")
       }
     }
-  }
-}
-
-function checkpointFormats(checkpoint: TrustedCheckpoint): {
-  initialLogFormat: LogFormat
-  logFormat: LogFormat
-} {
-  return {
-    initialLogFormat: checkpoint.initialLogFormat ?? "legacy-http-v1",
-    logFormat: checkpoint.logFormat ?? "legacy-http-v1",
   }
 }
 

@@ -1,4 +1,4 @@
-import { mergeUtf8Text } from "@meridian/sync-engine"
+import { mergeUtf8Text } from "@meridian/sync-engine/text-merge"
 import type {
   BlobTransferProgress,
   ConfigCategory,

@@ -27,6 +27,7 @@ import {
 } from "../platform/storage-estimate"
 import type { JournalPort } from "../storage/contracts"
 import { normalizeVaultPath } from "../vault/path-policy"
+import { checkpointFormats } from "./checkpoints"
 import { ConflictService } from "./conflict-service"
 import {
   EpochTransitionCoordinator,
@@ -137,18 +138,12 @@ export class SyncController {
     await this.journal.compactLocalStorage()
     const localCheckpoint = await this.journal.getCheckpoint()
     if (localCheckpoint?.cursor === device.trustedCheckpoint.cursor) {
-      const localFormats = {
-        initial: localCheckpoint.initialLogFormat ?? "legacy-http-v1",
-        current: localCheckpoint.logFormat ?? "legacy-http-v1",
-      }
-      const trustedFormats = {
-        initial: device.trustedCheckpoint.initialLogFormat ?? "legacy-http-v1",
-        current: device.trustedCheckpoint.logFormat ?? "legacy-http-v1",
-      }
+      const localFormats = checkpointFormats(localCheckpoint)
+      const trustedFormats = checkpointFormats(device.trustedCheckpoint)
       if (
         localCheckpoint.logHash !== device.trustedCheckpoint.logHash ||
-        localFormats.initial !== trustedFormats.initial ||
-        localFormats.current !== trustedFormats.current
+        localFormats.initialLogFormat !== trustedFormats.initialLogFormat ||
+        localFormats.logFormat !== trustedFormats.logFormat
       ) {
         throw new Error("Local checkpoint conflicts with the signed device checkpoint")
       }
@@ -712,14 +707,15 @@ function retentionAcknowledgementKey(
   device: DeviceKeyMaterial,
   checkpoint: TrustedCheckpoint,
 ): string {
+  const formats = checkpointFormats(checkpoint)
   return JSON.stringify([
     device.vaultId,
     device.deviceId,
     device.epochId,
     checkpoint.cursor,
     checkpoint.logHash,
-    checkpoint.initialLogFormat ?? "legacy-http-v1",
-    checkpoint.logFormat ?? "legacy-http-v1",
+    formats.initialLogFormat,
+    formats.logFormat,
   ])
 }
 

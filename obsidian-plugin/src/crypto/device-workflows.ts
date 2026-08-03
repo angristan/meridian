@@ -120,10 +120,10 @@ export async function refreshTrustedCheckpoint(
     throw new Error("Trusted checkpoint hash conflicts at the same cursor")
   }
   const currentFormats = checkpointLogFormats(bundle.checkpoint.body)
-  const nextFormats = {
-    initialLogFormat: checkpoint.initialLogFormat ?? currentFormats.initialLogFormat,
-    logFormat: checkpoint.logFormat ?? currentFormats.logFormat,
-  }
+  const nextFormats =
+    checkpoint.initialLogFormat === undefined && checkpoint.logFormat === undefined
+      ? currentFormats
+      : checkpointLogFormats(checkpoint)
   if (
     currentFormats.logFormat === LogFormat.CanonicalCborV1 &&
     nextFormats.logFormat === LogFormat.LegacyHttpV1

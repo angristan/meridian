@@ -71,8 +71,14 @@ describe("log format transitions", () => {
     })
   })
 
-  it("round-trips format-aware checkpoints and rejects downgrade", () => {
+  it("round-trips format-aware checkpoints and rejects incomplete or downgraded state", () => {
     expect(decodeCheckpoint(encodeCheckpoint(checkpoint(true)))).toEqual(checkpoint(true))
+    expect(() => checkpointLogFormats({ initialLogFormat: LogFormat.LegacyHttpV1 })).toThrow(
+      /present together/,
+    )
+    expect(() => checkpointLogFormats({ logFormat: LogFormat.CanonicalCborV1 })).toThrow(
+      /present together/,
+    )
     expect(() =>
       encodeCheckpoint({
         ...checkpoint(true),

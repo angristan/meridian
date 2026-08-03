@@ -6,8 +6,8 @@ import type {
   RemotePort,
   TrustedCheckpoint,
 } from "../model"
-import { toBase64Url } from "../platform/bytes"
 import type { JournalPort } from "../storage/contracts"
+import { checkpointFormats, initialCheckpoint } from "./checkpoints"
 
 export interface HistoryBackfillResult {
   added: number
@@ -25,15 +25,9 @@ export class HistoryBackfillService {
     if (!device.trustedCheckpointAuthorized) {
       throw new Error("Re-pair this legacy device before downloading complete history")
     }
-    const trustedInitialFormat = device.trustedCheckpoint.initialLogFormat ?? "legacy-http-v1"
+    const trustedInitialFormat = checkpointFormats(device.trustedCheckpoint).initialLogFormat
     let checkpoint =
-      (await this.journal.getHistoryCheckpoint()) ??
-      ({
-        cursor: 0,
-        logHash: toBase64Url(new Uint8Array(32)),
-        initialLogFormat: trustedInitialFormat,
-        logFormat: trustedInitialFormat,
-      } satisfies TrustedCheckpoint)
+      (await this.journal.getHistoryCheckpoint()) ?? initialCheckpoint(trustedInitialFormat)
     let targetCursor: number | null = null
     let added = 0
     while (targetCursor === null || checkpoint.cursor < targetCursor) {
@@ -51,11 +45,12 @@ export class HistoryBackfillService {
         if (operation.cursor !== checkpoint.cursor + 1) {
           throw new Error(`History is discontinuous at cursor ${operation.cursor}`)
         }
+        const formats = checkpointFormats(checkpoint)
         await this.crypto.verifyOperationLogLink(
           device,
           operation,
           checkpoint.logHash,
-          checkpoint.logFormat ?? "legacy-http-v1",
+          formats.logFormat,
         )
         if (
           operation.cursor === device.trustedCheckpoint.cursor &&
@@ -67,8 +62,8 @@ export class HistoryBackfillService {
         const nextCheckpoint: TrustedCheckpoint = {
           cursor: operation.cursor,
           logHash: operation.logHash,
-          initialLogFormat: checkpoint.initialLogFormat ?? "legacy-http-v1",
-          logFormat: inspected.nextLogFormat ?? checkpoint.logFormat ?? "legacy-http-v1",
+          initialLogFormat: formats.initialLogFormat,
+          logFormat: inspected.nextLogFormat ?? formats.logFormat,
         }
         await this.journal.commitHistoryOperation(inspected.revision, nextCheckpoint)
         if (inspected.revision) added += 1
