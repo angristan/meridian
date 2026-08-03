@@ -1,116 +1,155 @@
 # Architecture
 
-Meridian keeps protocol semantics independent from Cloudflare and Obsidian adapters.
+Meridian keeps protocol rules separate from Cloudflare and Obsidian code.
 
 ```text
-packages/protocol
-   ↑          ↑
-packages/crypto   packages/sync-engine
-   ↑          ↑
-   ├─ worker  └─ obsidian-plugin
-   └─ obsidian-plugin
+worker ---------> packages/crypto --------> packages/protocol
+                        ^                         ^
+obsidian-plugin -------'                         |
+       `------------> packages/sync-engine ------'
 
-Worker → one Vault Durable Object → SQLite metadata
-       └───────────────────────→ private R2 ciphertext
+Worker --> one Vault Durable Object --> SQLite metadata
+       `-----------------------------> private R2 ciphertext
 ```
+
+## Safety boundaries
+
+- Durable Object SQLite is the only authority for ordered remote metadata.
+- R2 stores immutable encrypted chunks only.
+- The plugin owns plaintext vault changes and local durability.
+- WebSockets are hints. Authenticated HTTP pull is authoritative.
+
+See [Protocol](protocol.md) for wire and cryptographic rules.
 
 ## Shared packages
 
-- `packages/protocol` owns canonical wire formats, branded identifiers, signed HTTP request framing, log rules, and downgrade policy.
-- `packages/crypto` owns standard-primitive composition, key lifecycle, certificates, pairing, recovery, and encrypted revisions.
-- `packages/sync-engine` is the simulator reference model and owns the deterministic text merge also used by production.
-- `packages/test-simulator` exercises convergence and no-silent-loss invariants independently from either runtime.
+- `packages/protocol` owns wire formats, typed identifiers, HTTP signing bytes, log rules, and downgrade policy.
+- `packages/crypto` owns key lifecycle, certificates, pairing, recovery, and encrypted revisions.
+- `packages/sync-engine` owns the reference sync model and production text merge.
+- `packages/test-simulator` tests convergence and no silent data loss independently.
 
 Dependencies point toward these packages. They never import Worker, Cloudflare, Obsidian, or browser UI code.
 
 ## Worker
 
-`worker/src/index.ts` is the Hono composition root. Modules under `worker/src/http/` own public routes, bounded Effect Schema decoding, HTTP responses, setup-token checks, R2 streaming, and WebSocket upgrades. Normal vault calls cross one typed Durable Object RPC boundary. The only internal `fetch()` call is the WebSocket upgrade because it requires `Request` and `Response` upgrade semantics.
+`worker/src/index.ts` connects the Worker with Hono. Modules in `worker/src/http/` own public routes, bounded body reads, Effect Schema decoding, responses, setup checks, R2 streaming, and WebSocket upgrades.
 
-`VaultDurableObject` remains the single coordination boundary for a deployment. Its RPC methods receive decoded values and explicit session tokens, then return serializable success or error envelopes. SQL authentication and revocation checks remain authoritative inside the object. Its modules are split by domain:
+Normal vault calls use typed remote procedure calls (RPC). This means that the Worker calls named methods on the Durable Object. `VaultDurableObject.fetch()` handles WebSocket upgrades only because upgrades need its `Request` and `Response` behavior.
 
-- `vault/setup.ts`, `sessions.ts`, and `recovery.ts`: identity lifecycle;
-- `vault/pairing.ts`: device registry and pairing;
-- `vault/operations.ts`: ordered idempotent log and revocation;
-- `vault/records.ts`: checkpoints and snapshots;
-- `vault/notifications.ts`: hibernating WebSockets;
-- `vault/migrations.ts`: ordered SQLite schema migrations;
-- `vault/signing.ts`: Worker adapters around shared protocol signing bytes.
+One `VaultDurableObject` coordinates the deployment. Its RPC methods take validated values and session tokens. They return plain success or error values. Its SQL checks are authoritative for authentication and revocation.
 
-The Durable Object owns authoritative transactions. Extracted modules receive decoded domain values plus explicit SQLite and transaction capabilities; they do not parse HTTP, introduce independent state, or add locks. Hono converts RPC results back to the existing public status codes and JSON error contract.
+| Module | Owns |
+| --- | --- |
+| `vault/setup.ts`, `sessions.ts`, `recovery.ts` | Identity lifecycle |
+| `vault/pairing.ts` | Devices and pairing |
+| `vault/operations.ts` | Ordered, safe-to-retry log and revocation |
+| `vault/records.ts` | Checkpoints and snapshots |
+| `vault/notifications.ts` | Hibernating WebSockets |
+| `vault/migrations.ts` | Ordered SQLite migrations |
+| `vault/signing.ts` | Adapters for shared signing bytes |
+
+The Durable Object owns authoritative transactions. Domain modules get decoded values and explicit SQLite and transaction access. They do not parse HTTP, create separate state, or add locks. Hono maps results to current public status codes and JSON errors.
 
 ## Obsidian plugin
 
-`src/main.ts` is the Obsidian composition root. `src/plugin/` owns settings, protocol handlers, secret naming, vault events, resume behavior, and scheduling.
-
-The sync path is divided into explicit services:
+`src/main.ts` connects the plugin. `src/plugin/` owns settings, protocol handlers, secret names, vault events, resume behavior, and scheduling.
 
 ```text
 SyncController
-  ├─ Reconciler
-  ├─ PullEngine → OperationApplier → RevisionLoader
-  ├─ PushEngine
-  └─ HistoryService → RevisionLoader
+  |-- Reconciler
+  |-- PullEngine --> OperationApplier --> RevisionLoader
+  |-- PushEngine
+  `-- HistoryService --> RevisionLoader
 ```
 
-- `src/crypto/` owns device, pairing, revision, and Worker wire workflows. A stateless typed object supplies `CryptoPort` at the composition root.
-- `src/network/` separates the portable client, response parsing, one-shot WebSocket connections, transport contract, and Obsidian transport. The plugin scheduler owns reconnect timing.
-- `src/storage/` separates contracts, IndexedDB, memory tests, migrations, and IDB helpers.
-- `src/ui/` separates status, settings, connection/recovery, history/conflicts, and device/pairing views.
+- `src/crypto/` owns device, pairing, revision, and Worker wire workflows.
+- `src/network/` owns the portable client, response parsing, one-shot WebSockets, and transports.
+- `src/storage/` owns contracts, IndexedDB, memory tests, migrations, and helpers.
+- `src/ui/` owns status, settings, recovery, history, conflicts, devices, and pairing views.
 
-Consumers import these owning modules directly. State-free compatibility barrels are not part of the runtime architecture.
+A stateless typed object provides `CryptoPort`. The scheduler owns reconnect timing. Consumers import owner modules directly.
 
-### Crash-safe epoch changes
+## Crash-safe key changes
 
-The Durable Object commits an epoch transition, authoritative epoch ID/sequence, recovery-package CAS, and pairing fence in one SQLite transaction. The signed transition carries one HPKE key package for each active device.
+A key epoch is one key generation. One SQLite transaction commits the transition, epoch ID and sequence, recovery-package update, and pairing fence. The recovery update succeeds only if the old state still matches. The signed transition has one encrypted key package for each active device.
 
-On pull, SecretStorage is the authoritative key state and IndexedDB is the recoverable log cursor:
+SecretStorage is the authority for keys. IndexedDB stores a recoverable log cursor.
 
 ```text
-verify transition -> decrypt recipient key -> replace complete device secret
-                  -> invalidate old prepared ciphertext -> advance IndexedDB cursor
+verify --> decrypt key --> replace full secret
+       --> invalidate old prepared ciphertext --> advance cursor
 ```
 
-A crash before secret replacement leaves the old cursor and replays the transition. A crash after secret replacement but before cursor advancement replays idempotently with the successor keyring. The cursor never passes a transition unless the successor secret is readable. Prepared revision plaintext is retained for successor-epoch re-encryption.
+A crash before secret replacement keeps the old cursor. The transition replays. A crash after replacement but before cursor advance replays safely with the next keyring. The cursor never passes an unreadable next secret. Prepared plaintext stays available for encryption with the next epoch.
 
-### Coordinated retention and upload integrity
+## Remote storage safety
 
-Committed user history has infinite retention. Signed device acknowledgements report the exact durable cursor/hash and current epoch for every active device, but are telemetry only. The client persists the last accepted acknowledgement identity and signs again only after the checkpoint or epoch changes. Acknowledgements cannot authorize truncation without an authenticated generation-aware archive and rebootstrap path.
+Committed history has infinite retention. Signed acknowledgements report each active device's durable cursor, hash, and epoch. They are status data only. The client signs again only after its accepted checkpoint or epoch changes. Acknowledgements cannot allow truncation without an authenticated archive and a safe way to restart a device from it.
 
 ```text
-upload request -> DO upload claim -> immutable R2 PUT -> DO confirmation
-                                                     |
-file operation commit <--- requires every blob ------┘
+request --> SQL upload claim --> immutable R2 PUT --> confirmation
+                                                        |
+operation commit <-------- every blob required ----------'
 ```
 
-The Durable Object reconciles an R2 blob catalog when storage is inspected. Upload and provisional commit claims protect in-flight blobs from orphan cleanup. Cleanup installs a SQL deletion fence before deleting from R2, while commits reserve each blob before awaiting R2. These fences allow unrelated requests and WebSockets to continue while R2 deletion is pending. A revision cannot commit until every referenced blob is confirmed in R2 and its claim is rechecked in the operation transaction. If execution stops after R2 deletion but before SQL cleanup, the next upload confirms that the object is absent and atomically converts the stranded fence into a new upload claim. Attachment uploads and downloads use at most four concurrent chunk transfers. A started revision upload still reaches its commit boundary before pause.
+The Durable Object reconciles its R2 blob catalog during storage inspection. Upload and temporary commit claims protect in-flight blobs from cleanup.
 
-IndexedDB compaction deletes only completed upload entries and history rows that exactly duplicate retained revision rows. It works in independent transactions of at most 500 deletions. Pending/prepared operations, dirty event tokens, DAG ancestry, conflicts, checkpoints, revocations, and file history remain untouched. Revision stores have `fileId` indexes, and the legacy stable-ID migration records an atomic completion marker instead of rescanning every startup. The journal hydrates one immutable in-memory snapshot index when it opens and updates it only after successful IndexedDB transactions, avoiding repeated `files.getAll()` deserialization. A pushed revision, its snapshot changes, and its completed journal entry commit in one transaction. A pulled revision, its snapshot and conflict changes, and affected entries also commit together. Checkpoint advancement remains a later transaction. Pull replay repairs matching prepared state before advancing the checkpoint, so older interrupted writes also recover safely. An outgoing entry whose server receipt was lost may remain pending past that checkpoint, then finish through an exact idempotent retry. If a later pulled revision directly descends from it, Meridian first completes the already-committed pending entry instead of reporting a false conflict.
+Cleanup installs a SQL deletion fence before R2 deletion. Commits reserve blobs before waiting for R2. These fences do not block unrelated requests or WebSockets. A revision commits only after every blob is confirmed in R2 and its claim is checked again in the operation transaction.
 
-### Responsive local indexing
+A crash can leave a fence after R2 deletion. The next upload confirms that the object is absent. It atomically changes the fence into a new upload claim.
 
-Obsidian create, modify, delete, and rename events are coalesced by normalized path in the IndexedDB `dirty-paths` store before synchronization starts. Routine file-event and notification syncs scan only those paths. Journal entries, file snapshots, and consumed event tokens commit in one IndexedDB transaction; an event replaced during reconciliation therefore remains queued for the next pass.
+Uploads and downloads use at most four concurrent chunks. A started revision upload reaches its commit boundary before pause.
 
-Startup, resume, manual sync, settings changes, repair, and the periodic interval retain a complete vault scan. These scans recover events missed during suspension, crashes, direct filesystem changes, and plugin downtime. Local exclusions remain device-local during both scan modes.
+## Local storage safety
+
+Compaction deletes only completed uploads and history rows that exactly duplicate retained revision rows. Each transaction does at most 500 deletions. It keeps pending work, dirty tokens, revision graph ancestry, conflicts, checkpoints, revocations, and file history.
+
+Revision stores have `fileId` indexes. The legacy stable-ID migration saves one atomic completion marker. It does not rescan on every start.
+
+The journal loads one immutable snapshot index when it opens. It updates the index only after successful IndexedDB transactions. This avoids repeated `files.getAll()` reads.
+
+A pushed revision, snapshot changes, and completed journal entry commit together. A pulled revision, snapshot and conflict changes, and affected entries also commit together. The checkpoint advances later, after all local effects are durable.
+
+Pull replay repairs matching prepared state before checkpoint advance. A lost server reply can leave a committed outgoing entry pending after that checkpoint. An exact retry completes it without a duplicate. If a later pull directly descends from it, Meridian completes the pending entry before it can report a false conflict.
+
+## Local indexing
+
+Vault events are grouped by normalized path in the IndexedDB `dirty-paths` store. Routine event and notification sync checks only those paths. Journal entries, snapshots, and consumed event tokens commit together. An event replaced during reconciliation stays queued.
+
+Startup, resume, manual sync, settings changes, repair, and periodic sync still scan the full vault. This recovers missed events, direct file changes, and plugin downtime. Exclusions stay local to each device.
 
 ```text
-Obsidian events -> durable dirty paths -> targeted hash ---┐
-       periodic/startup metadata inventory -----------------┤
-       daily complete fingerprint audit --------------------┤
-                                                            v
-editor: Vault API reads/writes + final CAS      Worker: transferred-buffer hash
-cooperative main-thread planner: collision, removal, and rename index
+vault events --> durable dirty paths --> targeted hash ----.
+startup or periodic metadata scan ------------------------+--> plan
+complete daily fingerprint audit -------------------------'
+
+Editor: Vault API reads and writes, then final state check
+Worker: SHA-256 of transferred buffers only
+Planner: collision, removal, and rename work with bounded yields
 ```
 
-Periodic and startup reconciliation reuse stored fingerprints when path, size, modification time, and file kind match. New or metadata-changed files are read and hashed. When the complete path and fingerprint index is unchanged, reconciliation bypasses rename and collision planning after a linear collision check. A daily complete fingerprint audit detects same-size changes with preserved timestamps. The browser Worker receives required file buffers as transferables and performs SHA-256 fingerprinting away from the renderer. It never calls Obsidian APIs. Collision, removal, and rename planning use one implementation with bounded event-loop yields on every platform. Platforms that reject Blob Workers hash on the main thread. Pause and unload terminate pending Worker work; token-safe dirty records remain recoverable. Local index repair runs through the same maintenance owner as synchronization, so it cannot clear the live snapshot index during reconciliation.
+Startup and periodic scans reuse a fingerprint when path, size, modification time, and file kind match. Other files are read and hashed. If the full path and fingerprint index is unchanged, Meridian skips rename and collision planning after a linear collision check. A daily full audit finds same-size changes with unchanged timestamps.
 
-One exact deadline timer replaces periodic scheduler ticks. Short edit bursts wait 1.5 seconds, rapid events coalesce for up to five seconds, and a pending batch gets a best-effort flush when the app becomes hidden. HTTP polling remains authoritative. WebSocket reconnects use jittered exponential backoff, and failed HTTP polls use exponential backoff; both cap at five minutes and resume immediately after the browser reports that it is online.
+The Blob Worker hashes transferred buffers away from the editor. It never calls Obsidian APIs. One cooperative planner works on all platforms. Platforms that reject Blob Workers hash on the main thread.
 
-## Invariants
+Pause and unload stop pending Worker work. Dirty event tokens stay recoverable. Index repair and sync share one maintenance owner, so repair cannot clear the live index during reconciliation.
 
-- Durable Object SQLite is the only ordered metadata authority.
-- R2 stores immutable encrypted chunks only.
-- WebSockets provide hints; authenticated HTTP pull remains authoritative.
-- The plugin writes vault plaintext only through `VaultPort`; exact prepared retry bytes may remain in IndexedDB until their operation commits.
-- Every external JSON, binary, filesystem, and cryptographic boundary validates its input.
-- HTTP signing bytes have one implementation in `packages/protocol` to prevent client/server drift.
+## Scheduling and mobile
+
+One deadline timer replaces periodic scheduler ticks. Edit bursts wait 1.5 seconds and combine for at most five seconds. Meridian tries to flush a pending batch when the app becomes hidden.
+
+WebSocket reconnects use jittered exponential backoff. Failed HTTP polls use exponential backoff. Both cap at five minutes and resume when the browser is online.
+
+Obsidian plugins do not run continuously in the iOS background. Meridian syncs when Obsidian opens or resumes. HTTP polling remains authoritative.
+
+## Invariants and versions
+
+- Vault plaintext is written only through `VaultPort`.
+- Exact prepared retry bytes can stay in IndexedDB until commit.
+- Every external JSON, binary, file-system, and cryptographic boundary validates input.
+- HTTP signing bytes have one implementation in `packages/protocol`.
+
+| Storage | Version |
+| --- | ---: |
+| Durable Object schema marker | **10** |
+| IndexedDB | **6** |

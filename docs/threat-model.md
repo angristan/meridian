@@ -1,30 +1,48 @@
 # Meridian threat model
 
-Status: draft for protocol generation 1. Meridian is a sync system, not the only backup of a vault.
+Status: Draft, protocol generation 1.
+
+Meridian is a sync system. It must not be the only backup of a vault.
+
+## Terms
+
+- **Plaintext** is readable data. **Ciphertext** is encrypted data.
+- An **endpoint** is an authorized Meridian device.
+- **E2EE** keeps plaintext and keys on endpoints.
+- A Cloudflare **Worker** handles requests. A **Durable Object** stores ordered SQLite state. **R2** stores encrypted files.
+- An **epoch** uses one vault key.
+- A **cursor** is a log position. A **checkpoint** records a cursor and hash. A **high-water mark** is the newest saved checkpoint.
+- **AEAD** encrypts data and detects changes. Its unencrypted associated data is also protected from changes.
+- **Canonical CBOR** is the one allowed binary encoding.
+- **HPKE** encrypts to a recipient's public key.
+- A **capability** is a random token for a limited action.
+- A **CAS** update succeeds only when the old value still matches.
 
 ## Scope
 
-Meridian synchronizes one user's Obsidian vault through a self-hosted Cloudflare Worker, one vault Durable Object, and a private R2 bucket. The supported clients are a macOS Obsidian plugin and the foreground iOS plugin. This model covers protocol, storage, network, device lifecycle, recovery, and update risks. It does not claim protection from a compromised endpoint while that endpoint can read the vault.
+Meridian syncs one user's Obsidian vault through a self-hosted Worker, one Durable Object, and private R2. It supports macOS and foreground iOS plugins.
+
+This model covers protocol, storage, network, device, recovery, release, and update risks. It cannot protect an endpoint that reads the vault while compromised.
 
 ## Assets
 
-Highest-value secrets:
+Secrets:
 
-- plaintext notes, paths, attachments, and selected Obsidian configuration;
-- recovery seed and derived recovery private keys;
+- notes, paths, attachments, and selected Obsidian settings;
+- the recovery seed and derived recovery private keys;
 - current and historical vault epoch keys;
 - device Ed25519 and X25519 private keys;
-- random per-revision content keys;
-- setup, pairing, session, and upload capabilities while valid.
+- random per-revision content keys; and
+- valid setup, pairing, session, and upload capabilities.
 
 Integrity assets:
 
-- file revision DAGs and conflict branches;
+- file revision graphs and conflict branches;
 - device authorization and revocation history;
-- epoch/generation history;
-- ordered log cursor/hash and signed checkpoints;
-- release artifacts and plugin update metadata;
-- local journal state used for crash-safe application.
+- epoch and protocol-generation history;
+- the ordered log cursor, hash, and signed checkpoints;
+- release files and plugin update metadata; and
+- local journal state used for crash-safe apply.
 
 Availability assets include the Worker, Durable Object, R2 ciphertext, local vault copies, recovery material, and independent backups.
 
@@ -41,145 +59,183 @@ plaintext + long-lived private keys
                                                ciphertext + public auth data
 ```
 
-Trusted for confidentiality and correct local behavior:
+Trusted for secrecy and correct local behavior:
 
-- the user's device OS, Obsidian application, installed plugins, and Meridian bundle at execution time;
-- WebCrypto and the pinned audited cryptographic dependencies;
-- device secret storage and the user's handling of recovery material;
-- the local journal/checkpoint implementation;
-- the build and release process that produced the installed plugin.
+- the device OS, Obsidian, installed plugins, and Meridian bundle;
+- WebCrypto and pinned, audited cryptographic dependencies;
+- device secret storage and recovery-material handling;
+- local journal and checkpoint code; and
+- the plugin build and release process.
 
 Not trusted with plaintext or vault keys:
 
-- Cloudflare, Worker operators, Durable Object and R2 storage;
-- networks, DNS resolvers, and notification delivery;
-- other devices until their complete authorization chain and pairing transcript verify.
+- Cloudflare, Worker operators, Durable Object storage, or R2;
+- networks, DNS, or notification delivery; and
+- other devices until their full authorization chain and pairing transcript verify.
 
-The server is relied on for availability and a convenient ordering service, but clients verify its cryptographic output.
+The server provides availability and ordering. Clients verify its cryptographic output.
 
-## Adversaries
+## Adversaries and limits
 
 The design considers:
 
-1. A passive network observer measuring connections, timing, and sizes.
-2. An active network attacker who can replay, delay, reorder, truncate, or substitute traffic but cannot break correctly validated TLS and cryptography.
-3. A compromised or malicious Cloudflare deployment that can read/modify all server state, isolate clients, withhold operations, and lie about cursors.
-4. An unauthorized person who learns a setup/session/pairing token, but not device or recovery keys.
-5. A lost or stolen device, before and after revocation.
-6. A malicious vault file, attachment, or remote ciphertext intended to exploit parsing and resource handling.
-7. A compromised dependency, CI workflow, GitHub release, Obsidian update, or malicious plugin update.
-8. Another Obsidian plugin running with the same effective access to vault plaintext and plugin APIs.
-9. Accidental corruption, crashes, partial uploads, incorrect clocks, path collisions, and user mistakes.
+1. A passive observer measuring connections, timing, and sizes.
+2. An active attacker replaying, delaying, reordering, cutting off, or replacing traffic. Checked TLS and cryptography still hold.
+3. Malicious Cloudflare reading or changing all server state, isolating clients, hiding operations, or lying about cursors.
+4. A person with a setup, session, or pairing token, but no device or recovery key.
+5. A lost or stolen device, before or after revocation.
+6. A malicious vault file, attachment, or ciphertext attacking parsers or resources.
+7. A compromised dependency, CI workflow, release, Obsidian update, or plugin update.
+8. Another plugin with the same plaintext and API access.
+9. Corruption, crashes, partial uploads, wrong clocks, path collisions, or user mistakes.
 
-Out of scope as preventable attacks:
+The design cannot prevent:
 
 - a fully compromised authorized endpoint while it holds plaintext and keys;
-- cryptanalysis of the selected standard primitives;
-- coercion or physical observation of the recovery code or pairing phrase;
-- traffic-analysis resistance, cover traffic, or storage-size hiding;
-- guaranteed service despite account deletion, Cloudflare outage, or deliberate data destruction.
+- attacks that break the selected standard cryptography;
+- coercion or physical viewing of a recovery code or pairing phrase;
+- traffic analysis; Meridian has no cover traffic or storage-size hiding; or
+- service loss after account deletion, Cloudflare outage, or deliberate data destruction.
 
 ## Security goals
 
 ### Confidentiality
 
-The server must not learn plaintext file content, paths, revision parents, tombstones, content types, selected configuration content, epoch keys, revision keys, device private keys, or recovery material. A network attacker must gain no more through application traffic than the server can observe.
+The server must not learn plaintext content, paths, revision parents, deletion markers, content types, selected settings, epoch or revision keys, device private keys, or recovery material. Application traffic must give a network attacker no more information than the server sees.
 
-A revoked device must not receive keys for future epochs. Rotation does not erase old plaintext, ciphertext, or keys already obtained by that device.
+A revoked device must not get future epoch keys. Rotation cannot erase plaintext, ciphertext, or keys it already got.
 
-### Integrity and authenticity
+### Integrity
 
-Clients accept an operation only when canonical encoding, suite policy, hash-chain continuity, device authorization at the assigned cursor, durable signature, key unwrap, AEAD tags, chunk positions, and plaintext lengths all verify. Recovery, certificates, epochs, pairing transfers, and checkpoints have separate signature domains.
+A client accepts an operation only after all required checks pass. It verifies canonical encoding, the allowed suite, hash-chain continuity, authorization, signatures, key unwrap, AEAD tags, chunk positions, and plaintext lengths.
 
-No concurrent revision is silently discarded. Conflict materialization and restoration append history rather than rewriting it.
+Recovery, certificates, epochs, pairing transfers, and checkpoints use separate signature domains. No concurrent revision is silently removed. Materializing conflicts and restoring data add history; they do not rewrite it.
 
 ### Rollback and downgrade detection
 
-A device with a retained high-water mark detects a lower cursor, a conflicting hash at the same cursor, hash-chain truncation/forking after its checkpoint, an older epoch sequence, and an unauthorized lower protocol generation. A newly paired device inherits a signed checkpoint inside the complete pairing transcript.
+A saved high-water mark lets a device detect rollback and downgrade. It detects a lower cursor, a changed hash, log truncation or forks, an older epoch, and an unauthorized lower protocol generation. A newly paired device gets a signed checkpoint in the full pairing transcript.
 
-### Availability and recoverability
+### Availability and recovery
 
-Local vault use remains available offline. Push/pull is idempotent and resumable. Uploading immutable blobs before committing an operation makes a partial push non-authoritative. Local application is journaled and a cursor advances only after successful apply. High-entropy recovery material can restore ownership if all devices are lost, subject to the rollback limitation below.
+The vault works offline. Push and pull can retry and resume. Immutable blobs upload before commit, so a partial push is not authoritative. A local journal applies data before advancing the cursor.
+
+High-entropy recovery material can restore ownership after all devices are lost. The rollback limit in [Recovery limitations](#recovery-limitations) still applies.
 
 ## Mitigations by threat
 
-| Threat | Mitigation | Residual risk |
-| --- | --- | --- |
-| Server reads R2/DO | Client E2EE; private R2; random keys and opaque IDs | sizes, timing, device/deployment relation, stable opaque access patterns |
-| Ciphertext moved across context | Canonical AEAD data binds suite, vault, epoch, file, revision, object kind, operation, and position | none assuming AEAD security and correct inputs |
-| Operation tampering | Strict CBOR, Ed25519 domain signatures, hash chain | server can withhold a valid operation |
-| Nonce reuse | fresh revision keys, random 96-bit nonces, per-revision duplicate registry | faulty RNG can still be catastrophic; platform RNG is trusted |
-| Replay/duplicate requests | stable operation/idempotency IDs and append transaction | resource exhaustion still needs server rate limits |
-| Stolen session | short expiry, exact authorization checks | bearer can act until expiry, bounded by certificate permissions |
-| Pairing MITM/substitution | signed device descriptor, ciphertext-free verification preview, two explicit phrase confirmations, owner-local HPKE transfer withholding, full signed transcript, certificate chain, 40-bit phrase, short expiry | user can confirm a mismatched phrase or attacker can guess at 1 in 2^40 per attempt |
-| Lost device | revoke certificate, reject later operations/sessions, recipient-exact automatic epoch rotation | downloaded history and old keys cannot be erased |
-| Malicious or stale recovery package | authorized version-2 HPKE package, vault-bound context, required transition ID for owner updates, public state ID, predecessor CAS | a malicious server can still roll back its complete stored state; an independent checkpoint is needed to detect all-device-loss rollback |
-| Server rollback | persisted cursor/hash/generation, signed transferred checkpoints | isolated split views are not fully detectable |
-| Downgrade | complete suite in signed epoch; durable highest generation/sequence | a compromised endpoint can alter its own local floor |
-| Parser bombs | closed schemas, strict canonical subset, bounded bytes/depth/collections/chunks | host memory pressure still requires platform testing |
-| Partial write/crash | immutable blobs/revisions, byte reservation plus R2 confirmation, server transaction, local journal, apply-before-cursor | abandoned ciphertext requires later conservative GC |
-| Storage exhaustion | local pressure warnings, lossless compaction, conservative orphan cleanup, and fail-closed IndexedDB transactions | infinite history grows without bound; Cloudflare and browser hard limits can still stop new writes |
-| Wrong clock | causality from parents/cursors; timestamps are hints | expiry checks need reasonable local/server time policy |
-| Path collision | NFC, relative paths, case-fold collision detection, deterministic conflict names | platform-specific reserved names need adapter tests |
-| Malicious notification | notification is a hint; HTTP pull is authoritative | reconnect storms require backoff/rate limits |
-| Setup-token leak | high entropy, never in QR/logs, short setup session, permanent claimed state | leak before legitimate claim can race setup |
-| Other Obsidian plugin | no protocol mitigation | plugin can read plaintext and may access in-process secrets |
-| Compromised release | pinned dependencies, reproducible reviewable build, CI validation, signed repository controls | malicious trusted update can exfiltrate all local secrets |
+Each item lists the protection first, then the risk that remains.
+
+- **Server reads storage**
+  - Protection: Client E2EE, private R2, random keys, and opaque IDs.
+  - Remaining risk: Sizes, timing, device links, and stable opaque access remain visible.
+- **Ciphertext moves to another context**
+  - Protection: AEAD data binds the suite, vault, epoch, file, revision, object kind, operation, and position.
+  - Remaining risk: None if AEAD is secure and all inputs are correct.
+- **Operation tampering**
+  - Protection: Strict canonical CBOR, Ed25519 domain signatures, and a hash chain.
+  - Remaining risk: The server can hide a valid operation.
+- **Nonce reuse**
+  - Protection: Fresh revision keys, random 96-bit nonces, and a per-revision duplicate registry.
+  - Remaining risk: A faulty random generator can be catastrophic. Meridian trusts the platform generator.
+- **Replay or duplicate requests**
+  - Protection: Stable operation and exact-retry IDs plus one append transaction.
+  - Remaining risk: Resource exhaustion still needs server rate limits.
+- **Stolen session**
+  - Protection: Short expiry and exact authorization checks.
+  - Remaining risk: The bearer can act until expiry, within certificate permissions.
+- **Pairing interception**
+  - Protection: Signed device data, ciphertext-free preview, two phrase confirmations, locally held HPKE data, a full signed transcript, the certificate chain, a 40-bit phrase, and short expiry.
+  - Remaining risk: A user can approve a mismatch. An attacker gets one guess in 2^40 per attempt.
+- **Lost device**
+  - Protection: Revoke its certificate, reject later operations and sessions, then rotate for exactly the remaining devices.
+  - Remaining risk: Old keys and downloaded history cannot be erased.
+- **Stale or malicious recovery package**
+  - Protection: An authorized version-2 HPKE package, vault-bound context, required transition ID, public state ID, and predecessor CAS.
+  - Remaining risk: A malicious server can roll back all stored state. Detection after all devices are lost needs an independent checkpoint.
+- **Server rollback**
+  - Protection: Save the cursor, hash, and generation. Transfer signed checkpoints.
+  - Remaining risk: Isolated devices can receive different valid views.
+- **Protocol downgrade**
+  - Protection: Put the full suite in the signed epoch. Save the highest generation and sequence.
+  - Remaining risk: A compromised endpoint can lower its own saved minimum.
+- **Parser attack**
+  - Protection: Closed schemas, strict canonical input, and limits on bytes, depth, collections, and chunks.
+  - Remaining risk: Host memory pressure still needs platform tests.
+- **Partial write or crash**
+  - Protection: Immutable blobs and revisions, byte reservation, R2 confirmation, server transactions, and the local apply journal.
+  - Remaining risk: Abandoned ciphertext needs conservative cleanup.
+- **Storage exhaustion**
+  - Protection: Pressure warnings, lossless compaction, conservative cleanup, and fail-closed IndexedDB transactions.
+  - Remaining risk: Infinite history grows without limit. Cloudflare or browser limits can stop writes.
+- **Wrong clock**
+  - Protection: Parents and cursors set causality. Timestamps are hints.
+  - Remaining risk: Expiry needs a reasonable local and server time policy.
+- **Path collision**
+  - Protection: Unicode NFC, relative paths, case-fold checks, and deterministic conflict names.
+  - Remaining risk: Adapters need tests for reserved platform names.
+- **Malicious notification**
+  - Protection: Notifications are hints. HTTP pull is authoritative.
+  - Remaining risk: Reconnect storms need backoff and rate limits.
+- **Setup-token leak**
+  - Protection: High entropy, no QR or log copy, a short setup session, and permanent claimed state.
+  - Remaining risk: A leak before the real claim can race setup.
+- **Other Obsidian plugin**
+  - Protection: No protocol mitigation.
+  - Remaining risk: It can read plaintext and may reach in-process secrets.
+- **Compromised release**
+  - Protection: Pinned dependencies, reviewable builds, CI checks, and signed repository controls.
+  - Remaining risk: A trusted malicious update can steal all local secrets.
 
 ## Malicious server analysis
 
-The server can:
+The server can deny service, delete ciphertext, delay devices, and return stale or different valid prefixes. It sees IP addresses, platform hints, timing, ciphertext sizes, chunk counts, storage, cursor lag, opaque blob access, devices, and public authorization links. Isolation before checkpoint comparison can maintain separate valid histories.
 
-- refuse service, delete ciphertext, return stale availability data, or delay a device indefinitely;
-- observe IP addresses, user agent/platform hints, request timing, ciphertext sizes, chunk counts, total storage, cursor lag, and which opaque blobs are accessed;
-- identify devices and their public authorization relationships;
-- present one device with a valid prefix while another sees a later prefix;
-- attempt separate valid-looking histories by isolating devices before they exchange checkpoints.
+It cannot forge recovery or device signatures, authenticate changed ciphertext, unwrap revision keys, or move objects between authenticated contexts undetected.
 
-The server cannot forge recovery/device signatures, authenticate modified ciphertext, unwrap revision keys, or move a valid object into another authenticated context without detection.
-
-Persistent checkpoints detect ordinary rollback relative to prior knowledge. They do **not** provide global consistency. Two devices that never compare checkpoints can be kept on separate valid forks after a malicious ordering service equivocates. Future hardening may add checkpoint gossip or an external transparency log. Until then, users should compare device status/checkpoints when integrity is in doubt.
+Checkpoints detect rollback against known state. They do **not** prove one global history. Devices that never compare them can remain on valid forks. Future work may add checkpoint sharing or a public log. Until then, compare checkpoints when integrity is in doubt.
 
 ## Endpoint compromise
 
-Obsidian must see plaintext to edit it. Meridian must see plaintext and keys to synchronize it. Malware, a malicious Obsidian plugin, debugger access, a compromised OS, or a malicious Meridian release can therefore read or change all locally available data and impersonate that device.
+Obsidian and Meridian must read plaintext. Malware, another plugin, debugger access, a compromised OS, or a malicious release can read or change all local data and impersonate the device.
 
-SecretStorage improves at-rest handling but is not a hardware-backed isolation boundary from code running in Obsidian. The design limits damage after detection by certificate revocation and epoch rotation; it cannot recover confidentiality for content already read. An operator should remove the compromised device, rotate the epoch from a trusted device or recovery flow, and inspect history for signed malicious revisions.
+SecretStorage improves at-rest handling, but cannot isolate secrets from Obsidian code. After detection, remove the device, rotate from a trusted device or recovery, and inspect its signed revisions. This limits future damage but cannot restore secrecy for data already read.
 
 ## Recovery limitations
 
-The recovery seed is a random 256-bit root capability. It must be stored outside the synchronized vault and preferably in more than one physically separate secure location. A screenshot, plaintext note in the vault, low-entropy replacement, or cloud clipboard defeats the model.
+The recovery seed is a random 256-bit root capability. Keep it outside the vault, preferably in separate secure locations. A screenshot, vault note, low-entropy replacement, or cloud clipboard defeats the model.
 
-The server-stored package is authenticated but can be old. Recovery predecessor CAS prevents a client holding a stale package from replacing a newer package. It cannot stop a malicious server from rolling back the package, its public state ID, and history together. If one trusted device survives, its persisted checkpoint detects this rollback. If every device and every independent checkpoint is lost, the recovery seed proves ownership and decrypts the package but cannot reveal whether the server withheld a newer valid package/history. The recovered user must treat the server's checkpoint as the newest available, not cryptographic proof that no later state existed.
+The authenticated server package can be old. Predecessor CAS stops an old package from replacing a newer one. It cannot stop server rollback of the package, public state ID, and history together.
 
-A password may only add Argon2id wrapping around high-entropy recovery material. Password-only recovery is excluded because an attacker with the server package could perform offline guessing.
+A surviving device detects this with its checkpoint. If every device and independent checkpoint is lost, the seed proves ownership and decrypts the package. It cannot reveal hidden later state. Treat the server checkpoint as newest available, not proof that no later state existed.
 
-## iOS and offline behavior
+A password may only add Argon2id wrapping around high-entropy recovery material. Password-only recovery is excluded because the server package allows offline guessing.
 
-The iOS plugin has no reliable background execution. Suspension can interrupt any request and discard a socket. Correctness therefore depends only on durable HTTP state, local journaling, and resume reconciliation. WebSocket loss, duplicate hints, and long offline periods must not lose data.
+## iOS and offline limits
 
-Whole-file Obsidian APIs can cause memory pressure for large attachments. Generation 1 chunks network ciphertext at 4–8 MiB, but snapshot capture may still hold the source file in memory. The plugin should impose a documented tested attachment limit, bound concurrency, and never mark a cursor applied after an out-of-memory or interrupted write.
+iOS has no reliable background execution. Suspension can stop requests and sockets. Correctness depends only on durable HTTP state, local journaling, and resume reconciliation. Lost WebSockets, duplicate hints, and long offline periods must not lose data.
+
+Whole-file APIs can use too much memory. Generation 1 sends 4–8 MiB ciphertext chunks, but snapshots may still hold the full source file. The plugin should document a tested attachment limit, bound concurrency, and never mark a cursor applied after interruption or out-of-memory.
 
 ## Operational assumptions
 
-- TLS certificate validation remains enabled. Application cryptography does not justify bypassing TLS.
-- Setup, session, pairing, and upload capabilities are random, scoped, logged only by result class, rate-limited, short-lived, and single-use where applicable.
-- Logs/traces never include tokens, stable unnecessary IDs, envelope bodies, plaintext, paths, keys, recovery codes, or pairing plaintext.
-- R2 is private and only authenticated Worker routes access it.
-- Committed-history garbage collection is disabled. Signed acknowledgements are telemetry only until a generation-aware rebootstrap archive exists. Only provably disposable local records, expired capabilities, obsolete recovery receipts, and old unreferenced uploads are removed.
-- Sync is not backup. Users keep independent versioned backups and test export/restore.
-- Real macOS and iOS tests cover suspend/resume, large files, Unicode/case collisions, and interrupted apply before production use.
+- TLS certificate checks stay enabled. Application encryption does not justify bypassing TLS.
+- Capabilities are random, scoped, rate-limited, short-lived, and single-use where needed. Logs record only the result class.
+- Logs and traces never contain tokens, unnecessary stable IDs, envelope bodies, plaintext, paths, keys, recovery codes, or pairing plaintext.
+- R2 is private. Only authenticated Worker routes access it.
+- Garbage collection never deletes committed history. Signed acknowledgements are telemetry until a generation-aware archive and safe restart path exist. Cleanup removes only disposable local records, expired capabilities, obsolete recovery receipts, and old unreferenced uploads.
+- Sync is not backup. Users keep versioned backups and test export and restore.
+- Real macOS and iOS tests cover suspend and resume, large files, Unicode and case collisions, and interrupted apply before production use.
 
 ## Security validation
 
-Required automated coverage includes:
+Required automated tests include:
 
 - published HKDF, Ed25519, AES-GCM, AES-KW, HPKE, and canonical-CBOR vectors;
-- non-canonical, duplicate, unknown-field, trailing, malformed-length, and resource-limit rejection;
-- signature, tag, wrapped-key, AAD-context, phrase, transcript, and proof-of-possession tampering;
+- rejection of non-canonical, duplicate, unknown-field, trailing, malformed-length, and over-limit input;
+- signature, tag, wrapped-key, associated-data, phrase, transcript, and proof-of-possession tampering;
 - expired, cyclic, cross-vault, unauthorized, and revoked certificate chains;
 - stale epochs, suite downgrade, cursor rollback, truncation, and same-cursor forks;
-- duplicate/reordered operations and crashes at every upload/commit/download/apply boundary;
-- platform tests in Cloudflare Workers and Obsidian on supported macOS/iOS versions.
+- duplicate or reordered operations and crashes at every upload, commit, download, and apply boundary; and
+- Cloudflare Worker and Obsidian tests on supported macOS and iOS versions.
 
-No independent security review is claimed. Before presenting Meridian as production-hardened, its protocol, implementation, release controls, and operational procedures should receive focused review even though external audit is not an MVP acceptance requirement.
+**Meridian has not received an independent security review.** Before calling it production-hardened, experts should review its protocol, code, release controls, and operations. An external audit is not required for the current pre-release milestone. It does not replace focused review.

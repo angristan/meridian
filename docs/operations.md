@@ -1,106 +1,133 @@
 # Operations
 
-## Core invariants
+## Invariants
 
-- Cloudflare never receives plaintext vault keys, paths, metadata, or file content.
-- The Durable Object operation log is authoritative; WebSockets are notification hints only.
-- R2 objects are immutable encrypted chunks referenced by committed revisions.
-- A local cursor advances only after an operation is verified and safely applied.
-- Concurrent user content is merged or preserved explicitly, never silently discarded.
+- Cloudflare never gets plaintext keys, paths, metadata, or file content.
+- The Durable Object log is authoritative. WebSockets are hints.
+- R2 stores immutable encrypted chunks used by committed revisions.
+- A local cursor advances only after safe verification and apply.
+- Concurrent content is merged or kept as an explicit conflict. It is never silently lost.
 
-## Health and status
+## Health and logs
 
-`GET /health` reports only deployment health and safe protocol metadata. Authenticated plugin views report device status, local/remote cursors, pending work, conflicts, and the most recent sanitized failure.
+`GET /health` shows deployment health and safe protocol metadata only. Authenticated plugin views show device status, cursors, pending work, conflicts, and the latest sanitized failure.
 
-Use Workers Logs and Traces to diagnose request classes, latency, binding failures, cursor lag, reconnects, retries, and encrypted byte counts. Never log setup/session tokens, keys, recovery material, file paths, envelope bodies, or stable identifiers that are unnecessary for diagnosis.
+Use Workers Logs and Traces for request classes, latency, binding failures, cursor lag, reconnects, retries, and encrypted byte counts.
 
-The foreground plugin uses one exact deadline timer. A healthy socket still receives an authoritative HTTP check every five minutes. Socket reconnects use jittered exponential backoff, and failed HTTP polls use exponential backoff; both cap at five minutes. The browser `online` event and app resume trigger an immediate retry.
+> **Never log** setup or session tokens, keys, recovery material, paths, envelope bodies, or stable IDs not needed for diagnosis.
 
-## Protocol compatibility
+The foreground plugin uses one exact deadline timer. Even with a healthy socket, it makes an authoritative HTTP check every five minutes. Socket reconnects use jittered exponential backoff. Failed HTTP polls use exponential backoff. Both cap at five minutes. The browser `online` event and app resume retry at once.
 
-Current Meridian clients create and write only canonical generation-1 operation logs and current epoch transitions. The Worker rejects writes to a vault that is not already canonical.
+## Compatibility
 
-Vaults that previously moved from the deployed legacy hash format keep their immutable legacy entries and signed transition. Clients can verify and replay that history, but they cannot create another format transition or append a legacy-hashed entry. Downgrading Meridian is not supported.
+Current clients write only canonical generation-1 logs and current epoch transitions. The Worker rejects writes to a non-canonical vault.
 
-## Device replacement
+Migrated vaults keep immutable legacy-hash entries and their signed transition. Clients can verify and replay this history. They cannot add a legacy entry or another format transition.
 
-To move sync to a new phone without risking lockout:
+> **Do not downgrade Meridian.** Downgrades are not supported.
 
-1. Pair the new phone with **Devices → Add device**.
-2. Confirm that it completes a pull and push successfully.
-3. On the owner device, open **Devices**, identify the old phone by its name, platform, short cryptographic ID, and authorization time, then select **Revoke**.
-4. Confirm that the old entry is marked **Revoked**.
+## Replace a phone
 
-Revocation immediately invalidates that device’s sessions and future writes. It does not delete files from the device. The revoked identity remains visible as audit history and must be paired again before it can sync.
+1. On the owner, select **Devices → Add device** and pair the new phone.
+2. Confirm that the new phone can pull and push.
+3. Find the old phone by name, platform, short cryptographic ID, and authorization time.
+4. Select **Revoke** and confirm that it shows **Revoked**.
 
-## Reset pairing on a member device
+Revocation blocks that identity's sessions and future writes at once. It does not delete local files. The identity stays in audit history and must pair again to sync.
 
-A configured local vault rejects setup and pairing links to prevent accidental identity replacement. To deliberately pair the same iPhone vault again:
+## Pair the same member again
+
+A configured vault rejects setup and pairing links. This prevents accidental identity replacement.
 
 1. Sync important queued changes.
-2. On the iPhone, choose **Remove this device** and confirm the warning.
-3. Meridian signs a self-revocation, confirms it remotely, forgets the local key and connection, and keeps every vault file and local journal record.
-4. On the Mac owner, choose **Devices → Add device** and scan the new QR from the same iPhone vault.
+2. On the iPhone, select **Remove this device** and confirm the warning.
+3. Meridian signs and confirms a self-revocation. It forgets the local key and connection, but keeps all vault files and journal records.
+4. On the Mac owner, select **Devices → Add device** and scan a new QR code from that iPhone vault.
 
-If pairing is canceled, select **Retry** on the Mac to generate a fresh code. If the final signed completion is interrupted, Meridian retains the exact completion in SecretStorage and shows **Retry pairing** instead of creating another identity. Do not remove plugin data while that recovery action is present.
+If pairing is canceled, select **Retry** on the Mac for a new code. If signed completion is interrupted, Meridian keeps the exact completion in SecretStorage and shows **Retry pairing**. Do not remove plugin data while this action is present.
 
-**Pause** is temporary and never revokes or forgets an identity. **Remove this device** is permanent and available only to member devices. An owner cannot remove itself; ownership recovery is the safe path after owner loss.
+**Pause** is temporary. It keeps the identity. **Remove this device** is permanent and for members only. An owner cannot remove itself. Use ownership recovery after owner loss.
 
 ## Incident response
 
 ### Lost device
 
-The owner-only **Revoke** action appends a signed revocation and immediately blocks the selected device’s sessions and writes. The current owner cannot revoke itself. After the remaining active devices check in with epoch-transition support, the owner automatically signs a new epoch and distributes its key only to them. Settings shows the current sequence under **Security and protocol → Encryption epoch**.
+1. On the owner, find the lost device and select **Revoke**.
+2. Confirm that it shows **Revoked**.
+3. Check **Security and protocol → Encryption epoch**.
 
-For a suspected owner compromise, use recovery from a trusted replacement device. It revokes every old device and creates a recovery-signed epoch. Neither flow can erase plaintext or old epoch keys already obtained by a device.
+Only the owner can revoke another device. Revocation appends a signed record and blocks that device's sessions and writes at once. The owner cannot revoke itself.
+
+After the other active devices report epoch-transition support, the owner signs a new epoch. Only those devices get the new key.
+
+For suspected owner compromise, recover on a trusted replacement. Recovery revokes all old devices and creates a recovery-signed epoch. Neither process can erase plaintext or old keys already held by a device.
 
 ### Lost all devices
 
-1. Install Meridian on a replacement device.
+1. Install Meridian on a replacement.
 2. Select recovery and enter the Worker URL and offline recovery material.
-3. Confirm **Recover and revoke devices**. The plugin verifies and decrypts the package locally.
-4. Meridian registers a fresh owner, revokes every previous device/session, rotates the epoch, and retains old epoch keys locally for history.
+3. Select **Recover and revoke devices**.
+4. Let Meridian verify and decrypt the package locally.
 
-A server controlling the only surviving recovery package can withhold it or present a version no newer than the last independently retained checkpoint.
+The replacement becomes owner. Meridian revokes all old devices and sessions, rotates the epoch, and keeps old keys locally for history.
+
+A server that controls the only recovery package can withhold it or show one no newer than your last independently kept checkpoint.
 
 ### Suspected server rollback
 
-Stop writes. Preserve the local journal, highest trusted cursor, log hash, and signed checkpoints from every available device. Do not reset a device or overwrite its local state before comparing checkpoints.
+1. Stop writes.
+2. From every available device, keep the local journal, highest trusted cursor, log hash, and signed checkpoints.
+3. Compare checkpoints.
+
+> Do not reset a device or overwrite local state first.
 
 ### Mass deletion or corruption
 
-Pause synchronization on another device before opening it. Use immutable history to inspect and restore affected revisions. Restoration creates new revisions and does not rewrite the audit trail.
+1. Pause sync on another device before opening it.
+2. Inspect and restore files from immutable history.
+
+Restores make new revisions. They do not rewrite the audit trail.
 
 ## Backup
 
-Synchronization is not a backup. Keep a separate backup of the plaintext vault and offline recovery material. The Worker code version does not snapshot Durable Object SQLite or R2. R2 history retention protects application revisions only while their chunks remain retained.
+> **Sync is not a backup.** Keep an independent plaintext backup and offline recovery material.
 
-## Retention and storage safety
+Worker code does not snapshot Durable Object SQLite or R2. R2 history protects revisions only while their chunks remain.
 
-Meridian uses **Keep committed history forever**. It never automatically removes committed operations, revision metadata, referenced R2 blobs, conflicts, checkpoints, snapshots, device/revocation history, or epoch keys required by history. A long-offline active device can therefore replay from its prior signed cursor. Log truncation and finite history remain disabled because current acknowledgements do not bind a generation-aware rebootstrap archive.
+## Retention and storage
 
-Meridian safely bounds disposable state:
+Meridian uses **Keep committed history forever**. It never automatically removes committed operations, revision metadata, referenced blobs, conflicts, checkpoints, snapshots, device or revocation history, or old epoch keys needed for history. A long-offline active device can replay from its signed cursor.
 
-- completed local upload entries and exact duplicate history metadata are compacted in crash-safe IndexedDB batches;
-- dirty events, pending/prepared retries, DAG ancestry, unresolved conflicts, revocations, and checkpoints are never compacted;
-- expired pairing capabilities are removed in every terminal state;
-- only the current recovery idempotency receipt is retained;
-- encrypted uploads older than seven days may be removed only when no committed revision references them and no recent upload reservation protects them.
+Log truncation and finite history are off. Current acknowledgements do not identify a complete archive that can safely start a device again.
 
-Every blob upload reserves its byte size in the Durable Object before R2 streaming and is confirmed against R2 afterward. A file operation cannot commit unless every referenced blob exists. Cleanup fences each candidate in SQLite before R2 deletion. Unrelated requests remain responsive, while uploads and commits that touch a fenced blob retry safely.
+Only disposable state is compacted:
 
-The storage view reports remote SQLite/R2 usage, active-device acknowledgement progress, in-flight reservations, local browser quota pressure, and whether browser persistence was granted. Device acknowledgements are signed telemetry over the exact cursor, hash, epoch, and forever policy. They do not authorize deletion.
+- Completed local upload entries and exact duplicate history metadata are removed in crash-safe IndexedDB batches.
+- Dirty events, pending or prepared retries, revision graph ancestry, unresolved conflicts, revocations, and checkpoints are never compacted.
+- Expired pairing capabilities are removed in every terminal state.
+- Only the current recovery exact-retry record is kept.
+- Encrypted uploads older than seven days may be removed only when no committed revision or recent reservation protects them.
 
-Cloudflare account limits and browser quotas remain external hard limits. If IndexedDB is full, its transaction aborts, the cursor does not advance, and pending work or vault files remain available. Use **Meridian storage → Compact local sync records**, request persistent browser storage when offered, or free origin storage. Keep an independent backup.
+### Blob claims and fences
 
-## Privacy-safe support bundle
+```text
+reserve byte size in SQLite → stream to R2 → confirm in R2 → allow commit
+```
 
-A future support export may contain:
+Every upload follows this flow. A file operation cannot commit until every blob exists. Cleanup fences each candidate in SQLite before R2 deletion. Other requests stay responsive. Uploads and commits that touch a fence retry safely.
 
-- Meridian and protocol versions
-- Obsidian and platform versions
-- enabled sync categories
-- cursor and queue counts
-- sanitized error codes and timings
+### Quotas
 
-It must exclude vault names, file paths, content, ciphertext, keys, tokens, signatures, public key material, and recovery data.
+The storage view shows SQLite and R2 use, device acknowledgement progress, in-flight reservations, browser quota pressure, and whether persistence was granted.
+
+Acknowledgements are signed status data over the exact cursor, hash, epoch, and forever policy. They never allow deletion.
+
+Cloudflare limits and browser quotas are external hard limits. If IndexedDB is full, the transaction aborts. The cursor stays put. Pending work and vault files remain.
+
+Use **Meridian storage → Compact local sync records**, request persistent browser storage when offered, or free origin storage. Keep an independent backup.
+
+## Privacy-safe support data
+
+A future support export may include Meridian, protocol, Obsidian, and platform versions; enabled categories; cursor and queue counts; and sanitized error codes and timings.
+
+It must exclude vault names, paths, content, ciphertext, keys, tokens, signatures, public keys, and recovery data.

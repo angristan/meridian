@@ -1,58 +1,57 @@
 # Meridian
 
-Meridian is a self-hosted, end-to-end encrypted synchronization system for Obsidian. It keeps one vault synchronized across macOS and iOS using a Worker, one SQLite-backed Durable Object, and a private R2 bucket in your own Cloudflare account.
+Meridian syncs one Obsidian vault across macOS and iPhone. You host it in Cloudflare. Notes, attachments, paths, metadata, and selected settings are encrypted before upload.
 
 > [!WARNING]
-> Meridian is pre-release software. Use a disposable vault and keep an independent backup. Do not run it alongside Obsidian Sync, iCloud Drive, Dropbox, or another vault sync engine.
+> Meridian is pre-release software. Use a disposable vault. Keep a separate backup. Do not use Meridian with Obsidian Sync, iCloud Drive, Dropbox, or another vault sync system.
 
-## What it provides
+## What you get
 
-- Local-first Markdown and attachment synchronization
-- End-to-end encryption before bytes leave Obsidian
-- Immutable per-file revision history with infinite retention and safe compaction
-- Offline edits with resumable cursor-based catch-up
+- Local-first sync for Markdown files and attachments
+- Immutable file history with infinite retention and safe compaction
+- Offline edits, resumable catch-up, and deterministic conflict preservation
 - Device pairing, revocation, recovery, and signed key epochs
-- Hibernating WebSocket notifications with polling fallback
-- Selected Obsidian settings synchronization
-- One-click Cloudflare resource provisioning
-- Mobile-compatible plugin code without Node.js or Electron APIs
+- WebSocket hints with reliable HTTP polling
+- Mobile code without Node.js or Electron APIs
 
-## Architecture
+Meridian is not a backup. It does not support live group editing, cross-vault sharing, server-side plaintext work, or continuous iOS background work.
+
+## How it works
 
 ```text
-Obsidian on Mac / iPhone
-        |
-        | HTTPS + WebSocket
-        v
+Obsidian on Mac or iPhone
+          |
+          | HTTPS and WebSocket
+          v
 Cloudflare Worker
-        |
-        |-- one Vault Durable Object
-        |     device authorization, encrypted log, cursors, checkpoints
-        |
-        `-- private R2 bucket
-              immutable encrypted file chunks
+          |-- one SQLite Vault Durable Object
+          |     authorization, encrypted log, cursors, checkpoints
+          `-- private R2 bucket
+                immutable encrypted chunks
 ```
 
-Cloudflare sees ciphertext sizes, timing, and device activity, but does not receive plaintext vault keys, file contents, paths, or revision metadata.
+The Durable Object is the ordered remote metadata authority. WebSockets only give hints. Authenticated HTTP catch-up is authoritative.
+
+Cloudflare can see ciphertext sizes, request times, public authorization data, and device activity. It cannot see vault keys, content, paths, or revision metadata in plaintext.
 
 ## Deploy
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/angristan/meridian)
 
-1. Choose a high-entropy one-time `SETUP_TOKEN` in the deployment form.
-2. Let Cloudflare provision the Worker, Durable Object namespace, and R2 bucket.
-3. Open the deployed Worker URL at `/setup` and enter the same token.
-4. Install and enable the Meridian Obsidian plugin.
-5. Use the setup page's **Open in Obsidian** link or paste the connection details into the plugin.
-6. Save the recovery code outside the vault before starting the first upload.
+1. Create a random one-time `SETUP_TOKEN` of at least 32 bytes.
+2. Enter it in the deployment form.
+3. Let Cloudflare create the Worker, Durable Object namespace, and private R2 bucket.
+4. Open `/setup` on the deployed Worker. Enter the same token.
+5. Install the Meridian plugin. Use **Open in Obsidian**, or paste the connection details.
+6. Save the recovery code outside the vault before the first upload.
 
-The first successful claim permanently disables bootstrap authentication for that deployment.
+The first successful claim permanently disables setup authentication.
 
 See [Deployment](docs/deployment.md) for local deployment, upgrades, and troubleshooting.
 
-## Test the plugin on macOS
+## Test on devices
 
-Use a disposable Obsidian vault:
+Use a disposable vault on macOS:
 
 ```bash
 bun install
@@ -62,21 +61,15 @@ bun run plugin:install -- --vault /path/to/disposable-vault
 bun run dev
 ```
 
-In Obsidian, disable Restricted Mode, enable **Meridian**, and connect it to the local or deployed Worker.
+In Obsidian, disable Restricted Mode. Enable **Meridian**. Connect it to the Worker.
 
-## Test on iPhone
+On iPhone, install a GitHub Release with [BRAT](https://github.com/TfTHacker/obsidian42-brat). Each release has `main.js`, `manifest.json`, `styles.css`, and `meridian.zip`. See [Testing on devices](docs/testing.md).
 
-The normal beta channel is a GitHub Release installed through [BRAT](https://github.com/TfTHacker/obsidian42-brat). The release workflow produces `main.js`, `manifest.json`, `styles.css`, and `meridian.zip` for every release. See [Testing on devices](docs/testing.md) for the complete mobile flow.
+Obsidian plugins cannot run continuously in the iOS background. Meridian syncs when Obsidian opens or resumes. Sync does not depend on WebSockets.
 
-Obsidian community plugins cannot run continuously in the iOS background. Meridian synchronizes immediately when Obsidian opens or resumes and never relies on the WebSocket for correctness.
+## Develop
 
-## Development
-
-Requirements:
-
-- Bun 1.3.9
-- An Obsidian test vault
-- A Cloudflare account only for remote deployment; local Workerd tests require none
+You need Bun 1.3.9 and an Obsidian test vault. Remote deployment also needs a Cloudflare account. Local Workerd tests do not need one.
 
 ```bash
 bun install
@@ -87,28 +80,28 @@ bun run check
 Useful commands:
 
 ```bash
-bun run dev             # local Worker and bindings
-bun run plugin:build    # Obsidian release artifacts
-bun run test            # all workspace tests
-bun run deploy:dry      # bundle and validate without deploying
+bun run dev             # start the local Worker and bindings
+bun run plugin:build    # build Obsidian release files
+bun run test            # run all workspace tests
+bun run deploy:dry      # validate a deployment build
 bun run format          # format the workspace
 ```
 
-The project uses conventional commits. Semantic Release creates Obsidian-compatible tags without a `v` prefix and publishes complete GitHub Release assets after validation.
+Use conventional commits. Semantic Release creates tags without a `v` prefix and publishes complete Obsidian release files after validation.
 
 ## Documentation
 
 - [Architecture](docs/architecture.md)
-- [Scope and decision index](PLAN.md)
+- [Scope and decisions](PLAN.md)
 - [Protocol](docs/protocol.md)
 - [Threat model](docs/threat-model.md)
 - [Deployment](docs/deployment.md)
 - [Device testing](docs/testing.md)
 - [Operations](docs/operations.md)
 
-## Security boundaries
+## Security limits
 
-Meridian uses standard cryptographic primitives and extensive protocol tests, but it cannot protect plaintext on a compromised device. Any malicious Obsidian plugin running in the same app can potentially access vault content and locally available secrets. Synchronization is also not a backup.
+Meridian cannot protect plaintext on a compromised device. A malicious Obsidian plugin can read vault content and local secrets. Meridian uses standard cryptographic methods and extensive protocol tests.
 
 ## License
 

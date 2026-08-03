@@ -1,92 +1,98 @@
-# Meridian scope and decision index
+# Meridian scope and decisions
 
-This file records stable product scope and architecture decisions. It is not a second protocol or operations manual. The linked documents are authoritative for implementation details.
+This file lists stable product and architecture decisions. Linked documents give the full rules.
 
 ## Product scope
 
-Meridian synchronizes one Obsidian vault across macOS and iOS through a self-hosted Cloudflare Worker. It provides:
+Meridian syncs one Obsidian vault across macOS and iOS through a self-hosted Cloudflare Worker. It provides:
 
-- end-to-end encrypted notes, attachments, and selected Obsidian configuration;
-- offline edits and deterministic conflict preservation;
-- immutable revision history with infinite retention;
-- device pairing, revocation, recovery, and signed key epochs;
-- hibernating WebSocket hints with authenticated HTTP catch-up;
-- local browser storage diagnostics and safe compaction.
+- End-to-end encryption for notes, attachments, paths, metadata, and selected settings
+- Offline edits and deterministic conflict preservation
+- Immutable revision history with infinite retention
+- Pairing, revocation, recovery, and signed key epochs
+- WebSocket hints with authenticated HTTP catch-up
+- Local storage diagnostics and safe compaction
 
-Meridian does not provide continuous iOS background execution, collaborative live editing, server-side plaintext processing, cross-vault sharing, or backup guarantees.
+It does not provide continuous iOS background work, live group editing, server-side plaintext work, cross-vault sharing, or backups.
 
 ## Ownership
 
 | Concern | Owner |
 | --- | --- |
 | Wire formats, signing bytes, log compatibility | `packages/protocol` |
-| Key lifecycle and cryptographic workflows | `packages/crypto` |
-| Simulator reference model and text merge | `packages/sync-engine` |
+| Keys and cryptographic workflows | `packages/crypto` |
+| Reference sync model and text merge | `packages/sync-engine` |
 | Independent convergence model | `packages/test-simulator` |
-| Public HTTP routing and Schema decoding | Hono Worker |
-| Ordered metadata, authorization, and typed RPC | one Vault Durable Object |
-| Immutable encrypted chunks | private R2 bucket |
-| Vault mutation and local durability | Obsidian plugin `SyncController` and journal |
-| Timers, debounce, and reconnect deadlines | plugin scheduler |
+| Public HTTP routes and Schema decoding | Hono Worker |
+| Ordered metadata, authorization, typed RPC | One Vault Durable Object |
+| Immutable encrypted chunks | Private R2 bucket |
+| Vault changes and local durability | Plugin `SyncController` and journal |
+| Timers, debounce, reconnect deadlines | Plugin scheduler |
 
-The Worker and plugin import shared packages. Shared packages never import Cloudflare, Obsidian, browser UI, or runtime adapters.
+Shared packages never import Cloudflare, Obsidian, browser UI, or runtime adapters.
 
-## Durable decisions
+## Stable decisions
 
 ### Security and compatibility
 
 - New writes use only the current canonical protocol.
-- Immutable legacy history remains readable and verifiable.
-- Unsupported, partial, downgraded, or ambiguous protocol states fail closed.
-- HTTP signing bytes and checkpoint format normalization have one shared implementation.
-- Hono owns normal HTTP decoding and formatting. The Durable Object owns typed RPC, SQL authentication, and transactions; its `fetch()` handles only WebSocket upgrade.
-- Pairing authorization requires signed proofs and matching human verification phrases.
-- Plaintext, keys, paths, and sensitive identifiers must not enter production diagnostics.
+- Immutable legacy history stays readable and verifiable.
+- Unsupported, partial, downgraded, or ambiguous states fail closed.
+- HTTP signing bytes and checkpoint normalization have one shared implementation.
+- Hono owns normal HTTP decoding and formatting.
+- The Durable Object owns typed RPC, SQL authentication, and transactions.
+- `VaultDurableObject.fetch()` handles WebSocket upgrades only.
+- Pairing needs signed proofs and matching human verification phrases.
+- Production logs must not contain plaintext, keys, recovery data, paths, envelope bodies, or unnecessary stable identifiers.
 
-### Synchronization and recovery
+### Sync and recovery
 
-- Durable Object SQLite is the only ordered remote metadata authority.
+- Durable Object SQLite is the only authority for ordered remote metadata.
 - WebSockets are hints. Authenticated HTTP polling is authoritative.
-- Exact retries preserve operation envelopes, idempotency keys, blobs, cursors, and hashes.
-- Vault mutations complete before their local journal effects.
-- Applied journal effects commit atomically. Checkpoint advancement remains last.
-- A persisted checkpoint never passes missing local state or unreadable successor key material.
-- Legacy partial states remain replayable after upgrade.
+- Exact retries keep operation envelopes, idempotency keys, blobs, cursors, and hashes.
+- Each vault change finishes before its local journal effects.
+- Applied journal effects commit atomically. The checkpoint advances last.
+- A saved checkpoint never passes missing local state or unreadable next-epoch keys.
+- Old partial states remain replayable after an upgrade.
 
 ### Storage
 
-- R2 contains immutable ciphertext only.
-- A revision cannot commit until every referenced blob exists and remains protected by its SQL claim.
-- Cleanup installs SQL deletion fences before R2 deletion. Upload and commit paths respect those fences without globally blocking unrelated requests.
+- R2 stores immutable ciphertext only.
+- A revision commits only after all referenced blobs exist and SQL claims protect them.
+- Cleanup creates SQL deletion fences before R2 deletion.
+- Uploads and commits obey the fences without blocking unrelated requests.
 - Committed history and referenced blobs have infinite retention.
-- Device retention acknowledgements are signed telemetry. They never authorize deletion.
+- Signed device retention acknowledgements are telemetry only. They never allow deletion.
 - Local compaction deletes only completed work and exact duplicate history rows.
 
-### Runtime ownership
+### Runtime
 
-- `SyncController` owns accepted vault-event writes, synchronization, maintenance serialization, quiescence, and journal lifetime.
+- `SyncController` owns accepted vault-event writes, sync, serialized maintenance, quiescence, and journal lifetime.
 - The scheduler owns only deadlines, debounce, and reconnect policy.
-- Pairing polling has one cancellable owner and stops on plugin unload.
-- Index planning has one cooperative implementation. A Blob Worker performs transferred-buffer hashing only.
+- One cancellable owner controls pairing polls. Polling stops on plugin unload.
+- One cooperative implementation plans the index. A Blob Worker only hashes transferred buffers.
 - Attachment transfers use at most four concurrent chunks.
 
-### Stable persistence versions
+### Storage versions
 
-- Durable Object schema marker: **10**.
-- IndexedDB version: **6**.
-- Compatible changes reuse existing tables, stores, indexes, and metadata keys. A version change requires an explicit migration and rollback review.
+| Storage | Version |
+| --- | ---: |
+| Durable Object schema marker | **10** |
+| IndexedDB | **6** |
 
-## Change policy
+Compatible changes reuse current tables, stores, indexes, and metadata keys. Version changes need a migration and rollback review.
 
-A change to synchronization, storage, pairing, or lifecycle behavior must preserve the decisions above and add a focused regression test. Concurrency defects should be reproduced with deterministic barriers before the fix where practical. Crash changes must test the production adapter and restart from the same durable state.
+## Change rules
 
-Fault campaigns run on demand with deterministic seeds. Failed schedules save ordered traces and become fixed regressions after minimization.
+A sync, storage, pairing, or lifecycle change must preserve these decisions and add a focused regression test. Reproduce concurrency defects with deterministic barriers when practical. Crash changes must test the production adapter and restart from the same durable state.
 
-## Authoritative documents
+Fault campaigns use deterministic seeds. Failed schedules save ordered traces. Minimized failures become fixed regression tests.
 
-- [Architecture](docs/architecture.md): runtime boundaries and ownership
-- [Protocol](docs/protocol.md): cryptographic and wire invariants
-- [Threat model](docs/threat-model.md): assets, adversaries, and limits
-- [Operations](docs/operations.md): deployment safety and incident handling
-- [Testing](docs/testing.md): device, fault, and responsiveness scenarios
-- [Deployment](docs/deployment.md): provisioning and upgrades
+## Full documentation
+
+- [Architecture](docs/architecture.md)
+- [Protocol](docs/protocol.md)
+- [Threat model](docs/threat-model.md)
+- [Operations](docs/operations.md)
+- [Testing](docs/testing.md)
+- [Deployment](docs/deployment.md)

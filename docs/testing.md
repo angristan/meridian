@@ -1,65 +1,64 @@
 # Testing on devices
 
-Use a disposable vault with representative Markdown, images, PDFs, folders, and settings. Keep an independent copy before every destructive or recovery scenario.
+> **Use a disposable vault.** Add Markdown, images, PDFs, folders, and settings. Keep an independent copy before destructive or recovery tests.
 
-## macOS development installation
+## macOS setup
 
-1. Create and open a new empty Obsidian vault.
-2. Build and install Meridian:
+1. Create and open an empty Obsidian vault.
+2. Install Meridian:
 
    ```bash
    bun install
    bun run plugin:install -- --vault /absolute/path/to/test-vault
    ```
 
-3. In Obsidian, open **Settings → Community plugins**, turn off Restricted Mode, and enable **Meridian**.
-4. Start the local Worker with `bun run dev`, or enter a deployed Worker URL.
-5. Complete setup and save the recovery code outside the test vault.
-6. Reload Obsidian after each development rebuild, or use the Obsidian developer workflow of your choice.
+3. In **Settings → Community plugins**, turn off Restricted Mode and enable **Meridian**.
+4. Run `bun run dev`, or enter a deployed Worker URL.
+5. Finish setup. Save the recovery code outside the vault.
+6. Reload Obsidian after each build, or use your normal developer workflow.
 
-The installer refuses paths without a `.obsidian` directory and writes only `.obsidian/plugins/meridian/`.
+The installer needs a `.obsidian` directory. It writes only to `.obsidian/plugins/meridian/`.
 
-## iPhone beta installation
+## iPhone setup with BRAT
 
-The recommended unpublished-plugin path is BRAT:
+1. Publish a GitHub Release with `main.js`, `manifest.json`, and `styles.css`.
+2. On the iPhone, install **BRAT** from Community Plugins.
+3. Add `angristan/meridian` as a beta plugin. Enable **Meridian**.
+4. On the Mac, create a five-minute QR code in **Meridian status → Devices**.
+5. Scan it on the iPhone.
+6. On the Mac, check the signed name, platform, and short ID.
+7. Compare the automatic phrase on both devices. Repeated items are valid.
+8. Select **Phrases match** on both devices.
+9. Check that the QR disappears after the request. Both dialogs must close after signed completion. The iPhone must sync and appear by name on the Mac.
 
-1. Publish a GitHub Release containing `main.js`, `manifest.json`, and `styles.css`.
-2. Install **BRAT** from Obsidian Community Plugins on the iPhone.
-3. Add `angristan/meridian` as a beta plugin.
-4. Enable **Meridian**.
-5. On the Mac, create a five-minute pairing QR code from **Meridian status → Devices**.
-6. Scan it with the iPhone. On the Mac, review the signed device name, platform, and short ID, then continue to verification.
-7. Compare the phrase automatically shown on both devices and tap **Phrases match** on each. Repeated phrase items are valid.
-8. Confirm that the QR disappears after the request, both modals close after the signed completion acknowledgement, the iPhone starts syncing, and the named iPhone appears in the Mac device registry. Candidate packages and pairing IDs never need manual transfer.
+Do not transfer candidate packages or pairing IDs by hand.
 
-The build also produces `obsidian-plugin/dist/meridian.zip` for manual inspection, but BRAT remains the reliable mobile installation channel.
+The build also makes `obsidian-plugin/dist/meridian.zip` for review. BRAT is the reliable mobile installation method.
 
-## Required scenarios
+## Manual checks
 
-### Basic synchronization
+### Basic sync
 
-- Create, edit, rename, move, and delete a Markdown file on each device.
-- Add images, PDFs, and a representative large attachment.
-- Confirm both devices converge after each device has been offline.
+- [ ] On each device, create, edit, rename, move, and delete Markdown.
+- [ ] Add images, PDFs, and a representative large attachment.
+- [ ] Make changes while each device is offline. Both devices must later converge.
 
 ### Conflicts
 
-- Edit different lines of one note while both devices are offline; expect a deterministic merge.
-- Edit the same line; expect explicit conflict preservation.
-- Edit and delete the same file concurrently; expect a recovered conflict rather than data loss.
-- Rename one branch while editing another.
+- [ ] Edit different lines offline; expect a deterministic merge.
+- [ ] Edit the same line; expect an explicit conflict.
+- [ ] Edit and delete the same file; expect a recovered conflict, not loss.
+- [ ] Rename on one branch while editing on the other.
 
 ### Reliability
 
-- Suspend Obsidian during upload and download.
-- Switch between Wi-Fi and cellular.
-- Force-quit and reopen Obsidian.
-- Leave a device offline across many operations.
-- Disable WebSockets and verify polling catches up from the persisted cursor.
+- [ ] Suspend Obsidian during upload and download.
+- [ ] Switch between Wi-Fi and mobile data.
+- [ ] Force-quit and reopen Obsidian.
+- [ ] Keep a device offline across many operations.
+- [ ] Disable WebSockets. HTTP polling must catch up from the saved cursor.
 
-### Deterministic fault injection
-
-Run the focused fault tests on demand:
+## Deterministic fault tests
 
 ```bash
 bun run fault:test
@@ -69,100 +68,115 @@ bun run fault:test:plugin
 bun run fault:test:worker
 ```
 
-The root command prints its seed before running. `--seed` replays the same fault order, actions, and restarts. The long command derives 50 seeds and runs 20 stateful steps for each seed. Use `--seeds` and `--steps` to override either count.
+The root command prints its seed. `--seed` replays the same faults, actions, and restarts. The long command runs 50 derived seeds with 20 stateful steps each. Override these with `--seeds` and `--steps`.
 
-These tests use promise barriers and explicit injected failures instead of timing sleeps. They force index repair to race with an active reconciliation, force blob pruning to race with a commit on both sides of the R2 `HEAD` boundary, and discard a successful operation response before restarting the client from the same IndexedDB database. The seeded campaign repeatedly edits or deletes one file, injects every commit fault through a shuffled deterministic deck, reopens the same IndexedDB database, and verifies convergence plus a no-op sync.
+Promise barriers and injected failures replace timing sleeps. Tests cover:
 
-On failure, Meridian writes `.fault-traces/plugin-seed-<seed>-steps-<steps>.json`. The ordered trace contains stable actions, fault points, checkpoints, and invariant results. Rerun the printed command, then keep the minimized schedule as a fixed regression test.
+- index repair racing active reconciliation;
+- blob pruning racing a commit before and after the R2 metadata check;
+- a lost success response, then restart from the same IndexedDB database;
+- repeated edit or delete actions through every commit fault in a shuffled, deterministic deck;
+- database reopen, convergence, and a final no-op sync.
 
-A committed revision must always keep its blob, repair must never erase a planned deletion, and an exact response-loss retry must preserve one cursor and hash while draining pending work.
+Failures write:
 
-Worker boundary tests also call the Durable Object RPC methods directly. They prove that normal internal `fetch()` paths return 404, RPC errors retain their public status/code/message, malformed or oversized JSON is rejected by Hono, and blob cleanup races still interleave safely through RPC.
+```text
+.fault-traces/plugin-seed-<seed>-steps-<steps>.json
+```
 
-### Responsiveness and index recovery
+The trace has stable actions, faults, checkpoints, and invariant results. Rerun the printed command. Keep the smallest failure as a regression test.
 
-- Populate 10,000 small files, edit one file, and verify routine sync scans only that path while snapshots come from the journal's hydrated index instead of another IndexedDB `getAll()`.
-- Reconcile an unchanged 10,000-file vault; reuse every cached fingerprint without reading file contents or running full rename planning.
-- Change a file while Meridian is stopped or Obsidian is suspended; verify resume detects changed size or modification time.
-- Preserve both size and modification time while changing bytes; verify the daily complete fingerprint audit catches it.
-- Rename a file and verify the paired old/new dirty paths preserve one stable file identity.
-- Edit a path again while reconciliation is committing; verify the newer dirty token remains queued.
-- Apply a remote revision and verify its resulting Obsidian event does not echo a duplicate revision.
-- Pause during a large scan; cooperative planning must cancel, no partial reconciliation may commit, and dirty paths must remain. Unload must terminate any pending hash Worker.
-- Test an 8 MiB hash with Blob Workers enabled and unavailable, a cooperative 10,000-file index, and a 500-operation pull batch.
-- Verify uploads and downloads never exceed four active chunk transfers, preserve chunk order, and never commit a revision after a failed chunk.
-- Verify one exact scheduler timer coalesces simultaneous scan/poll deadlines, reconnect backoff caps at five minutes, and suspension drains durable file-event writes.
+Tests must prove that committed revisions keep blobs, repair keeps planned deletions, and exact response-loss retries keep one cursor and hash while draining pending work.
 
-Automated responsiveness tests use generous wall-clock ceilings to detect pathological regressions and assert that cooperative fallbacks and batch pulls yield to timer heartbeats. They are not hardware performance claims.
+Worker boundary tests call typed Durable Object methods directly. Normal internal `fetch()` paths must return 404. Remote-call errors must keep the public status, code, and message. Hono must reject malformed or oversized JSON. Blob cleanup races must stay safe through these calls.
 
-### Historical log verification and recovery CAS
+## Responsiveness and index recovery
 
-- Replay an immutable `legacy revision → signed format transition → canonical revision` sequence from cursor zero.
-- Resume from checkpoints before and after the historical transition; verify the correct hash format is selected.
-- Backfill complete history across the transition without rewriting any entry.
-- Reject attempts to submit a new format transition or append to a non-canonical vault.
-- Alter, omit, reorder, or fork a canonical or legacy history entry; reject it before decrypting or changing the vault.
-- Submit two recovery claims from the same predecessor; exactly one may replace the package.
-- Retry the successful recovery request exactly; return the same result without a second replacement.
-- Submit an older-format or stale recovery claim; reject it without consuming valid newer state.
+- [ ] Add 10,000 small files, then edit one. Sync scans only that path. Snapshots use the hydrated journal index, not another IndexedDB `getAll()`.
+- [ ] Reconcile 10,000 unchanged files. Reuse cached fingerprints without reading content or planning all renames.
+- [ ] Change a file while Meridian is stopped or Obsidian is suspended. Resume detects changed size or modification time.
+- [ ] Change bytes but keep size and time. The daily full fingerprint audit detects it.
+- [ ] Rename a file. Old and new dirty paths keep one stable file ID.
+- [ ] Edit again during commit. The newer dirty token stays queued.
+- [ ] Apply a remote revision. Its Obsidian event causes no duplicate revision.
+- [ ] Pause a large scan. Planning stops, no partial reconciliation commits, and dirty paths remain. Unload stops any hash Worker.
+- [ ] Test an 8 MiB hash with Blob Workers available and unavailable.
+- [ ] Test a cooperative 10,000-file index and 500-operation pull batch.
+- [ ] Allow at most four active chunk transfers. Keep chunk order. Never commit after a failed chunk.
+- [ ] One exact timer combines scan and poll deadlines. Reconnect backoff caps at five minutes. Suspension drains durable file-event writes.
 
-### Epoch rotation
+Automated tests use generous time limits to find pathological regressions. They check that fallbacks and batch pulls yield to timer heartbeats. They are not hardware performance claims.
 
-- Prepare a transition with a missing, extra, or duplicate active-device recipient; verify the Worker rejects it.
-- Commit a transition for the exact active-device set; verify every device reaches the same successor sequence.
-- Lose the commit response, fail SecretStorage replacement, and crash before IndexedDB checkpoint advancement; verify the exact transition retries and the cursor never passes an unreadable key.
-- Prepare a revision under the predecessor epoch, then receive a transition; verify exact plaintext is retained and ciphertext is regenerated under the successor.
-- Revoke one member; verify the next recipient set excludes it and the remaining devices rotate automatically.
-- Race rotation with a revision, second rotation, recovery, and pairing completion; exactly one predecessor CAS may win.
-- Read revisions from every retained old epoch and reject a missing, duplicate, substituted, or undecryptable recipient package.
-- Recover from a version-2 package; verify device authorization, any required transition, checkpoint, keyring, and recovery CAS before writing.
-- Try a client without epoch support after activation; it must receive **Update Meridian to continue** and append nothing.
+## Historical log and recovery state checks
 
-### Retention and storage safety
+- [ ] Replay `legacy revision → signed format transition → canonical revision` from cursor zero.
+- [ ] Resume before and after the transition; select the correct hash format.
+- [ ] Backfill all history across it without rewriting entries.
+- [ ] Reject a new transition and appends to a non-canonical vault.
+- [ ] Alter, omit, reorder, or fork canonical or legacy history. Reject it before decrypting or changing the vault.
+- [ ] Send two recovery claims from one predecessor; exactly one replaces the package.
+- [ ] Retry the winner exactly; return the same result without another replacement.
+- [ ] Reject an older-format or stale claim without consuming newer state.
 
-- Leave one active device offline while another advances; verify all operations, referenced blobs, epoch keys, and history remain available and acknowledgement status shows the lagging device.
-- Submit an acknowledgement with a wrong signature, device, cursor/hash, stale epoch, or lower cursor; verify the Worker rejects it and no retention state moves backward.
-- Lose responses before R2 PUT, after R2 PUT, and before Durable Object confirmation; exact retry must reconcile the immutable object and upload claim without duplicating catalog entries.
-- Commit an operation whose chunk is absent from R2; it must fail before the authoritative cursor advances.
-- Run orphan cleanup during upload and after interrupted upload; recent claims survive, while old unreferenced objects are removed idempotently.
-- Pause cleanup after its SQL deletion fence, then try to commit the same blob; the commit must retry and no missing-blob operation may appear.
-- Pause a commit after its provisional SQL claim but before R2 `HEAD` returns; cleanup must preserve the blob and the commit must succeed.
-- Fail R2 deletion after fencing; the fence must clear and an exact cleanup retry must succeed.
-- Stop after successful R2 deletion but before SQL cleanup; the next upload must atomically recover the stranded fence.
-- Fail the operation transaction after blob confirmation; no operation may appear, the blob must remain reserved, and an exact retry must commit once.
-- After the server commits, stop after atomic pushed-revision settlement and after checkpoint persistence. Reopen the same IndexedDB database at each boundary; one copy of each revision must remain, pending work must drain, and the checkpoint must never pass missing local state.
-- Stop after an atomic remote-apply transaction and after an atomic history revision/checkpoint transaction. Reopen the same IndexedDB database; replay must be idempotent and the live checkpoint must remain last.
-- Recreate legacy crashes after snapshot persistence and revision persistence, then restart. Append a remote descendant to an interrupted committed revision; it must apply without a false conflict or a stale retry overwriting its snapshot.
-- Fill IndexedDB and inject quota errors in entry, applied-operation, history, and checkpoint transactions; transactions abort, prepared work remains exact, and the cursor never passes unavailable local state.
-- Crash between local compaction batches; reopening and rerunning removes only completed entries and exact duplicate history rows. Pending work, dirty tokens, DAG parents, tombstones, conflicts, checkpoints, revocations, and old-epoch history remain usable.
-- Test missing `navigator.storage` APIs on mobile, warning at 80%, critical pressure at 90%, and user-gesture persistent-storage requests.
+## Epoch rotation
 
-### Security lifecycle
+- [ ] Reject a transition with a missing, extra, or duplicate active-device recipient.
+- [ ] Commit for the exact active set; all devices reach the same next sequence.
+- [ ] Lose the response, fail SecretStorage replacement, and crash before checkpoint advance. Retry exactly. Never move the cursor past an unreadable key.
+- [ ] Prepare a revision under the old epoch, then receive a transition. Keep exact plaintext and rebuild ciphertext under the next epoch.
+- [ ] Revoke a member. Exclude it from the next set. Rotate the others automatically.
+- [ ] Race rotation with a revision, second rotation, recovery, and pairing completion. Only one update from the same old state wins.
+- [ ] Read every old epoch. Reject missing, duplicate, replaced, or undecryptable recipient packages.
+- [ ] Recover from a version-2 package. Before writing, verify authorization, any transition, checkpoint, keyring, and recovery state match.
+- [ ] After activation, an old client shows **Update Meridian to continue** and appends nothing.
 
-- Pair a second device and verify the automatically displayed phrase on both screens.
-- Verify that the encrypted transfer stays unavailable until both confirmations, cancellation authorizes no device, completion updates both screens, and invalid or expired capabilities are rejected.
-- Drop responses after join, owner approval, release, and signed completion. Verify exact SecretStorage material is retained and replayed, closing either modal after phrase confirmation does not cancel, canceled screens offer a fresh-code retry, and a completed device is inserted only once.
-- From the owner, revoke the older member by its short ID. Verify its sessions fail immediately, the row becomes **Revoked**, the signed revocation advances other clients without revision decryption, and later operations from that identity are rejected.
-- On a member, choose **Remove this device**. Verify queued changes are warned about, files remain, the member self-revocation succeeds, local keys/configuration are forgotten, and the same local vault can pair again.
-- Verify owner self-removal and member cross-device revocation are rejected. Simulate a lost revocation response and restart at every cleanup boundary; only exact `device_not_found` confirmation may complete cleanup.
-- Scan setup and pairing links in connected, paused, partially configured, and removal-pending vaults; each must stop before generating keys or changing identity.
-- Pair a replacement phone before revoking the old phone; verify there is always at least one working device and only the intended old identity is revoked.
-- Recover from the saved recovery material in a fresh disposable vault; verify all previous sessions are revoked and new writes use the rotated epoch.
-- Present stale cursors, duplicate operations, changed chunk order, and tampered ciphertext; all must fail safely.
+## Retention and storage
 
-### Settings
+- [ ] Leave one active device offline. Keep all operations, blobs, epoch keys, and history. Show its lag in acknowledgements.
+- [ ] Reject an acknowledgement with a wrong signature, device, cursor or hash, stale epoch, or lower cursor. Never move retention backward.
+- [ ] Lose responses before R2 `PUT`, after it, and before Durable Object confirmation. Exact retry reconciles the immutable object and claim without duplicate catalog entries.
+- [ ] Reject an operation with a missing R2 chunk before advancing the cursor.
+- [ ] Run orphan cleanup during and after an interrupted upload. Keep recent claims. Remove old unreferenced objects idempotently.
+- [ ] Pause cleanup after its SQL fence, then commit that blob. The commit retries. No missing-blob operation appears.
+- [ ] Pause commit after its provisional SQL claim but before R2 `HEAD`. Cleanup keeps the blob; commit succeeds.
+- [ ] Fail R2 deletion after fencing. Clear the fence; exact cleanup retry succeeds.
+- [ ] Stop after R2 deletion but before SQL cleanup. The next upload atomically recovers the fence.
+- [ ] Fail the operation transaction after blob confirmation. No operation appears. The blob stays reserved. Exact retry commits once.
+- [ ] After server commit, stop after pushed-revision settlement and after checkpoint persistence. Reopen the same database at each point. Keep one revision copy, drain pending work, and never pass missing local state.
+- [ ] Stop after remote apply and after history revision/checkpoint transactions. Reopen the database. Replay is idempotent and the live checkpoint stays last.
+- [ ] Recreate legacy crashes after snapshot and revision persistence. Restart and append a remote descendant. Avoid a false conflict or stale snapshot overwrite.
+- [ ] Fill IndexedDB. Inject quota errors in entry, applied-operation, history, and checkpoint transactions. Abort transactions, keep exact prepared work, and do not advance the cursor.
+- [ ] Crash between compaction batches. Reopen and rerun. Remove only completed entries and duplicate history. Keep pending work, dirty tokens, revision graph parents, tombstones, conflicts, checkpoints, revocations, and old-epoch history.
+- [ ] On mobile, test missing `navigator.storage`, warnings at 80%, critical pressure at 90%, and user-gesture persistence requests.
 
-Test each category independently on every device:
+## Security lifecycle
 
-- Main settings
-- Appearance
-- Themes and snippets
-- Hotkeys
-- Active core plugin list
-- Core plugin settings
+- [ ] Pair a second device. Check the automatic phrase on both screens.
+- [ ] Block encrypted transfer until both confirmations. Cancellation authorizes nobody. Completion updates both screens. Reject invalid or expired capabilities.
+- [ ] Drop responses after join, owner approval, release, and signed completion. Keep and replay exact SecretStorage data. Closing after phrase confirmation does not cancel. Canceled screens offer a new-code retry. Insert a completed device once.
+- [ ] As owner, revoke an older member by short ID. Its sessions fail at once and its row shows **Revoked**. Other clients apply the signed revocation without revision decryption. Reject later operations from it.
+- [ ] As member, select **Remove this device**. Warn about queued changes, keep files, self-revoke, forget local keys and config, and allow pairing again.
+- [ ] Reject owner self-removal and member cross-device revocation. Lose a revocation response and restart at every cleanup boundary. Only exact `device_not_found` confirmation finishes cleanup.
+- [ ] Scan setup and pairing links in connected, paused, partly configured, and removal-pending vaults. Stop before key creation or identity change.
+- [ ] Pair a replacement before revoking the old phone. Keep one working device and revoke only the old identity.
+- [ ] Recover in a fresh disposable vault. Revoke all old sessions. New writes use the rotated epoch.
+- [ ] Reject stale cursors, duplicate operations, changed chunk order, and modified ciphertext safely.
 
-Workspace/layout state, Meridian state, caches, and secret storage must remain device-local.
+## Settings
 
-## iOS expectations
+Test each category on every device:
 
-Obsidian suspends community plugins in the background. Meridian makes a best-effort flush of pending durable file events when the app becomes hidden, but promises foreground and resume synchronization rather than continuous background delivery. Always check status after reopening Obsidian before assuming the remote device received a change.
+- [ ] Main settings
+- [ ] Appearance
+- [ ] Themes and snippets
+- [ ] Hotkeys
+- [ ] Active core plugin list
+- [ ] Core plugin settings
+
+Workspace and layout state, Meridian state, caches, and secret storage stay device-local.
+
+## iOS
+
+Obsidian suspends community plugins in the background. Meridian tries to flush durable file events when hidden. It promises foreground and resume sync, not continuous background delivery.
+
+> After reopening Obsidian, check status before assuming another device got a change.
