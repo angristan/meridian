@@ -22,12 +22,20 @@ export function extractSessionToken(request: Request): string {
   throw new HttpError(401, "authentication_required", "A valid device session is required")
 }
 
-export function sessionToken(c: WorkerContext): string {
-  const existing = c.get("sessionToken")
-  if (existing) return existing
-  const token = extractSessionToken(c.req.raw)
-  c.set("sessionToken", token)
-  return token
+export function authenticatedVaultEffect(
+  context: WorkerContext,
+  path: string,
+  method: "GET" | "POST" = "GET",
+  source?: Request,
+) {
+  return callVaultEffect(
+    context.env,
+    path,
+    method,
+    undefined,
+    extractSessionToken(context.req.raw),
+    source,
+  )
 }
 
 export function validateSessionEffect(env: WorkerEnv, token: string) {

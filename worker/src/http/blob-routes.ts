@@ -1,9 +1,9 @@
 import { tracing } from "cloudflare:workers"
 import * as Effect from "effect/Effect"
 import { HttpError } from "../errors"
-import { runResponse } from "./effect-boundary"
+import { runHttpEffect } from "./effect-boundary"
 import { requiredParam } from "./request"
-import { sessionToken, validateSessionEffect } from "./session"
+import { extractSessionToken, validateSessionEffect } from "./session"
 import { observeStreamOutcome, type StreamOutcome } from "./stream-lifecycle"
 import type { WorkerApp } from "./types"
 import { callVaultEffect } from "./vault-proxy"
@@ -18,9 +18,9 @@ function validateBlobId(blobId: string): void {
 
 export function registerBlobRoutes(app: WorkerApp): void {
   app.put("/v1/blobs/:blobId", (c) =>
-    runResponse(
+    runHttpEffect(
       Effect.gen(function* () {
-        const token = sessionToken(c)
+        const token = extractSessionToken(c.req.raw)
         const auth = yield* validateSessionEffect(c.env, token)
         const blobId = requiredParam(c, "blobId")
         validateBlobId(blobId)
@@ -111,9 +111,9 @@ export function registerBlobRoutes(app: WorkerApp): void {
   )
 
   app.get("/v1/blobs/:blobId", (c) =>
-    runResponse(
+    runHttpEffect(
       Effect.gen(function* () {
-        const auth = yield* validateSessionEffect(c.env, sessionToken(c))
+        const auth = yield* validateSessionEffect(c.env, extractSessionToken(c.req.raw))
         const blobId = requiredParam(c, "blobId")
         validateBlobId(blobId)
         const key = `vaults/${auth.vaultId}/blobs/${blobId}`

@@ -17,10 +17,10 @@ import {
   RevokeDeviceSchema,
   SnapshotSchema,
 } from "@meridian/protocol"
-import { runResponse } from "./effect-boundary"
+import { runHttpEffect } from "./effect-boundary"
 import { proxyJson } from "./json-proxy"
 import { requiredParam } from "./request"
-import { sessionToken } from "./session"
+import { authenticatedVaultEffect } from "./session"
 import type { WorkerApp } from "./types"
 import { callVaultEffect } from "./vault-proxy"
 
@@ -34,18 +34,16 @@ export function registerApiRoutes(app: WorkerApp): void {
     proxyJson(AuthSessionSchema, () => "/v1/auth/session"),
   )
   app.get("/v1/recovery/package", (c) =>
-    runResponse(callVaultEffect(c.env, "/v1/recovery/package", "GET")),
+    runHttpEffect(callVaultEffect(c.env, "/v1/recovery/package", "GET")),
   )
   app.post("/v1/recovery/challenge", (c) =>
-    runResponse(callVaultEffect(c.env, "/v1/recovery/challenge", "POST")),
+    runHttpEffect(callVaultEffect(c.env, "/v1/recovery/challenge", "POST")),
   )
   app.post(
     "/v1/recovery/claim",
     proxyJson(RecoveryClaimSchema, () => "/v1/recovery/claim"),
   )
-  app.get("/v1/devices", (c) =>
-    runResponse(callVaultEffect(c.env, "/v1/devices", "GET", undefined, sessionToken(c))),
-  )
+  app.get("/v1/devices", (c) => runHttpEffect(authenticatedVaultEffect(c, "/v1/devices")))
   app.put(
     "/v1/device/descriptor",
     proxyJson(DeviceDescriptorSchema, () => "/v1/device/descriptor", {
@@ -66,14 +64,8 @@ export function registerApiRoutes(app: WorkerApp): void {
     proxyJson(CreatePairingSchema, () => "/v1/pairings", { authenticated: true }),
   )
   app.get("/v1/pairings/:id", (c) =>
-    runResponse(
-      callVaultEffect(
-        c.env,
-        `/v1/pairings/${encodeURIComponent(requiredParam(c, "id"))}`,
-        "GET",
-        undefined,
-        sessionToken(c),
-      ),
+    runHttpEffect(
+      authenticatedVaultEffect(c, `/v1/pairings/${encodeURIComponent(requiredParam(c, "id"))}`),
     ),
   )
   app.post(
@@ -162,9 +154,7 @@ export function registerApiRoutes(app: WorkerApp): void {
     }),
   )
   app.get("/v1/checkpoints/latest", (c) =>
-    runResponse(
-      callVaultEffect(c.env, "/v1/checkpoints/latest", "GET", undefined, sessionToken(c)),
-    ),
+    runHttpEffect(authenticatedVaultEffect(c, "/v1/checkpoints/latest")),
   )
   app.put(
     "/v1/retention/acknowledgement",
@@ -183,14 +173,10 @@ export function registerApiRoutes(app: WorkerApp): void {
   app.get("/v1/snapshot", (c) => {
     const id = c.req.query("id")
     const query = id === undefined ? "" : `?id=${encodeURIComponent(id)}`
-    return runResponse(
-      callVaultEffect(c.env, `/v1/snapshot${query}`, "GET", undefined, sessionToken(c)),
-    )
+    return runHttpEffect(authenticatedVaultEffect(c, `/v1/snapshot${query}`))
   })
   app.get("/v1/changes", (c) => {
     const query = new URL(c.req.url).search
-    return runResponse(
-      callVaultEffect(c.env, `/v1/changes${query}`, "GET", undefined, sessionToken(c)),
-    )
+    return runHttpEffect(authenticatedVaultEffect(c, `/v1/changes${query}`))
   })
 }

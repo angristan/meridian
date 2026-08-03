@@ -1,6 +1,6 @@
 import * as Effect from "effect/Effect"
 import * as Schema from "effect/Schema"
-import { errorResponse, HttpError } from "../errors"
+import { HttpError } from "../errors"
 
 const MAX_JSON_BODY_BYTES = 2 * 1024 * 1024
 
@@ -71,10 +71,6 @@ async function readBoundedBody(request: Request): Promise<string> {
   }
 }
 
-export async function runResponse(effect: Effect.Effect<Response, HttpError>): Promise<Response> {
-  try {
-    return await Effect.runPromise(effect)
-  } catch (error) {
-    return errorResponse(error)
-  }
+export function runHttpEffect(effect: Effect.Effect<Response, HttpError>): Promise<Response> {
+  return Effect.runPromise(effect)
 }

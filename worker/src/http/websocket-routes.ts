@@ -1,29 +1,19 @@
 import * as Effect from "effect/Effect"
 import { HttpError } from "../errors"
-import { runResponse } from "./effect-boundary"
-import { sessionToken, validateSessionEffect } from "./session"
+import { runHttpEffect } from "./effect-boundary"
+import { authenticatedVaultEffect } from "./session"
 import type { WorkerApp } from "./types"
-import { callVaultEffect } from "./vault-proxy"
 
 export function registerWebSocketRoutes(app: WorkerApp): void {
   app.get("/v1/notifications", (c) =>
-    runResponse(
+    runHttpEffect(
       Effect.gen(function* () {
         if (c.req.header("upgrade")?.toLowerCase() !== "websocket") {
           return yield* Effect.fail(
             new HttpError(426, "upgrade_required", "WebSocket upgrade required"),
           )
         }
-        const token = sessionToken(c)
-        yield* validateSessionEffect(c.env, token)
-        return yield* callVaultEffect(
-          c.env,
-          "/v1/notifications",
-          "GET",
-          undefined,
-          token,
-          c.req.raw,
-        )
+        return yield* authenticatedVaultEffect(c, "/v1/notifications", "GET", c.req.raw)
       }),
     ),
   )

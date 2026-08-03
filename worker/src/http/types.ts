@@ -4,8 +4,7 @@ export interface WorkerEnv extends Env {
   SETUP_TOKEN?: string
 }
 
-type Variables = { sessionToken: string }
-export type WorkerBindings = { Bindings: WorkerEnv; Variables: Variables }
+export type WorkerBindings = { Bindings: WorkerEnv }
 
 export type WorkerContext = Context<WorkerBindings>
 export type WorkerApp = Hono<WorkerBindings>

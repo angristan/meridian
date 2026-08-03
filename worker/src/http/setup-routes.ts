@@ -3,7 +3,7 @@ import * as Effect from "effect/Effect"
 import { constantTimeSecretEquals } from "../encoding"
 import { HttpError } from "../errors"
 import { SECURITY_HEADERS, SETUP_PAGE, SETUP_SCRIPT } from "../setup-page"
-import { decodeJsonEffect, runResponse } from "./effect-boundary"
+import { decodeJsonEffect, runHttpEffect } from "./effect-boundary"
 import { proxyJson } from "./json-proxy"
 import type { WorkerApp } from "./types"
 import { callVaultEffect } from "./vault-proxy"
@@ -30,10 +30,12 @@ export function registerSetupRoutes(app: WorkerApp): void {
     return c.body(SETUP_SCRIPT)
   })
 
-  app.get("/v1/setup/status", (c) => runResponse(callVaultEffect(c.env, "/internal/status", "GET")))
+  app.get("/v1/setup/status", (c) =>
+    runHttpEffect(callVaultEffect(c.env, "/internal/status", "GET")),
+  )
 
   app.post("/v1/setup/session", (c) =>
-    runResponse(
+    runHttpEffect(
       Effect.gen(function* () {
         const body = yield* decodeJsonEffect(c.req.raw, SetupSessionRequestSchema)
         const configuredToken = c.env.SETUP_TOKEN
