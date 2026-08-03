@@ -70,6 +70,93 @@ async function seedTrackedText(
 }
 
 describe("SyncController", () => {
+  it("keeps the journal open until accepted vault events are durable", async () => {
+    class PausedDirtyJournal extends MemoryJournal {
+      private markStarted: (() => void) | undefined
+      private releaseWrite: (() => void) | undefined
+      readonly writeStarted = new Promise<void>((resolve) => {
+        this.markStarted = resolve
+      })
+      private readonly writeGate = new Promise<void>((resolve) => {
+        this.releaseWrite = resolve
+      })
+      closed = false
+
+      override async putDirtyPath(change: Parameters<MemoryJournal["putDirtyPath"]>[0]) {
+        this.markStarted?.()
+        await this.writeGate
+        return super.putDirtyPath(change)
+      }
+
+      release(): void {
+        this.releaseWrite?.()
+      }
+
+      override close(): void {
+        this.closed = true
+      }
+    }
+
+    const journal = new PausedDirtyJournal()
+    const controller = new SyncController(
+      new FakeVault(),
+      journal,
+      new FakeRemote(),
+      new FakeCrypto(),
+      () => ALL_CATEGORIES,
+      () => {},
+    )
+    await controller.start(TEST_DEVICE)
+
+    const recording = controller.recordVaultChange("note.md")
+    await journal.writeStarted
+    const pausing = controller.quiesce()
+    for (let index = 0; index < 5; index += 1) await Promise.resolve()
+
+    expect(journal.closed).toBe(false)
+    journal.release()
+    await Promise.all([recording, pausing])
+    expect(journal.closed).toBe(true)
+    expect(await journal.listDirtyPaths()).toHaveLength(1)
+  })
+
+  it("uses a full scan after a dirty event cannot persist", async () => {
+    class FailingDirtyJournal extends MemoryJournal {
+      override async putDirtyPath(): Promise<void> {
+        throw new Error("Injected dirty write failure")
+      }
+    }
+    class CountingVault extends FakeVault {
+      fullScans = 0
+
+      override listFiles(
+        categories: Record<ConfigCategory, boolean>,
+        selection?: SelectiveSyncSettings,
+      ): Promise<ScannedFileSnapshot[]> {
+        this.fullScans += 1
+        return super.listFiles(categories, selection)
+      }
+    }
+
+    const vault = new CountingVault({ "note.md": "initial" })
+    const controller = new SyncController(
+      vault,
+      new FailingDirtyJournal(),
+      new FakeRemote(),
+      new FakeCrypto(),
+      () => ALL_CATEGORIES,
+      () => {},
+    )
+    await controller.start(TEST_DEVICE)
+    vault.fullScans = 0
+
+    await controller.recordVaultChange("note.md")
+    await controller.sync("file-event")
+
+    expect(vault.fullScans).toBe(1)
+    controller.stop()
+  })
+
   it("uploads local content as raw encrypted blobs before committing", async () => {
     const vault = new FakeVault({ "note.md": "hello" })
     const journal = new MemoryJournal()

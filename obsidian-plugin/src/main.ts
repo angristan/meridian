@@ -241,7 +241,7 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
         return
       }
     }
-    await this.scheduling.flushPendingFileEvents()
+    this.scheduling.cancelPendingFileSync()
     await this.controller.sync("manual")
   }
 

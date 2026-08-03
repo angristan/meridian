@@ -65,6 +65,8 @@ export class SyncController {
   private notificationGeneration = 0
   private lastRetentionAcknowledgementKey: string | null | undefined
   private stopRequested = false
+  private vaultEventWrites: Promise<void> = Promise.resolve()
+  private vaultEventWriteFailed = false
   private lastProgressEmission = 0
   private readonly progressThrottleMs: number
   private readonly now: () => number
@@ -172,6 +174,7 @@ export class SyncController {
       socketConnected: false,
       error: null,
     })
+    await this.vaultEventWrites
     await this.running
     await this.maintenance
     this.finishStop()
@@ -179,11 +182,9 @@ export class SyncController {
 
   stop(): void {
     this.requestStop()
-    const work = [this.running, this.maintenance].filter(
-      (promise): promise is Promise<void> => promise !== null,
+    void Promise.allSettled([this.vaultEventWrites, this.running, this.maintenance]).then(() =>
+      this.finishStop(),
     )
-    if (work.length > 0) void Promise.allSettled(work).then(() => this.finishStop())
-    else this.finishStop()
   }
 
   resume(): Promise<void> {
@@ -198,16 +199,20 @@ export class SyncController {
     this.startNotifications()
   }
 
-  sync(reason: SyncReason): Promise<void> {
-    if (!this.device || this.stopRequested) return Promise.resolve()
+  async sync(reason: SyncReason): Promise<void> {
+    if (!this.device || this.stopRequested) return
+    const eventWriteFailed = await this.drainVaultEvents()
+    if (!this.device || this.stopRequested) return
+    const effectiveReason = eventWriteFailed ? "manual" : reason
     if (this.maintenance) {
-      return this.maintenance.catch(() => undefined).then(() => this.sync(reason))
+      await this.maintenance.catch(() => undefined)
+      return this.sync(effectiveReason)
     }
     if (this.running) {
-      this.rerunReason = mergeSyncReasons(this.rerunReason, reason)
+      this.rerunReason = mergeSyncReasons(this.rerunReason, effectiveReason)
       return this.running
     }
-    this.running = this.runLoop(reason).finally(() => {
+    this.running = this.runLoop(effectiveReason).finally(() => {
       this.running = null
     })
     return this.running
@@ -217,12 +222,27 @@ export class SyncController {
     return { ...this.status }
   }
 
-  async recordVaultChange(path: string): Promise<void> {
-    await this.journal.putDirtyPath({
-      path: normalizeVaultPath(path),
-      token: randomId(),
-      observedAt: this.now(),
+  recordVaultChange(path: string): Promise<void> {
+    if (!this.device || this.stopRequested) return Promise.resolve()
+    const write = this.vaultEventWrites.then(() =>
+      this.journal.putDirtyPath({
+        path: normalizeVaultPath(path),
+        token: randomId(),
+        observedAt: this.now(),
+      }),
+    )
+    this.vaultEventWrites = write.catch(() => {
+      this.vaultEventWriteFailed = true
     })
+    return this.vaultEventWrites
+  }
+
+  private async drainVaultEvents(): Promise<boolean> {
+    const writes = this.vaultEventWrites
+    await writes
+    const failed = this.vaultEventWriteFailed
+    if (this.vaultEventWrites === writes) this.vaultEventWriteFailed = false
+    return failed
   }
 
   async history(path?: string): Promise<LocalRevision[]> {

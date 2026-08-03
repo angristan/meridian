@@ -145,11 +145,11 @@ describe("plugin scheduling", () => {
     vi.useRealTimers()
   })
 
-  it("drains durable file events before a manual sync without a duplicate sync", async () => {
+  it("cancels a pending file timer before manual sync", () => {
     const context = harness()
     context.vaultEvents.get("modify")?.(new FakeTFile("note.md"))
 
-    await context.scheduling.flushPendingFileEvents()
+    context.scheduling.cancelPendingFileSync()
 
     expect(context.controller.recordVaultChange).toHaveBeenCalledWith("note.md")
     expect(context.controller.sync).not.toHaveBeenCalled()

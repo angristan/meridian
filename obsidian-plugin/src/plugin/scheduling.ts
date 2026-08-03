@@ -16,8 +16,6 @@ interface SchedulingDependencies {
 export class PluginScheduling {
   private eventTimer: number | null = null
   private scheduleTimer: number | null = null
-  private eventWrites: Promise<void> = Promise.resolve()
-  private eventWriteFailed = false
   private eventBurstStartedAt: number | null = null
   private lastFileEventAt: number | null = null
   private lastPollAt = 0
@@ -87,8 +85,8 @@ export class PluginScheduling {
     }
   }
 
-  async flushPendingFileEvents(): Promise<void> {
-    await this.drainFileEvents()
+  cancelPendingFileSync(): void {
+    this.clearFileEventBatch()
   }
 
   stop(): void {
@@ -102,13 +100,7 @@ export class PluginScheduling {
       const settings = this.settings()
       if (!isSyncablePath(path, this.plugin.app.vault.configDir, settings.configCategories)) return
       const controller = this.controller()
-      if (controller) {
-        this.eventWrites = this.eventWrites
-          .then(() => controller.recordVaultChange(path))
-          .catch(() => {
-            this.eventWriteFailed = true
-          })
-      }
+      if (controller) void controller.recordVaultChange(path)
       this.scheduleFileSync()
     }
     this.plugin.registerEvent(
@@ -187,21 +179,14 @@ export class PluginScheduling {
   }
 
   private async flushFileEvents(): Promise<void> {
-    const eventWriteFailed = await this.drainFileEvents()
-    const controller = this.controller()
-    if (!controller) return
-    await controller.sync(eventWriteFailed ? "manual" : "file-event")
+    this.clearFileEventBatch()
+    await this.controller()?.sync("file-event")
   }
 
-  private async drainFileEvents(): Promise<boolean> {
+  private clearFileEventBatch(): void {
     this.clearEventTimer()
     this.eventBurstStartedAt = null
     this.lastFileEventAt = null
-    const writes = this.eventWrites
-    await writes
-    const failed = this.eventWriteFailed
-    if (this.eventWrites === writes) this.eventWriteFailed = false
-    return failed
   }
 
   private async runScheduledWork(): Promise<void> {
