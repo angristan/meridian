@@ -1,3 +1,10 @@
+## [1.12.6](https://github.com/angristan/meridian/compare/1.12.5...1.12.6) (2026-08-03)
+
+
+### Bug Fixes
+
+* preserve global revision ancestry ([c5670eb](https://github.com/angristan/meridian/commit/c5670eba5145ec9f2062ce4b85f599f26325e639))
+
 ## [1.12.5](https://github.com/angristan/meridian/compare/1.12.4...1.12.5) (2026-08-03)
 
 
