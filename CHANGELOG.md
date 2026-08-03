@@ -1,3 +1,10 @@
+## [1.11.12](https://github.com/angristan/meridian/compare/1.11.11...1.11.12) (2026-08-03)
+
+
+### Bug Fixes
+
+* preserve checkpoint-last durability ([e4cb163](https://github.com/angristan/meridian/commit/e4cb1638e144ea005585ebd916fce3e0701b3047))
+
 ## [1.11.11](https://github.com/angristan/meridian/compare/1.11.10...1.11.11) (2026-08-02)
 
 
