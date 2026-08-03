@@ -87,7 +87,7 @@ Meridian safely bounds disposable state:
 - only the current recovery idempotency receipt is retained;
 - encrypted uploads older than seven days may be removed only when no committed revision references them and no recent upload reservation protects them.
 
-Every blob upload reserves its byte size in the Durable Object before R2 streaming and is confirmed against R2 afterward. A file operation cannot commit unless every referenced blob exists. Cleanup is serialized and aborts without deleting anything if retained history cannot be indexed safely.
+Every blob upload reserves its byte size in the Durable Object before R2 streaming and is confirmed against R2 afterward. A file operation cannot commit unless every referenced blob exists. Cleanup fences each candidate in SQLite before R2 deletion. Unrelated requests remain responsive, while uploads and commits that touch a fenced blob retry safely.
 
 The storage view reports remote SQLite/R2 usage, active-device acknowledgement progress, in-flight reservations, local browser quota pressure, and whether browser persistence was granted. Device acknowledgements are signed telemetry over the exact cursor, hash, epoch, and forever policy. They do not authorize deletion.
 

@@ -99,7 +99,7 @@ The project uses conventional commits. Semantic Release creates Obsidian-compati
 ## Documentation
 
 - [Architecture](docs/architecture.md)
-- [Architecture and delivery plan](PLAN.md)
+- [Scope and decision index](PLAN.md)
 - [Protocol](docs/protocol.md)
 - [Threat model](docs/threat-model.md)
 - [Deployment](docs/deployment.md)

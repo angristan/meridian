@@ -86,8 +86,8 @@ A committed revision must always keep its blob, repair must never erase a planne
 - Rename a file and verify the paired old/new dirty paths preserve one stable file identity.
 - Edit a path again while reconciliation is committing; verify the newer dirty token remains queued.
 - Apply a remote revision and verify its resulting Obsidian event does not echo a duplicate revision.
-- Pause during a large scan; the Worker must terminate, no partial reconciliation may commit, and dirty paths must remain.
-- Test an 8 MiB chunk, a 10,000-file index, and a 500-operation pull batch with the Worker enabled and with Blob Workers unavailable.
+- Pause during a large scan; cooperative planning must cancel, no partial reconciliation may commit, and dirty paths must remain. Unload must terminate any pending hash Worker.
+- Test an 8 MiB hash with Blob Workers enabled and unavailable, a cooperative 10,000-file index, and a 500-operation pull batch.
 - Verify uploads and downloads never exceed four active chunk transfers, preserve chunk order, and never commit a revision after a failed chunk.
 - Verify one exact scheduler timer coalesces simultaneous scan/poll deadlines, reconnect backoff caps at five minutes, and suspension drains durable file-event writes.
 
@@ -128,9 +128,10 @@ Automated responsiveness tests use generous wall-clock ceilings to detect pathol
 - Fail R2 deletion after fencing; the fence must clear and an exact cleanup retry must succeed.
 - Stop after successful R2 deletion but before SQL cleanup; the next upload must atomically recover the stranded fence.
 - Fail the operation transaction after blob confirmation; no operation may appear, the blob must remain reserved, and an exact retry must commit once.
-- After the server commits, stop after local snapshot persistence, revision persistence, pending-entry completion, and checkpoint persistence. Reopen the same IndexedDB database at each boundary; one copy of each revision must remain, pending work must drain, and the checkpoint must never pass missing local state.
-- Interrupt a committed local revision, then append its remote descendant before restart; the descendant must apply without a false conflict or a stale retry overwriting its snapshot.
-- Fill IndexedDB and inject quota errors at entry, revision, conflict, and checkpoint writes; transactions abort, prepared work remains exact, and the cursor never passes unavailable local state.
+- After the server commits, stop after atomic pushed-revision settlement and after checkpoint persistence. Reopen the same IndexedDB database at each boundary; one copy of each revision must remain, pending work must drain, and the checkpoint must never pass missing local state.
+- Stop after an atomic remote-apply transaction and after an atomic history revision/checkpoint transaction. Reopen the same IndexedDB database; replay must be idempotent and the live checkpoint must remain last.
+- Recreate legacy crashes after snapshot persistence and revision persistence, then restart. Append a remote descendant to an interrupted committed revision; it must apply without a false conflict or a stale retry overwriting its snapshot.
+- Fill IndexedDB and inject quota errors in entry, applied-operation, history, and checkpoint transactions; transactions abort, prepared work remains exact, and the cursor never passes unavailable local state.
 - Crash between local compaction batches; reopening and rerunning removes only completed entries and exact duplicate history rows. Pending work, dirty tokens, DAG parents, tombstones, conflicts, checkpoints, revocations, and old-epoch history remain usable.
 - Test missing `navigator.storage` APIs on mobile, warning at 80%, critical pressure at 90%, and user-gesture persistent-storage requests.
 
