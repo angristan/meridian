@@ -1,3 +1,10 @@
+# [1.12.0](https://github.com/angristan/meridian/compare/1.11.13...1.12.0) (2026-08-03)
+
+
+### Features
+
+* simplify the plugin product surface ([0b480af](https://github.com/angristan/meridian/commit/0b480af0b1c198ebf6dc53ca8341b6f58bb8e215))
+
 ## [1.11.13](https://github.com/angristan/meridian/compare/1.11.12...1.11.13) (2026-08-03)
 
 
