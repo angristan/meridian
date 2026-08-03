@@ -18,165 +18,164 @@ import {
   SnapshotSchema,
 } from "@meridian/protocol"
 import { runHttpEffect } from "./effect-boundary"
-import { proxyJson } from "./json-proxy"
+import { proxyAuthenticatedJson, proxyJson } from "./json-proxy"
 import { requiredParam } from "./request"
-import { authenticatedVaultEffect } from "./session"
+import { extractSessionToken } from "./session"
 import type { WorkerApp } from "./types"
-import { callVaultEffect } from "./vault-proxy"
+import { vaultResponseEffect } from "./vault-proxy"
 
 export function registerApiRoutes(app: WorkerApp): void {
   app.post(
     "/v1/auth/challenge",
-    proxyJson(AuthChallengeSchema, () => "/v1/auth/challenge"),
+    proxyJson(AuthChallengeSchema, (vault, input) => vault.createAuthChallenge(input)),
   )
   app.post(
     "/v1/auth/session",
-    proxyJson(AuthSessionSchema, () => "/v1/auth/session"),
+    proxyJson(AuthSessionSchema, (vault, input) => vault.createAuthSession(input)),
   )
-  app.get("/v1/recovery/package", (c) =>
-    runHttpEffect(callVaultEffect(c.env, "/v1/recovery/package", "GET")),
+  app.get("/v1/recovery/package", (context) =>
+    runHttpEffect(vaultResponseEffect(context.env, (vault) => vault.recoveryPackage())),
   )
-  app.post("/v1/recovery/challenge", (c) =>
-    runHttpEffect(callVaultEffect(c.env, "/v1/recovery/challenge", "POST")),
+  app.post("/v1/recovery/challenge", (context) =>
+    runHttpEffect(vaultResponseEffect(context.env, (vault) => vault.createRecoveryChallenge())),
   )
   app.post(
     "/v1/recovery/claim",
-    proxyJson(RecoveryClaimSchema, () => "/v1/recovery/claim"),
+    proxyJson(RecoveryClaimSchema, (vault, input) => vault.recover(input)),
   )
-  app.get("/v1/devices", (c) => runHttpEffect(authenticatedVaultEffect(c, "/v1/devices")))
+  app.get("/v1/devices", (context) => {
+    const token = extractSessionToken(context.req.raw)
+    return runHttpEffect(vaultResponseEffect(context.env, (vault) => vault.listDevices(token)))
+  })
   app.put(
     "/v1/device/descriptor",
-    proxyJson(DeviceDescriptorSchema, () => "/v1/device/descriptor", {
-      authenticated: true,
-      method: "PUT",
-    }),
+    proxyAuthenticatedJson(DeviceDescriptorSchema, (vault, input, token) =>
+      vault.updateDeviceDescriptor(token, input),
+    ),
   )
   app.post(
     "/v1/devices/:id/revoke",
-    proxyJson(
-      RevokeDeviceSchema,
-      (c) => `/v1/devices/${encodeURIComponent(requiredParam(c, "id"))}/revoke`,
-      { authenticated: true },
+    proxyAuthenticatedJson(RevokeDeviceSchema, (vault, input, token, context) =>
+      vault.revokeDevice(token, requiredParam(context, "id"), input),
     ),
   )
   app.post(
     "/v1/pairings",
-    proxyJson(CreatePairingSchema, () => "/v1/pairings", { authenticated: true }),
-  )
-  app.get("/v1/pairings/:id", (c) =>
-    runHttpEffect(
-      authenticatedVaultEffect(c, `/v1/pairings/${encodeURIComponent(requiredParam(c, "id"))}`),
+    proxyAuthenticatedJson(CreatePairingSchema, (vault, input, token) =>
+      vault.createPairing(token, input),
     ),
   )
+  app.get("/v1/pairings/:id", (context) => {
+    const token = extractSessionToken(context.req.raw)
+    return runHttpEffect(
+      vaultResponseEffect(context.env, (vault) =>
+        vault.pairingStatus(token, requiredParam(context, "id")),
+      ),
+    )
+  })
   app.post(
     "/v1/pairings/:id/status",
-    proxyJson(
-      PairingResultSchema,
-      (c) => `/v1/pairings/${encodeURIComponent(requiredParam(c, "id"))}/status`,
+    proxyJson(PairingResultSchema, (vault, input, context) =>
+      vault.pairingProgress(requiredParam(context, "id"), input),
     ),
   )
   app.post(
     "/v1/pairings/:id/join",
-    proxyJson(
-      PairingJoinSchema,
-      (c) => `/v1/pairings/${encodeURIComponent(requiredParam(c, "id"))}/join`,
+    proxyJson(PairingJoinSchema, (vault, input, context) =>
+      vault.joinPairing(requiredParam(context, "id"), input),
     ),
   )
   app.post(
     "/v1/pairings/:id/approve",
-    proxyJson(
-      PairingApprovalSchema,
-      (c) => `/v1/pairings/${encodeURIComponent(requiredParam(c, "id"))}/approve`,
-      { authenticated: true },
+    proxyAuthenticatedJson(PairingApprovalSchema, (vault, input, token, context) =>
+      vault.approvePairing(token, requiredParam(context, "id"), input),
     ),
   )
   app.post(
     "/v1/pairings/:id/release",
-    proxyJson(
-      PairingReleaseSchema,
-      (c) => `/v1/pairings/${encodeURIComponent(requiredParam(c, "id"))}/release`,
-      { authenticated: true },
+    proxyAuthenticatedJson(PairingReleaseSchema, (vault, input, token, context) =>
+      vault.releasePairing(token, requiredParam(context, "id"), input),
     ),
   )
   app.post(
     "/v1/pairings/:id/result",
-    proxyJson(
-      PairingResultSchema,
-      (c) => `/v1/pairings/${encodeURIComponent(requiredParam(c, "id"))}/result`,
+    proxyJson(PairingResultSchema, (vault, input, context) =>
+      vault.pairingResult(requiredParam(context, "id"), input),
     ),
   )
   app.post(
     "/v1/pairings/:id/confirm-owner",
-    proxyJson(
-      EmptyObjectSchema,
-      (c) => `/v1/pairings/${encodeURIComponent(requiredParam(c, "id"))}/confirm-owner`,
-      { authenticated: true },
+    proxyAuthenticatedJson(EmptyObjectSchema, (vault, _input, token, context) =>
+      vault.confirmPairingOwner(token, requiredParam(context, "id")),
     ),
   )
   app.post(
     "/v1/pairings/:id/confirm-candidate",
-    proxyJson(
-      PairingCandidateConfirmationSchema,
-      (c) => `/v1/pairings/${encodeURIComponent(requiredParam(c, "id"))}/confirm-candidate`,
+    proxyJson(PairingCandidateConfirmationSchema, (vault, input, context) =>
+      vault.confirmPairingCandidate(requiredParam(context, "id"), input),
     ),
   )
   app.post(
     "/v1/pairings/:id/complete",
-    proxyJson(
-      PairingCandidateConfirmationSchema,
-      (c) => `/v1/pairings/${encodeURIComponent(requiredParam(c, "id"))}/complete`,
+    proxyJson(PairingCandidateConfirmationSchema, (vault, input, context) =>
+      vault.completePairing(requiredParam(context, "id"), input),
     ),
   )
   app.post(
     "/v1/pairings/:id/cancel",
-    proxyJson(
-      PairingCancelSchema,
-      (c) => `/v1/pairings/${encodeURIComponent(requiredParam(c, "id"))}/cancel`,
+    proxyJson(PairingCancelSchema, (vault, input, context) =>
+      vault.cancelPairing(requiredParam(context, "id"), input),
     ),
   )
   app.post(
     "/v1/pairings/:id/reject",
-    proxyJson(
-      EmptyObjectSchema,
-      (c) => `/v1/pairings/${encodeURIComponent(requiredParam(c, "id"))}/reject`,
-      { authenticated: true },
+    proxyAuthenticatedJson(EmptyObjectSchema, (vault, _input, token, context) =>
+      vault.rejectPairing(token, requiredParam(context, "id")),
     ),
   )
   app.post(
     "/v1/operations",
-    proxyJson(OperationSchema, () => "/v1/operations", { authenticated: true }),
+    proxyAuthenticatedJson(OperationSchema, (vault, input, token) =>
+      vault.commitOperation(token, input),
+    ),
   )
   app.put(
     "/v1/checkpoints",
-    proxyJson(CheckpointSchema, () => "/v1/checkpoints", {
-      authenticated: true,
-      method: "PUT",
-    }),
+    proxyAuthenticatedJson(CheckpointSchema, (vault, input, token) =>
+      vault.putCheckpoint(token, input),
+    ),
   )
-  app.get("/v1/checkpoints/latest", (c) =>
-    runHttpEffect(authenticatedVaultEffect(c, "/v1/checkpoints/latest")),
-  )
+  app.get("/v1/checkpoints/latest", (context) => {
+    const token = extractSessionToken(context.req.raw)
+    return runHttpEffect(vaultResponseEffect(context.env, (vault) => vault.latestCheckpoint(token)))
+  })
   app.put(
     "/v1/retention/acknowledgement",
-    proxyJson(RetentionAcknowledgementSchema, () => "/v1/retention/acknowledgement", {
-      authenticated: true,
-      method: "PUT",
-    }),
+    proxyAuthenticatedJson(RetentionAcknowledgementSchema, (vault, input, token) =>
+      vault.acknowledgeRetention(token, input),
+    ),
   )
   app.put(
     "/v1/snapshot",
-    proxyJson(SnapshotSchema, () => "/v1/snapshot", {
-      authenticated: true,
-      method: "PUT",
-    }),
+    proxyAuthenticatedJson(SnapshotSchema, (vault, input, token) =>
+      vault.putSnapshot(token, input),
+    ),
   )
-  app.get("/v1/snapshot", (c) => {
-    const id = c.req.query("id")
-    const query = id === undefined ? "" : `?id=${encodeURIComponent(id)}`
-    return runHttpEffect(authenticatedVaultEffect(c, `/v1/snapshot${query}`))
+  app.get("/v1/snapshot", (context) => {
+    const token = extractSessionToken(context.req.raw)
+    return runHttpEffect(
+      vaultResponseEffect(context.env, (vault) =>
+        vault.getSnapshot(token, context.req.query("id") ?? null),
+      ),
+    )
   })
-  app.get("/v1/changes", (c) => {
-    const query = new URL(c.req.url).search
-    return runHttpEffect(authenticatedVaultEffect(c, `/v1/changes${query}`))
+  app.get("/v1/changes", (context) => {
+    const token = extractSessionToken(context.req.raw)
+    const after = Number(context.req.query("after") ?? "0")
+    const limit = Number(context.req.query("limit") ?? "200")
+    const afterHash = context.req.query("afterHash") ?? null
+    return runHttpEffect(
+      vaultResponseEffect(context.env, (vault) => vault.changes(token, after, limit, afterHash)),
+    )
   })
 }

@@ -6,7 +6,6 @@ import {
   encodeCanonical,
   hashBytes,
   type RecoveryClaim,
-  RecoveryClaimSchema,
   recoveryId,
   vaultId,
   x25519PublicKey,
@@ -22,11 +21,8 @@ import {
 import { assert, HttpError } from "../errors"
 import {
   cleanupExpired,
-  decode,
-  json,
   MAX_CERTIFICATE_BYTES,
   MAX_RECOVERY_PACKAGE_BYTES,
-  requestJson,
   type TransactionSync,
   type VaultStateRow,
   validateOpaqueData,
@@ -34,6 +30,7 @@ import {
   validateSignature,
   vaultState,
 } from "./domain"
+import { reply, type VaultReply } from "./rpc"
 import { validateRecoveryRootedIdentity } from "./signing"
 
 const RECOVERY_CHALLENGE_TTL_MS = 5 * 60 * 1_000
@@ -53,11 +50,11 @@ export class VaultRecovery {
     private readonly closeAllSockets: () => void,
   ) {}
 
-  async recoveryPackage(): Promise<Response> {
+  async recoveryPackage() {
     const vault = vaultState(this.sql)
     assert(vault, new HttpError(409, "not_claimed", "This deployment has not been claimed"))
     const recoveryStateId = await this.ensureRecoveryStateId(vault)
-    return json({
+    return reply({
       vaultId: vault.vault_id,
       recoverySigningPublicKey: vault.recovery_signing_public_key,
       encryptedRecoveryPackage: vault.recovery_package,
@@ -65,7 +62,7 @@ export class VaultRecovery {
     })
   }
 
-  async createRecoveryChallenge(): Promise<Response> {
+  async createRecoveryChallenge() {
     const vault = vaultState(this.sql)
     assert(vault, new HttpError(409, "not_claimed", "This deployment has not been claimed"))
     await this.ensureRecoveryStateId(vault)
@@ -80,7 +77,7 @@ export class VaultRecovery {
       )
       .toArray()[0]
     if (existing) {
-      return json({
+      return reply({
         challengeId: existing.challenge_id,
         challenge: existing.challenge,
         expiresAt: existing.expires_at,
@@ -98,11 +95,10 @@ export class VaultRecovery {
       now,
       expiresAt,
     )
-    return json({ challengeId, challenge, expiresAt, vaultId: vault.vault_id })
+    return reply({ challengeId, challenge, expiresAt, vaultId: vault.vault_id })
   }
 
-  async recover(request: Request): Promise<Response> {
-    const input = decode(RecoveryClaimSchema, await requestJson(request))
+  async recover(input: RecoveryClaim) {
     const recoveryIdentifier = input.recoveryId
     assertIdentifier(recoveryIdentifier, "recoveryId")
     assertIdentifier(input.challengeId, "challengeId")
@@ -283,7 +279,7 @@ export class VaultRecovery {
     })
 
     if (!result.duplicate) this.closeAllSockets()
-    return json(
+    return reply(
       {
         vaultId: vault.vault_id,
         deviceId: result.receipt.device_id,
@@ -291,7 +287,7 @@ export class VaultRecovery {
         recoveryStateId: result.receipt.recovery_state_id,
         duplicate: result.duplicate,
       },
-      { status: result.duplicate ? 200 : 201 },
+      result.duplicate ? 200 : 201,
     )
   }
 
@@ -304,14 +300,23 @@ export class VaultRecovery {
       .toArray()[0]
   }
 
-  private duplicateResponse(receipt: RecoveryReceipt, requestHash: string): Response {
+  private duplicateResponse(
+    receipt: RecoveryReceipt,
+    requestHash: string,
+  ): VaultReply<{
+    vaultId: string
+    deviceId: string
+    recoveredAt: number
+    recoveryStateId: string
+    duplicate: boolean
+  }> {
     assert(
       receipt.request_hash === requestHash,
       new HttpError(409, "idempotency_conflict", "Recovery ID was used with different content"),
     )
     const vault = vaultState(this.sql)
     assert(vault, new HttpError(409, "not_claimed", "This deployment has not been claimed"))
-    return json({
+    return reply({
       vaultId: vault.vault_id,
       deviceId: receipt.device_id,
       recoveredAt: receipt.recovered_at,

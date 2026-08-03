@@ -11,10 +11,9 @@ import {
   hashBytes,
   logEntryHashInput,
   type Operation,
-  OperationSchema,
   operationSigningBytes,
   Permission,
-  RevokeDeviceSchema,
+  type RevokeDeviceSchema,
   type SignedOperation,
   vaultId,
 } from "@meridian/protocol"
@@ -32,21 +31,21 @@ import type { VaultBlobs } from "./blobs"
 import {
   activeDevice,
   authenticate,
-  decode,
-  json,
   MAX_CHANGE_PAGE_SIZE,
   MAX_ENVELOPE_BYTES,
   MAX_EPOCH_ENVELOPE_BYTES,
   MAX_RECOVERY_PACKAGE_BYTES,
   type OperationRow,
-  requestJson,
   type SessionContext,
   type TransactionSync,
   validateOpaqueData,
   validateSignature,
   vaultState,
 } from "./domain"
+import { reply } from "./rpc"
 import { operationSigningMessage } from "./signing"
+
+type RevokeDevice = typeof RevokeDeviceSchema.Type
 
 type AppendResult = { operation: OperationRow; inserted: boolean }
 
@@ -504,29 +503,27 @@ export class VaultOperations {
     throw new HttpError(503, "append_contended", "Operation append was contended; retry safely")
   }
 
-  async commitOperation(request: Request): Promise<Response> {
-    const session = await authenticate(this.sql, request)
-    const operation = decode(OperationSchema, await requestJson(request))
+  async commitOperation(token: string, operation: Operation) {
+    const session = await authenticate(this.sql, token)
     const result = await this.appendOperation(operation, session)
     if (result.inserted) this.notifyCursor(result.operation.cursor, session.deviceId)
     if (operation.type === "device-revocation" && operation.subjectDeviceId) {
       this.closeRevokedDevice(operation.subjectDeviceId)
     }
-    return json(
+    return reply(
       {
         cursor: result.operation.cursor,
         previousHash: result.operation.previous_hash,
         chainHash: result.operation.chain_hash,
         duplicate: !result.inserted,
       },
-      { status: result.inserted ? 201 : 200 },
+      result.inserted ? 201 : 200,
     )
   }
 
-  async revokeDevice(request: Request, targetDeviceId: string): Promise<Response> {
+  async revokeDevice(token: string, targetDeviceId: string, input: RevokeDevice) {
     assertIdentifier(targetDeviceId, "deviceId")
-    const session = await authenticate(this.sql, request)
-    const input = decode(RevokeDeviceSchema, await requestJson(request))
+    const session = await authenticate(this.sql, token)
     assert(
       input.operation.type === "device-revocation" &&
         input.operation.subjectDeviceId === targetDeviceId,
@@ -539,22 +536,19 @@ export class VaultOperations {
     const result = await this.appendOperation(input.operation, session)
     if (result.inserted) this.notifyCursor(result.operation.cursor, session.deviceId)
     this.closeRevokedDevice(targetDeviceId)
-    return json(
+    return reply(
       {
         cursor: result.operation.cursor,
         previousHash: result.operation.previous_hash,
         chainHash: result.operation.chain_hash,
         duplicate: !result.inserted,
       },
-      { status: result.inserted ? 201 : 200 },
+      result.inserted ? 201 : 200,
     )
   }
 
-  async changes(request: Request): Promise<Response> {
-    await authenticate(this.sql, request)
-    const url = new URL(request.url)
-    const after = Number(url.searchParams.get("after") ?? "0")
-    const limit = Number(url.searchParams.get("limit") ?? "200")
+  async changes(token: string, after: number, limit: number, afterHash: string | null) {
+    await authenticate(this.sql, token)
     assert(
       Number.isSafeInteger(after) && after >= 0,
       new HttpError(400, "invalid_cursor", "after must be a non-negative integer"),
@@ -563,7 +557,6 @@ export class VaultOperations {
       Number.isSafeInteger(limit) && limit > 0 && limit <= MAX_CHANGE_PAGE_SIZE,
       new HttpError(400, "invalid_limit", "limit is outside the allowed range"),
     )
-    const afterHash = url.searchParams.get("afterHash")
     if (afterHash !== null) {
       assert(
         base64UrlDecode(afterHash, 32).length === 32,
@@ -588,7 +581,7 @@ export class VaultOperations {
       )
       .toArray()
       .map(serializeOperation)
-    return json({
+    return reply({
       operations,
       latestCursor: state.cursor,
       latestHash: state.head_hash,

@@ -1,7 +1,8 @@
 import { decodeOperation } from "@meridian/protocol"
 import { assertIdentifier, base64UrlDecode, base64UrlEncode } from "../encoding"
 import { assert, HttpError } from "../errors"
-import { authenticate, json, type OperationRow, vaultState } from "./domain"
+import { authenticate, type OperationRow, vaultState } from "./domain"
+import { reply } from "./rpc"
 
 type RevisionEnvelopeRow = Pick<OperationRow, "cursor" | "envelope">
 
@@ -17,16 +18,15 @@ export class VaultBlobs {
     private readonly transactionSync: <T>(callback: () => T) => T,
   ) {}
 
-  async accessBlob(request: Request, blobId: string): Promise<Response> {
+  async accessBlob(token: string, blobId: string) {
     assertIdentifier(blobId, "blobId")
-    const session = await authenticate(this.sql, request)
-    return json({ key: `vaults/${session.vaultId}/blobs/${blobId}` })
+    const session = await authenticate(this.sql, token)
+    return reply({ key: `vaults/${session.vaultId}/blobs/${blobId}` })
   }
 
-  async claimBlob(request: Request, blobId: string): Promise<Response> {
+  async claimBlob(token: string, blobId: string, expectedSize: number) {
     assertIdentifier(blobId, "blobId")
-    const session = await authenticate(this.sql, request)
-    const expectedSize = Number(new URL(request.url).searchParams.get("size"))
+    const session = await authenticate(this.sql, token)
     assert(
       Number.isSafeInteger(expectedSize) && expectedSize > 0,
       new HttpError(400, "invalid_length", "Blob reservation size is invalid"),
@@ -39,7 +39,7 @@ export class VaultBlobs {
         new HttpError(409, "blob_deleting", "Blob cleanup is in progress; retry the upload"),
       )
       this.recoverDeletedBlobForUpload(blobId, expectedSize, session.deviceId)
-      return json({ exists: false, key })
+      return reply({ exists: false, key })
     }
 
     this.reserveBlobUpload(blobId, expectedSize, session.deviceId)
@@ -51,16 +51,19 @@ export class VaultBlobs {
       )
       this.rememberStoredBlob(blobId, existingObject.size)
       this.rememberBlobClaim(blobId, existingObject.size, session.deviceId)
-      return json({ exists: true, key })
+      return reply({ exists: true, key })
     }
 
-    return json({ exists: false, key })
+    return reply({ exists: false, key })
   }
 
-  async finalizeBlob(request: Request, blobId: string): Promise<Response> {
+  async finalizeBlob(token: string, blobId: string, expectedSize: number) {
     assertIdentifier(blobId, "blobId")
-    const session = await authenticate(this.sql, request)
-    const expectedSize = Number(new URL(request.url).searchParams.get("size"))
+    const session = await authenticate(this.sql, token)
+    assert(
+      Number.isSafeInteger(expectedSize) && expectedSize > 0,
+      new HttpError(400, "invalid_length", "Blob reservation size is invalid"),
+    )
     const claim = this.sql
       .exec<{ expected_size: number }>(
         "SELECT expected_size FROM blob_claims WHERE blob_id = ?",
@@ -80,7 +83,7 @@ export class VaultBlobs {
         catalogued?.size === expectedSize,
         new HttpError(409, "blob_reservation_missing", "Blob upload reservation is missing"),
       )
-      return new Response(null, { status: 204 })
+      return reply(null, 204)
     }
     assert(
       claim.expected_size === expectedSize,
@@ -88,7 +91,7 @@ export class VaultBlobs {
     )
     this.rememberStoredBlob(blobId, expectedSize)
     this.rememberBlobClaim(blobId, expectedSize, session.deviceId)
-    return new Response(null, { status: 204 })
+    return reply(null, 204)
   }
 
   async ensureStoredRevisionBlobs(
@@ -132,8 +135,8 @@ export class VaultBlobs {
     }
   }
 
-  async pruneOrphanBlobs(request: Request): Promise<Response> {
-    const session = await authenticate(this.sql, request)
+  async pruneOrphanBlobs(token: string) {
+    const session = await authenticate(this.sql, token)
     assert(
       session.role === "owner",
       new HttpError(403, "owner_required", "Only the owner device can prune storage"),
@@ -215,11 +218,11 @@ export class VaultBlobs {
       cursor = page.truncated ? page.cursor : undefined
     } while (cursor !== undefined)
 
-    return json({ deletedBytes, deletedCount, graceDays: ORPHAN_GRACE_MS / 86_400_000 })
+    return reply({ deletedBytes, deletedCount, graceDays: ORPHAN_GRACE_MS / 86_400_000 })
   }
 
-  async storageStats(request: Request): Promise<Response> {
-    const session = await authenticate(this.sql, request)
+  async storageStats(token: string) {
+    const session = await authenticate(this.sql, token)
     const blobs = await this.reconcileBlobCatalog(session.vaultId)
     const operationCount = this.sql
       .exec<{ count: number }>("SELECT COUNT(*) AS count FROM operations")
@@ -251,7 +254,7 @@ export class VaultBlobs {
         state.current_epoch_id,
       )
       .one()
-    return json({
+    return reply({
       totalBytes,
       blobBytes: blobs.blobBytes,
       blobCount: blobs.blobCount,

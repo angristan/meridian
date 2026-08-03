@@ -41,7 +41,10 @@ import {
 } from "@meridian/protocol"
 import { describe, expect, it } from "vitest"
 import { base64UrlDecode, base64UrlEncode, randomToken, sha256, ZERO_HASH } from "../src/encoding"
+import { errorResponse, HttpError } from "../src/errors"
+import { vaultReplyResponse } from "../src/http/vault-proxy"
 import { migrateVaultSchema } from "../src/vault/migrations"
+import type { VaultReply, VaultRpcCall } from "../src/vault/rpc"
 import {
   authSigningMessage,
   checkpointSigningMessage,
@@ -50,6 +53,7 @@ import {
   pairingJoinSigningMessage,
   retentionAcknowledgementSigningMessage,
   setupClaimSigningMessage,
+  type VaultDurableObject,
 } from "../src/vault-do"
 
 const SETUP_TOKEN = "integration-test-setup-token-32-bytes-long"
@@ -124,6 +128,54 @@ async function signedRevocation(
 type TestFetch = (url: string, init?: RequestInit) => Promise<Response>
 
 const publicFetch: TestFetch = (url, init) => SELF.fetch(url, init)
+
+async function rpcResponse(call: VaultRpcCall<VaultReply<unknown>>): Promise<Response> {
+  const result = await call
+  if (!result.ok) {
+    return errorResponse(
+      new HttpError(result.error.status, result.error.code, result.error.message),
+    )
+  }
+  return vaultReplyResponse(result.value)
+}
+
+function rpcFetch(stub: DurableObjectStub<VaultDurableObject>): TestFetch {
+  return async (url, init) => {
+    const request = new Request(url, init)
+    const { pathname } = new URL(url)
+    const body = request.body ? await request.json() : undefined
+    const token =
+      /^Bearer ([A-Za-z0-9_-]{32,256})$/.exec(request.headers.get("authorization") ?? "")?.at(1) ??
+      ""
+
+    if (pathname === "/internal/setup/session" || pathname === "/v1/setup/session") {
+      return rpcResponse(stub.createSetupSession())
+    }
+    if (pathname === "/v1/setup/claim") {
+      return rpcResponse(stub.claimSetup(body as SetupClaim))
+    }
+    if (pathname === "/v1/auth/challenge") {
+      return rpcResponse(
+        stub.createAuthChallenge(body as Parameters<VaultDurableObject["createAuthChallenge"]>[0]),
+      )
+    }
+    if (pathname === "/v1/auth/session") {
+      return rpcResponse(
+        stub.createAuthSession(body as Parameters<VaultDurableObject["createAuthSession"]>[0]),
+      )
+    }
+    if (pathname === "/v1/recovery/package") return rpcResponse(stub.recoveryPackage())
+    if (pathname === "/v1/operations") {
+      return rpcResponse(stub.commitOperation(token, body as Operation))
+    }
+    if (pathname === "/v1/retention/acknowledgement") {
+      return rpcResponse(stub.acknowledgeRetention(token, body as RetentionAcknowledgement))
+    }
+    if (pathname === "/v1/storage") return rpcResponse(stub.storageStats(token))
+
+    return errorResponse(new HttpError(404, "not_found", "Route not found"))
+  }
+}
 
 async function authenticateDevice(
   vaultId: string,
@@ -239,7 +291,7 @@ describe("Meridian Worker integration", () => {
     const id = env.VAULT.idFromName("schema-test")
     const stub = env.VAULT.get(id)
     await runInDurableObject(stub, async (instance, state) => {
-      await instance.fetch(new Request("https://vault.internal/internal/status"))
+      await instance.status()
       const migration = state.storage.sql
         .exec<{ version: number }>("SELECT MAX(id) AS version FROM _sql_schema_migrations")
         .one()
@@ -275,7 +327,7 @@ describe("Meridian Worker integration", () => {
     const id = env.VAULT.idFromName("current-schema-test")
     const stub = env.VAULT.get(id)
     await runInDurableObject(stub, async (instance, state) => {
-      await instance.fetch(new Request("https://vault.internal/internal/status"))
+      await instance.status()
       state.storage.sql.exec(
         `INSERT INTO setup_sessions(token_hash, challenge, created_at, expires_at, consumed_at)
          VALUES ('sentinel', 'challenge', 1, 2, NULL)`,
@@ -297,7 +349,7 @@ describe("Meridian Worker integration", () => {
     const id = env.VAULT.idFromName("unsupported-schema-test")
     const stub = env.VAULT.get(id)
     await runInDurableObject(stub, async (instance, state) => {
-      await instance.fetch(new Request("https://vault.internal/internal/status"))
+      await instance.status()
       state.storage.sql.exec("DROP TABLE _sql_schema_migrations")
 
       expect(() =>
@@ -314,9 +366,34 @@ describe("Meridian Worker integration", () => {
     })
   })
 
+  it("uses typed RPC for normal vault calls and preserves errors", async () => {
+    const stub = env.VAULT.get(env.VAULT.idFromName(`rpc-boundary-${randomToken(8)}`))
+    const status = await stub.status()
+    expect(status).toMatchObject({ ok: true, value: { body: { claimed: false }, status: 200 } })
+
+    const directHttp = await stub.fetch(new Request("https://vault.internal/internal/status"))
+    expect(directHttp.status).toBe(404)
+    await expect(directHttp.json()).resolves.toEqual({
+      error: { code: "not_found", message: "Route not found" },
+    })
+
+    const invalidToken = randomToken()
+    const rpcFailure = await stub.listDevices(invalidToken)
+    expect(rpcFailure.ok).toBe(false)
+    if (rpcFailure.ok) throw new Error("Expected vault RPC authentication to fail")
+
+    const httpFailure = await SELF.fetch("https://example.test/v1/devices", {
+      headers: { authorization: `Bearer ${invalidToken}` },
+    })
+    expect(httpFailure.status).toBe(rpcFailure.error.status)
+    await expect(httpFailure.json()).resolves.toEqual({
+      error: { code: rpcFailure.error.code, message: rpcFailure.error.message },
+    })
+  })
+
   it("advances epoch and recovery state atomically while rejecting stale writes", async () => {
     const primaryStub = env.VAULT.get(env.VAULT.idFromName("epoch-transition-test"))
-    const directFetch: TestFetch = (url, init) => primaryStub.fetch(new Request(url, init))
+    const directFetch = rpcFetch(primaryStub)
     const { deviceId, sessionToken, signingKey, device, recoveryPublicKey } =
       await setupAndAuthenticate(directFetch, "/internal/setup/session")
     const authorization = { authorization: `Bearer ${sessionToken}` }
@@ -452,7 +529,7 @@ describe("Meridian Worker integration", () => {
 
   it("records only signed retention acknowledgements on authoritative history", async () => {
     const stub = env.VAULT.get(env.VAULT.idFromName("retention-acknowledgement-test"))
-    const directFetch: TestFetch = (url, init) => stub.fetch(new Request(url, init))
+    const directFetch = rpcFetch(stub)
     const { deviceId, sessionToken, signingKey, vaultId, device } = await setupAndAuthenticate(
       directFetch,
       "/internal/setup/session",

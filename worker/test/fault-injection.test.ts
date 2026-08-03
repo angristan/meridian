@@ -24,11 +24,13 @@ import { base64UrlEncode, randomToken } from "../src/encoding"
 import { HttpError } from "../src/errors"
 import { VaultBlobs } from "../src/vault/blobs"
 import type { TransactionSync } from "../src/vault/domain"
+import type { VaultReply, VaultRpcCall } from "../src/vault/rpc"
 import { VaultOperations } from "../src/vault/operations"
 import {
   authSigningMessage,
   operationSigningMessage,
   setupClaimSigningMessage,
+  type VaultDurableObject,
 } from "../src/vault-do"
 
 function randomBytes(length: number): Uint8Array<ArrayBuffer> {
@@ -41,7 +43,13 @@ function sign(message: Uint8Array, privateKey: Ed25519PrivateKey): string {
   return base64UrlEncode(signBytes(message, privateKey))
 }
 
-async function setupOwner(stub: DurableObjectStub): Promise<{
+async function rpcReply<T>(call: VaultRpcCall<VaultReply<T>>): Promise<VaultReply<T>> {
+  const result = await call
+  if (!result.ok) throw new HttpError(result.error.status, result.error.code, result.error.message)
+  return result.value
+}
+
+async function setupOwner(stub: DurableObjectStub<VaultDurableObject>): Promise<{
   device: Awaited<ReturnType<typeof createFirstDeviceClaimBundle>>["device"]
   deviceId: string
   sessionToken: string
@@ -50,13 +58,7 @@ async function setupOwner(stub: DurableObjectStub): Promise<{
   const first = await createFirstDeviceClaimBundle()
   const deviceId = base64UrlEncode(first.device.deviceId)
   const vaultId = base64UrlEncode(first.device.vaultId)
-  const setupResponse = await stub.fetch(
-    new Request("https://vault.internal/internal/setup/session", { method: "POST" }),
-  )
-  const setup = (await setupResponse.json()) as {
-    setupSession: string
-    claimChallenge: string
-  }
+  const setup = (await rpcReply(stub.createSetupSession())).body
   const unsignedClaim: SetupClaim = {
     setupSession: setup.setupSession,
     vaultId,
@@ -80,26 +82,10 @@ async function setupOwner(stub: DurableObjectStub): Promise<{
       first.device.signingPrivateKey,
     ),
   }
-  const claimResponse = await stub.fetch(
-    new Request("https://vault.internal/v1/setup/claim", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(claim),
-    }),
-  )
+  const claimResponse = await rpcReply(stub.claimSetup(claim))
   expect(claimResponse.status).toBe(201)
 
-  const challengeResponse = await stub.fetch(
-    new Request("https://vault.internal/v1/auth/challenge", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ deviceId }),
-    }),
-  )
-  const challenge = (await challengeResponse.json()) as {
-    challengeId: string
-    challenge: string
-  }
+  const challenge = (await rpcReply(stub.createAuthChallenge({ deviceId }))).body
   const authInput = {
     deviceId,
     challengeId: challenge.challengeId,
@@ -109,14 +95,7 @@ async function setupOwner(stub: DurableObjectStub): Promise<{
     authSigningMessage(vaultId, authInput, challenge.challenge),
     first.device.signingPrivateKey,
   )
-  const sessionResponse = await stub.fetch(
-    new Request("https://vault.internal/v1/auth/session", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(authInput),
-    }),
-  )
-  const session = (await sessionResponse.json()) as { sessionToken: string }
+  const session = (await rpcReply(stub.createAuthSession(authInput))).body
   return { device: first.device, deviceId, sessionToken: session.sessionToken, vaultId }
 }
 
@@ -171,18 +150,7 @@ async function commitStatus(
   operation: Operation,
 ): Promise<number> {
   try {
-    return (
-      await operations.commitOperation(
-        new Request("https://vault.internal/v1/operations", {
-          method: "POST",
-          headers: {
-            authorization: `Bearer ${owner.sessionToken}`,
-            "content-type": "application/json",
-          },
-          body: JSON.stringify(operation),
-        }),
-      )
-    ).status
+    return (await operations.commitOperation(owner.sessionToken, operation)).status
   } catch (error) {
     if (!(error instanceof HttpError)) throw error
     return error.status
@@ -293,22 +261,14 @@ describe("deterministic Worker fault injection", () => {
         transactionSync,
       )
 
-      const authorization = { authorization: `Bearer ${owner.sessionToken}` }
-      const pruning = instance.fetch(
-        new Request("https://vault.internal/v1/storage/prune-orphans", {
-          method: "POST",
-          headers: authorization,
-        }),
-      )
+      const pruning = instance.pruneOrphanBlobs(owner.sessionToken)
       await bucket.deleteStarted
-      const changes = await instance.fetch(
-        new Request("https://vault.internal/v1/changes?after=0", { headers: authorization }),
-      )
+      const changes = await rpcReply(instance.changes(owner.sessionToken, 0, 200, null))
 
       bucket.releaseDelete()
       expect(requestTimeConcurrencyBlocks).toBe(0)
       expect(changes.status).toBe(200)
-      expect((await pruning).status).toBe(200)
+      expect((await rpcReply(pruning)).status).toBe(200)
     })
   })
 
@@ -335,10 +295,7 @@ describe("deterministic Worker fault injection", () => {
         () => {},
         blobs,
       )
-      const authorization = { authorization: `Bearer ${owner.sessionToken}` }
-      const pruning = blobs.pruneOrphanBlobs(
-        new Request("https://vault.internal/v1/storage/prune", { headers: authorization }),
-      )
+      const pruning = blobs.pruneOrphanBlobs(owner.sessionToken)
       await bucket.deleteStarted
 
       const commitResult = await commitStatus(
@@ -376,13 +333,9 @@ describe("deterministic Worker fault injection", () => {
         bucket as unknown as R2Bucket,
         transactionSync,
       )
-      const authorization = { authorization: `Bearer ${owner.sessionToken}` }
-
-      await expect(
-        blobs.pruneOrphanBlobs(
-          new Request("https://vault.internal/v1/storage/prune", { headers: authorization }),
-        ),
-      ).rejects.toThrow("Injected R2 deletion failure")
+      await expect(blobs.pruneOrphanBlobs(owner.sessionToken)).rejects.toThrow(
+        "Injected R2 deletion failure",
+      )
 
       expect(await bucket.head(blobKey)).not.toBeNull()
       expect(
@@ -394,10 +347,8 @@ describe("deterministic Worker fault injection", () => {
           .one().count,
       ).toBe(0)
 
-      const retry = await blobs.pruneOrphanBlobs(
-        new Request("https://vault.internal/v1/storage/prune", { headers: authorization }),
-      )
-      await expect(retry.json()).resolves.toMatchObject({ deletedCount: 1 })
+      const retry = await blobs.pruneOrphanBlobs(owner.sessionToken)
+      expect(retry.body).toMatchObject({ deletedCount: 1 })
       expect(await bucket.head(blobKey)).toBeNull()
     })
   })
@@ -426,13 +377,9 @@ describe("deterministic Worker fault injection", () => {
         bucket as unknown as R2Bucket,
         crashAfterDelete,
       )
-      const authorization = { authorization: `Bearer ${owner.sessionToken}` }
-
-      await expect(
-        interrupted.pruneOrphanBlobs(
-          new Request("https://vault.internal/v1/storage/prune", { headers: authorization }),
-        ),
-      ).rejects.toThrow("Injected crash after R2 deletion")
+      await expect(interrupted.pruneOrphanBlobs(owner.sessionToken)).rejects.toThrow(
+        "Injected crash after R2 deletion",
+      )
       expect(await bucket.head(blobKey)).toBeNull()
       expect(
         state.storage.sql
@@ -448,15 +395,9 @@ describe("deterministic Worker fault injection", () => {
         bucket as unknown as R2Bucket,
         durableTransaction,
       )
-      const claim = await restarted.claimBlob(
-        new Request(`https://vault.internal/v1/blobs/${blobId}/claim?size=3`, {
-          method: "POST",
-          headers: authorization,
-        }),
-        blobId,
-      )
+      const claim = await restarted.claimBlob(owner.sessionToken, blobId, 3)
       expect(claim.status).toBe(200)
-      await expect(claim.json()).resolves.toEqual({ exists: false, key: blobKey })
+      expect(claim.body).toEqual({ exists: false, key: blobKey })
       expect(
         state.storage.sql
           .exec<{ expected_size: number }>(
@@ -575,24 +516,15 @@ describe("deterministic Worker fault injection", () => {
         blobs,
       )
       const operation = signedBlobOperation(owner, blobIdentifier)
-      const request = () =>
-        new Request("https://vault.internal/v1/operations", {
-          method: "POST",
-          headers: {
-            authorization: `Bearer ${owner.sessionToken}`,
-            "content-type": "application/json",
-          },
-          body: JSON.stringify(operation),
-        })
 
-      await operations.commitOperation(request())
+      await operations.commitOperation(owner.sessionToken, operation)
       const committed = state.storage.sql
         .exec<{ chain_hash: string }>("SELECT chain_hash FROM operations WHERE cursor = 1")
         .one()
 
-      const retry = await operations.commitOperation(request())
+      const retry = await operations.commitOperation(owner.sessionToken, operation)
       expect(retry.status).toBe(200)
-      await expect(retry.json()).resolves.toMatchObject({
+      expect(retry.body).toMatchObject({
         cursor: 1,
         chainHash: committed.chain_hash,
         duplicate: true,
@@ -643,11 +575,7 @@ describe("deterministic Worker fault injection", () => {
       const committing = commitStatus(operations, owner, signedBlobOperation(owner, blobIdentifier))
       await head.reached
 
-      const pruning = blobs.pruneOrphanBlobs(
-        new Request("https://vault.internal/v1/storage/prune", {
-          headers: { authorization: `Bearer ${owner.sessionToken}` },
-        }),
-      )
+      const pruning = blobs.pruneOrphanBlobs(owner.sessionToken)
       const firstOutcome = await Promise.race([
         pruning.then(() => "prune-complete" as const),
         bucket.deleteStarted.then(() => "delete-started" as const),
@@ -659,7 +587,7 @@ describe("deterministic Worker fault injection", () => {
       expect(firstOutcome).toBe("prune-complete")
       expect(commitResult).toBe(201)
       expect(await bucket.head(blobKey)).not.toBeNull()
-      await expect(pruneResponse.json()).resolves.toMatchObject({ deletedCount: 0 })
+      expect(pruneResponse.body).toMatchObject({ deletedCount: 0 })
     })
   })
 })

@@ -1,5 +1,5 @@
 import { computeRecoveryStateId } from "@meridian/crypto"
-import { SetupClaimSchema, vaultId } from "@meridian/protocol"
+import { type SetupClaim, vaultId } from "@meridian/protocol"
 import {
   assertIdentifier,
   base64UrlDecode,
@@ -12,17 +12,15 @@ import {
 import { assert, HttpError } from "../errors"
 import {
   cleanupExpired,
-  decode,
-  json,
   MAX_CERTIFICATE_BYTES,
   MAX_RECOVERY_PACKAGE_BYTES,
-  requestJson,
   type TransactionSync,
   validateOpaqueData,
   validatePublicKey,
   validateSignature,
   vaultState,
 } from "./domain"
+import { reply } from "./rpc"
 import { setupClaimSigningMessage, validateRecoveryRootedIdentity } from "./signing"
 
 const SETUP_SESSION_TTL_MS = 10 * 60 * 1_000
@@ -33,7 +31,7 @@ export class VaultSetup {
     private readonly transactionSync: TransactionSync,
   ) {}
 
-  async createSetupSession(): Promise<Response> {
+  async createSetupSession() {
     assert(
       !vaultState(this.sql),
       new HttpError(409, "already_claimed", "This deployment is already claimed"),
@@ -56,7 +54,7 @@ export class VaultSetup {
       now,
       now + SETUP_SESSION_TTL_MS,
     )
-    return json({
+    return reply({
       setupSession: token,
       claimChallenge: challenge,
       logFormat: "canonical-cbor-v1",
@@ -64,8 +62,7 @@ export class VaultSetup {
     })
   }
 
-  async claim(request: Request): Promise<Response> {
-    const claim = decode(SetupClaimSchema, await requestJson(request))
+  async claim(claim: SetupClaim) {
     assertIdentifier(claim.vaultId, "vaultId")
     assertIdentifier(claim.initialDevice.deviceId, "deviceId")
     validatePublicKey(claim.recoverySigningPublicKey, "recoverySigningPublicKey")
@@ -176,9 +173,6 @@ export class VaultSetup {
       this.sql.exec("DELETE FROM setup_sessions WHERE token_hash != ?", sessionHash)
     })
 
-    return json(
-      { vaultId: claim.vaultId, deviceId: claim.initialDevice.deviceId, claimedAt },
-      { status: 201 },
-    )
+    return reply({ vaultId: claim.vaultId, deviceId: claim.initialDevice.deviceId, claimedAt }, 201)
   }
 }

@@ -1,22 +1,16 @@
-import {
-  CheckpointSchema,
-  RetentionAcknowledgementSchema,
-  SnapshotSchema,
-} from "@meridian/protocol"
+import type { Checkpoint, RetentionAcknowledgement, Snapshot } from "@meridian/protocol"
 import { assertIdentifier, verifyEd25519 } from "../encoding"
 import { assert, HttpError } from "../errors"
 import {
   activeDevice,
   authenticate,
-  decode,
-  json,
   MAX_ENVELOPE_BYTES,
-  requestJson,
   validateOpaqueData,
   validateSignature,
   vaultState,
 } from "./domain"
 import { hashAtCursor } from "./operations"
+import { reply } from "./rpc"
 import {
   checkpointSigningMessage,
   retentionAcknowledgementSigningMessage,
@@ -26,9 +20,8 @@ import {
 export class VaultRecords {
   constructor(private readonly sql: SqlStorage) {}
 
-  async putCheckpoint(request: Request): Promise<Response> {
-    const session = await authenticate(this.sql, request)
-    const checkpoint = decode(CheckpointSchema, await requestJson(request))
+  async putCheckpoint(token: string, checkpoint: Checkpoint) {
+    const session = await authenticate(this.sql, token)
     assertIdentifier(checkpoint.checkpointId, "checkpointId")
     assertIdentifier(checkpoint.epochId, "epochId")
     assert(
@@ -78,7 +71,7 @@ export class VaultRecords {
           existing.signature === checkpoint.signature,
         new HttpError(409, "idempotency_conflict", "Checkpoint ID was used with different content"),
       )
-      return json({ checkpointId: checkpoint.checkpointId, duplicate: true })
+      return reply({ checkpointId: checkpoint.checkpointId, duplicate: true })
     }
     this.sql.exec(
       `INSERT INTO checkpoints(checkpoint_id, device_id, cursor, log_hash, epoch_id, envelope, signature, created_at)
@@ -92,22 +85,21 @@ export class VaultRecords {
       checkpoint.signature,
       Date.now(),
     )
-    return json({ checkpointId: checkpoint.checkpointId, duplicate: false }, { status: 201 })
+    return reply({ checkpointId: checkpoint.checkpointId, duplicate: false }, 201)
   }
 
-  async latestCheckpoint(request: Request): Promise<Response> {
-    await authenticate(this.sql, request)
+  async latestCheckpoint(token: string) {
+    await authenticate(this.sql, token)
     const checkpoint = this.sql
       .exec<Record<string, string | number>>(
         "SELECT * FROM checkpoints ORDER BY cursor DESC, created_at DESC LIMIT 1",
       )
       .toArray()[0]
-    return checkpoint ? json({ checkpoint }) : json({ checkpoint: null })
+    return reply({ checkpoint: checkpoint ?? null })
   }
 
-  async acknowledgeRetention(request: Request): Promise<Response> {
-    const session = await authenticate(this.sql, request)
-    const acknowledgement = decode(RetentionAcknowledgementSchema, await requestJson(request))
+  async acknowledgeRetention(token: string, acknowledgement: RetentionAcknowledgement) {
+    const session = await authenticate(this.sql, token)
     assertIdentifier(acknowledgement.deviceId, "deviceId")
     assertIdentifier(acknowledgement.epochId, "epochId")
     assert(
@@ -165,7 +157,7 @@ export class VaultRecords {
           "Retention acknowledgement cannot move backward or fork",
         ),
       )
-      return json({ acknowledged: true, duplicate: true, cursor: existing.cursor })
+      return reply({ acknowledged: true, duplicate: true, cursor: existing.cursor })
     }
     this.sql.exec(
       `INSERT INTO retention_acknowledgements(
@@ -186,12 +178,11 @@ export class VaultRecords {
       acknowledgement.signature,
       Date.now(),
     )
-    return json({ acknowledged: true, duplicate: false, cursor: acknowledgement.cursor })
+    return reply({ acknowledged: true, duplicate: false, cursor: acknowledgement.cursor })
   }
 
-  async putSnapshot(request: Request): Promise<Response> {
-    const session = await authenticate(this.sql, request)
-    const snapshot = decode(SnapshotSchema, await requestJson(request))
+  async putSnapshot(token: string, snapshot: Snapshot) {
+    const session = await authenticate(this.sql, token)
     assertIdentifier(snapshot.snapshotId, "snapshotId")
     assertIdentifier(snapshot.epochId, "epochId")
     assert(
@@ -241,7 +232,7 @@ export class VaultRecords {
           existing.signature === snapshot.signature,
         new HttpError(409, "idempotency_conflict", "Snapshot ID was used with different content"),
       )
-      return json({ snapshotId: snapshot.snapshotId, duplicate: true })
+      return reply({ snapshotId: snapshot.snapshotId, duplicate: true })
     }
     this.sql.exec(
       `INSERT INTO snapshots(snapshot_id, author_device_id, cursor, log_hash, epoch_id, envelope, signature, created_at)
@@ -255,12 +246,11 @@ export class VaultRecords {
       snapshot.signature,
       Date.now(),
     )
-    return json({ snapshotId: snapshot.snapshotId, duplicate: false }, { status: 201 })
+    return reply({ snapshotId: snapshot.snapshotId, duplicate: false }, 201)
   }
 
-  async getSnapshot(request: Request): Promise<Response> {
-    await authenticate(this.sql, request)
-    const requestedId = new URL(request.url).searchParams.get("id")
+  async getSnapshot(token: string, requestedId: string | null) {
+    await authenticate(this.sql, token)
     if (requestedId !== null) assertIdentifier(requestedId, "snapshotId")
     const snapshot = requestedId
       ? this.sql
@@ -276,6 +266,6 @@ export class VaultRecords {
           .toArray()[0]
     if (requestedId && !snapshot)
       throw new HttpError(404, "snapshot_not_found", "Snapshot was not found")
-    return json({ snapshot: snapshot ?? null })
+    return reply({ snapshot: snapshot ?? null })
   }
 }

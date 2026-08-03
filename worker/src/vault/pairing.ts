@@ -1,13 +1,13 @@
 import {
-  CreatePairingSchema,
-  DeviceDescriptorSchema,
+  type CreatePairingSchema,
+  type DeviceDescriptorSchema,
   IDENTIFIER_BYTES,
-  PairingApprovalSchema,
-  PairingCancelSchema,
-  PairingCandidateConfirmationSchema,
-  PairingJoinSchema,
-  PairingReleaseSchema,
-  PairingResultSchema,
+  type PairingApprovalSchema,
+  type PairingCancelSchema,
+  type PairingCandidateConfirmationSchema,
+  type PairingJoinSchema,
+  type PairingReleaseSchema,
+  type PairingResultSchema,
   pairingCandidateConfirmationSigningBytes,
   pairingCompletionSigningBytes,
 } from "@meridian/protocol"
@@ -26,18 +26,25 @@ import {
   authenticate,
   cleanupExpired,
   type DeviceRow,
-  decode,
-  json,
   MAX_CERTIFICATE_BYTES,
   MAX_HPKE_TRANSFER_BYTES,
-  requestJson,
   type TransactionSync,
   validateOpaqueData,
   validatePublicKey,
   validateSignature,
   vaultState,
 } from "./domain"
+import { reply } from "./rpc"
 import { pairingApprovalSigningMessage, pairingJoinSigningMessage } from "./signing"
+
+type CreatePairing = typeof CreatePairingSchema.Type
+type DeviceDescriptor = typeof DeviceDescriptorSchema.Type
+type PairingApproval = typeof PairingApprovalSchema.Type
+type PairingCancel = typeof PairingCancelSchema.Type
+type PairingCandidateConfirmation = typeof PairingCandidateConfirmationSchema.Type
+type PairingJoin = typeof PairingJoinSchema.Type
+type PairingRelease = typeof PairingReleaseSchema.Type
+type PairingResult = typeof PairingResultSchema.Type
 
 const PAIRING_MIN_TTL_SECONDS = 60
 const PAIRING_MAX_TTL_SECONDS = 15 * 60
@@ -103,8 +110,8 @@ export class VaultPairing {
     private readonly transactionSync: TransactionSync,
   ) {}
 
-  async listDevices(request: Request): Promise<Response> {
-    await authenticate(this.sql, request)
+  async listDevices(token: string) {
+    await authenticate(this.sql, token)
     const devices = this.sql
       .exec<DeviceRow>("SELECT * FROM devices ORDER BY authorized_at, device_id")
       .toArray()
@@ -121,12 +128,11 @@ export class VaultPairing {
         deviceName: device.device_name,
         platform: device.platform,
       }))
-    return json({ devices })
+    return reply({ devices })
   }
 
-  async updateDeviceDescriptor(request: Request): Promise<Response> {
-    const session = await authenticate(this.sql, request)
-    const input = decode(DeviceDescriptorSchema, await requestJson(request))
+  async updateDeviceDescriptor(token: string, input: DeviceDescriptor) {
+    const session = await authenticate(this.sql, token)
     const deviceName = validateDescriptor(input.deviceName, MAX_DEVICE_NAME_LENGTH, "deviceName")
     const platform = validateDescriptor(input.platform, MAX_PLATFORM_LENGTH, "platform")
     const updated = this.sql.exec(
@@ -137,16 +143,15 @@ export class VaultPairing {
       session.deviceId,
     )
     assert(updated.rowsWritten === 1, new HttpError(404, "device_not_found", "Device not found"))
-    return json({ deviceId: session.deviceId, deviceName, platform })
+    return reply({ deviceId: session.deviceId, deviceName, platform })
   }
 
-  async createPairing(request: Request): Promise<Response> {
-    const session = await authenticate(this.sql, request)
+  async createPairing(token: string, input: CreatePairing) {
+    const session = await authenticate(this.sql, token)
     assert(
       session.role === "owner",
       new HttpError(403, "owner_required", "Only an owner device can add devices"),
     )
-    const input = decode(CreatePairingSchema, await requestJson(request))
     const ttl = input.expiresInSeconds ?? DEFAULT_PAIRING_TTL_SECONDS
     assert(
       Number.isInteger(ttl) && ttl >= PAIRING_MIN_TTL_SECONDS && ttl <= PAIRING_MAX_TTL_SECONDS,
@@ -171,12 +176,12 @@ export class VaultPairing {
       now,
       expiresAt,
     )
-    return json({ pairingId, capability, vaultId: session.vaultId, expiresAt }, { status: 201 })
+    return reply({ pairingId, capability, vaultId: session.vaultId, expiresAt }, 201)
   }
 
-  async pairingStatus(request: Request, pairingId: string): Promise<Response> {
+  async pairingStatus(token: string, pairingId: string) {
     assertIdentifier(pairingId, "pairingId")
-    const session = await authenticate(this.sql, request)
+    const session = await authenticate(this.sql, token)
     const row = this.sql
       .exec<PairingRow>("SELECT * FROM pairings WHERE pairing_id = ?", pairingId)
       .toArray()[0]
@@ -188,7 +193,7 @@ export class VaultPairing {
     if (row.status !== "released" && row.status !== "completed") this.assertCurrent(row)
 
     const candidate = this.candidatePackage(row, session.vaultId)
-    return json({
+    return reply({
       pairingId,
       status: row.status,
       expiresAt: row.expires_at,
@@ -204,20 +209,11 @@ export class VaultPairing {
     })
   }
 
-  async pairingProgress(request: Request, pairingId: string): Promise<Response> {
+  async pairingProgress(pairingId: string, input: PairingResult) {
     assertIdentifier(pairingId, "pairingId")
-    const input = decode(PairingResultSchema, await requestJson(request))
-    const capabilityHash = await hashToken(input.capability)
-    const row = this.sql
-      .exec<PairingRow>(
-        "SELECT * FROM pairings WHERE pairing_id = ? AND capability_hash = ?",
-        pairingId,
-        capabilityHash,
-      )
-      .toArray()[0]
-    assert(row, new HttpError(404, "pairing_not_found", "Pairing capability is invalid"))
+    const row = await this.capabilityRow(pairingId, input.capability)
     if (row.status !== "released" && row.status !== "completed") this.assertCurrent(row)
-    return json({
+    return reply({
       pairingId,
       status: row.status,
       expiresAt: row.expires_at,
@@ -226,9 +222,8 @@ export class VaultPairing {
     })
   }
 
-  async joinPairing(request: Request, pairingId: string): Promise<Response> {
+  async joinPairing(pairingId: string, join: PairingJoin) {
     assertIdentifier(pairingId, "pairingId")
-    const join = decode(PairingJoinSchema, await requestJson(request))
     assertIdentifier(join.device.deviceId, "deviceId")
     validatePublicKey(join.device.signingPublicKey, "signingPublicKey")
     validatePublicKey(join.device.hpkePublicKey, "hpkePublicKey")
@@ -305,7 +300,7 @@ export class VaultPairing {
         exactReplay,
         new HttpError(409, "pairing_already_joined", "Pairing already has a different candidate"),
       )
-      return json({ pairingId, status: currentPairing.status })
+      return reply({ pairingId, status: currentPairing.status })
     }
 
     const updated = this.sql.exec(
@@ -330,17 +325,16 @@ export class VaultPairing {
       updated.rowsWritten === 1,
       new HttpError(409, "pairing_changed", "Pairing request changed"),
     )
-    return json({ pairingId, status: "joined" })
+    return reply({ pairingId, status: "joined" })
   }
 
-  async approvePairing(request: Request, pairingId: string): Promise<Response> {
+  async approvePairing(token: string, pairingId: string, approval: PairingApproval) {
     assertIdentifier(pairingId, "pairingId")
-    const session = await authenticate(this.sql, request)
+    const session = await authenticate(this.sql, token)
     assert(
       session.role === "owner",
       new HttpError(403, "owner_required", "Only an owner device can add devices"),
     )
-    const approval = decode(PairingApprovalSchema, await requestJson(request))
     validateOpaqueData(approval.certificate, MAX_CERTIFICATE_BYTES, "certificate")
     validateOpaqueData(approval.transcriptHash, 64, "transcriptHash")
     validateOpaqueData(approval.verificationPreview, MAX_HPKE_TRANSFER_BYTES, "verificationPreview")
@@ -384,7 +378,7 @@ export class VaultPairing {
         exactReplay,
         new HttpError(409, "pairing_not_joined", "Pairing approval does not match"),
       )
-      return json({ pairingId, deviceId: pairing.candidate_device_id, status: pairing.status })
+      return reply({ pairingId, deviceId: pairing.candidate_device_id, status: pairing.status })
     }
     const updated = this.sql.exec(
       `UPDATE pairings SET status = 'verifying', certificate = ?, transcript_hash = ?,
@@ -398,13 +392,12 @@ export class VaultPairing {
       now,
     )
     assert(updated.rowsWritten === 1, new HttpError(409, "pairing_changed", "Pairing changed"))
-    return json({ pairingId, deviceId: pairing.candidate_device_id, status: "verifying" })
+    return reply({ pairingId, deviceId: pairing.candidate_device_id, status: "verifying" })
   }
 
-  async releasePairing(request: Request, pairingId: string): Promise<Response> {
+  async releasePairing(token: string, pairingId: string, release: PairingRelease) {
     assertIdentifier(pairingId, "pairingId")
-    const session = await authenticate(this.sql, request)
-    const release = decode(PairingReleaseSchema, await requestJson(request))
+    const session = await authenticate(this.sql, token)
     validateSignature(release.approvalSignature)
     validateOpaqueData(release.hpkeTransfer, MAX_HPKE_TRANSFER_BYTES, "hpkeTransfer")
     const row = this.pairingRow(pairingId)
@@ -415,7 +408,7 @@ export class VaultPairing {
           row.hpke_transfer === release.hpkeTransfer,
         new HttpError(409, "idempotency_conflict", "Pairing release has different content"),
       )
-      return json({ pairingId, status: row.status })
+      return reply({ pairingId, status: row.status })
     }
     assert(
       row.initiator_device_id === session.deviceId && row.status === "confirmed",
@@ -473,24 +466,15 @@ export class VaultPairing {
       releasedAt,
     )
     assert(updated.rowsWritten === 1, new HttpError(409, "pairing_changed", "Pairing changed"))
-    return json({ pairingId, status: "released" })
+    return reply({ pairingId, status: "released" })
   }
 
-  async pairingResult(request: Request, pairingId: string): Promise<Response> {
+  async pairingResult(pairingId: string, input: PairingResult) {
     assertIdentifier(pairingId, "pairingId")
-    const input = decode(PairingResultSchema, await requestJson(request))
-    const capabilityHash = await hashToken(input.capability)
-    const row = this.sql
-      .exec<PairingRow>(
-        "SELECT * FROM pairings WHERE pairing_id = ? AND capability_hash = ?",
-        pairingId,
-        capabilityHash,
-      )
-      .toArray()[0]
-    assert(row, new HttpError(404, "pairing_not_found", "Pairing capability is invalid"))
+    const row = await this.capabilityRow(pairingId, input.capability)
     if (row.status !== "released" && row.status !== "completed") this.assertCurrent(row)
     if (row.status === "verifying" || row.status === "confirmed") {
-      return json({
+      return reply({
         pairingId,
         status: row.status,
         transcriptHash: row.transcript_hash,
@@ -498,9 +482,9 @@ export class VaultPairing {
       })
     }
     if (row.status !== "released" && row.status !== "completed") {
-      return json({ pairingId, status: row.status })
+      return reply({ pairingId, status: row.status })
     }
-    return json({
+    return reply({
       pairingId,
       status: row.status,
       deviceId: row.candidate_device_id,
@@ -513,10 +497,9 @@ export class VaultPairing {
     })
   }
 
-  async confirmOwner(request: Request, pairingId: string): Promise<Response> {
+  async confirmOwner(token: string, pairingId: string) {
     assertIdentifier(pairingId, "pairingId")
-    await requestJson(request)
-    const session = await authenticate(this.sql, request)
+    const session = await authenticate(this.sql, token)
     const row = this.pairingRow(pairingId)
     this.assertCurrent(row)
     assert(
@@ -531,7 +514,7 @@ export class VaultPairing {
       new HttpError(409, "pairing_not_verifying", "Pairing is not ready for verification"),
     )
     if (row.status === "released" || row.status === "completed") {
-      return json({ pairingId, status: row.status })
+      return reply({ pairingId, status: row.status })
     }
     const now = Date.now()
     this.sql.exec(
@@ -540,12 +523,11 @@ export class VaultPairing {
       pairingId,
     )
     const status = this.promoteConfirmed(pairingId)
-    return json({ pairingId, status })
+    return reply({ pairingId, status })
   }
 
-  async confirmCandidate(request: Request, pairingId: string): Promise<Response> {
+  async confirmCandidate(pairingId: string, input: PairingCandidateConfirmation) {
     assertIdentifier(pairingId, "pairingId")
-    const input = decode(PairingCandidateConfirmationSchema, await requestJson(request))
     const row = await this.capabilityRow(pairingId, input.capability)
     this.assertCurrent(row)
     assert(
@@ -562,7 +544,7 @@ export class VaultPairing {
         row.candidate_confirmation_signature === input.proof,
         new HttpError(409, "idempotency_conflict", "Pairing confirmation has different content"),
       )
-      return json({ pairingId, status: row.status })
+      return reply({ pairingId, status: row.status })
     }
     const vault = vaultState(this.sql)
     assert(vault, new HttpError(409, "not_claimed", "This deployment has not been claimed"))
@@ -589,12 +571,11 @@ export class VaultPairing {
     )
     assert(updated.rowsWritten === 1, new HttpError(409, "pairing_changed", "Pairing changed"))
     const status = this.promoteConfirmed(pairingId)
-    return json({ pairingId, status })
+    return reply({ pairingId, status })
   }
 
-  async completePairing(request: Request, pairingId: string): Promise<Response> {
+  async completePairing(pairingId: string, input: PairingCandidateConfirmation) {
     assertIdentifier(pairingId, "pairingId")
-    const input = decode(PairingCandidateConfirmationSchema, await requestJson(request))
     const row = await this.capabilityRow(pairingId, input.capability)
     if (row.status !== "released" && row.status !== "completed") this.assertCurrent(row)
     this.assertCandidateConfirmation(row, input.transferHash)
@@ -604,7 +585,7 @@ export class VaultPairing {
         row.completion_signature === input.proof,
         new HttpError(409, "idempotency_conflict", "Pairing completion has different content"),
       )
-      return json({ pairingId, status: row.status })
+      return reply({ pairingId, status: row.status })
     }
     assert(
       row.status === "released",
@@ -653,22 +634,20 @@ export class VaultPairing {
         pairingId,
       )
     })
-    return json({ pairingId, status: "completed", deviceId: row.candidate_device_id })
+    return reply({ pairingId, status: "completed", deviceId: row.candidate_device_id })
   }
 
-  async cancelPairing(request: Request, pairingId: string): Promise<Response> {
+  async cancelPairing(pairingId: string, input: PairingCancel) {
     assertIdentifier(pairingId, "pairingId")
-    const input = decode(PairingCancelSchema, await requestJson(request))
     const row = await this.capabilityRow(pairingId, input.capability)
     this.assertCurrent(row)
     this.cancel(row, "candidate")
-    return json({ pairingId, status: "canceled" })
+    return reply({ pairingId, status: "canceled" })
   }
 
-  async rejectPairing(request: Request, pairingId: string): Promise<Response> {
+  async rejectPairing(token: string, pairingId: string) {
     assertIdentifier(pairingId, "pairingId")
-    await requestJson(request)
-    const session = await authenticate(this.sql, request)
+    const session = await authenticate(this.sql, token)
     const row = this.pairingRow(pairingId)
     this.assertCurrent(row)
     assert(
@@ -676,7 +655,7 @@ export class VaultPairing {
       new HttpError(403, "wrong_initiator", "Pairing belongs to another device"),
     )
     this.cancel(row, "initiator")
-    return json({ pairingId, status: "canceled" })
+    return reply({ pairingId, status: "canceled" })
   }
 
   private cancel(row: PairingRow, canceledBy: "candidate" | "initiator"): void {

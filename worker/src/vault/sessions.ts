@@ -1,17 +1,17 @@
-import { AuthChallengeSchema, AuthSessionSchema } from "@meridian/protocol"
+import type { AuthChallengeSchema, AuthSession } from "@meridian/protocol"
 import { assertIdentifier, hashToken, randomToken, verifyEd25519 } from "../encoding"
 import { assert, HttpError } from "../errors"
 import {
   activeDevice,
   cleanupExpired,
-  decode,
-  json,
-  requestJson,
   type TransactionSync,
   validateSignature,
   vaultState,
 } from "./domain"
+import { reply } from "./rpc"
 import { authSigningMessage } from "./signing"
+
+type AuthChallenge = typeof AuthChallengeSchema.Type
 
 const AUTH_CHALLENGE_TTL_MS = 5 * 60 * 1_000
 const AUTH_SESSION_TTL_MS = 20 * 60 * 1_000
@@ -22,8 +22,7 @@ export class VaultSessions {
     private readonly transactionSync: TransactionSync,
   ) {}
 
-  async createAuthChallenge(request: Request): Promise<Response> {
-    const input = decode(AuthChallengeSchema, await requestJson(request))
+  async createAuthChallenge(input: AuthChallenge) {
     assertIdentifier(input.deviceId, "deviceId")
     assert(
       vaultState(this.sql),
@@ -46,7 +45,7 @@ export class VaultSessions {
       )
       .toArray()[0]
     if (existing) {
-      return json({
+      return reply({
         challengeId: existing.challenge_id,
         challenge: existing.challenge,
         expiresAt: existing.expires_at,
@@ -64,11 +63,10 @@ export class VaultSessions {
       now,
       now + AUTH_CHALLENGE_TTL_MS,
     )
-    return json({ challengeId, challenge, expiresAt: now + AUTH_CHALLENGE_TTL_MS })
+    return reply({ challengeId, challenge, expiresAt: now + AUTH_CHALLENGE_TTL_MS })
   }
 
-  async createAuthSession(request: Request): Promise<Response> {
-    const input = decode(AuthSessionSchema, await requestJson(request))
+  async createAuthSession(input: AuthSession) {
     assertIdentifier(input.deviceId, "deviceId")
     assertIdentifier(input.challengeId, "challengeId")
     validateSignature(input.signature)
@@ -130,7 +128,7 @@ export class VaultSessions {
         committedAt + AUTH_SESSION_TTL_MS,
       )
     })
-    return json({
+    return reply({
       sessionToken,
       deviceId: input.deviceId,
       expiresAt: committedAt + AUTH_SESSION_TTL_MS,

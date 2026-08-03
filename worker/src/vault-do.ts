@@ -1,13 +1,33 @@
+import type {
+  AuthChallengeSchema,
+  CreatePairingSchema,
+  DeviceDescriptorSchema,
+  PairingCancelSchema,
+  PairingCandidateConfirmationSchema,
+  PairingResultSchema,
+  RevokeDeviceSchema,
+  AuthSession,
+  Checkpoint,
+  Operation,
+  PairingApproval,
+  PairingJoin,
+  PairingRelease,
+  RecoveryClaim,
+  RetentionAcknowledgement,
+  SetupClaim,
+  Snapshot,
+} from "@meridian/protocol"
 import { DurableObject } from "cloudflare:workers"
 import { errorResponse, HttpError } from "./errors"
 import { VaultBlobs } from "./vault/blobs"
-import { authenticate, json, type TransactionSync, vaultState } from "./vault/domain"
+import { authenticate, type TransactionSync, vaultState } from "./vault/domain"
 import { migrateVaultSchema } from "./vault/migrations"
 import { VaultNotifications } from "./vault/notifications"
 import { VaultOperations } from "./vault/operations"
 import { VaultPairing } from "./vault/pairing"
 import { VaultRecords } from "./vault/records"
 import { VaultRecovery } from "./vault/recovery"
+import { runRpc } from "./vault/rpc"
 import { VaultSessions } from "./vault/sessions"
 import { VaultSetup } from "./vault/setup"
 
@@ -23,6 +43,14 @@ export {
 } from "./vault/signing"
 
 export type VaultDurableObjectEnv = Pick<Env, "BLOBS">
+
+type AuthChallenge = typeof AuthChallengeSchema.Type
+type CreatePairing = typeof CreatePairingSchema.Type
+type DeviceDescriptor = typeof DeviceDescriptorSchema.Type
+type PairingCancel = typeof PairingCancelSchema.Type
+type PairingCandidateConfirmation = typeof PairingCandidateConfirmationSchema.Type
+type PairingResult = typeof PairingResultSchema.Type
+type RevokeDevice = typeof RevokeDeviceSchema.Type
 
 export class VaultDurableObject extends DurableObject<VaultDurableObjectEnv> {
   private readonly sql: SqlStorage
@@ -61,123 +89,161 @@ export class VaultDurableObject extends DurableObject<VaultDurableObjectEnv> {
     this.records = new VaultRecords(this.sql)
   }
 
+  status() {
+    return this.invoke(() => {
+      const state = vaultState(this.sql)
+      return { body: { claimed: state !== undefined, cursor: state?.cursor ?? 0 }, status: 200 }
+    })
+  }
+
+  createSetupSession() {
+    return this.invoke(() => this.setup.createSetupSession())
+  }
+
+  claimSetup(claim: SetupClaim) {
+    return this.invoke(() => this.setup.claim(claim))
+  }
+
+  createAuthChallenge(input: AuthChallenge) {
+    return this.invoke(() => this.sessions.createAuthChallenge(input))
+  }
+
+  createAuthSession(input: AuthSession) {
+    return this.invoke(() => this.sessions.createAuthSession(input))
+  }
+
+  recoveryPackage() {
+    return this.invoke(() => this.recovery.recoveryPackage())
+  }
+
+  createRecoveryChallenge() {
+    return this.invoke(() => this.recovery.createRecoveryChallenge())
+  }
+
+  recover(input: RecoveryClaim) {
+    return this.invoke(() => this.recovery.recover(input))
+  }
+
+  listDevices(token: string) {
+    return this.invoke(() => this.pairing.listDevices(token))
+  }
+
+  updateDeviceDescriptor(token: string, input: DeviceDescriptor) {
+    return this.invoke(() => this.pairing.updateDeviceDescriptor(token, input))
+  }
+
+  revokeDevice(token: string, targetDeviceId: string, input: RevokeDevice) {
+    return this.invoke(() => this.operations.revokeDevice(token, targetDeviceId, input))
+  }
+
+  createPairing(token: string, input: CreatePairing) {
+    return this.invoke(() => this.pairing.createPairing(token, input))
+  }
+
+  pairingStatus(token: string, pairingId: string) {
+    return this.invoke(() => this.pairing.pairingStatus(token, pairingId))
+  }
+
+  pairingProgress(pairingId: string, input: PairingResult) {
+    return this.invoke(() => this.pairing.pairingProgress(pairingId, input))
+  }
+
+  joinPairing(pairingId: string, input: PairingJoin) {
+    return this.invoke(() => this.pairing.joinPairing(pairingId, input))
+  }
+
+  approvePairing(token: string, pairingId: string, input: PairingApproval) {
+    return this.invoke(() => this.pairing.approvePairing(token, pairingId, input))
+  }
+
+  releasePairing(token: string, pairingId: string, input: PairingRelease) {
+    return this.invoke(() => this.pairing.releasePairing(token, pairingId, input))
+  }
+
+  pairingResult(pairingId: string, input: PairingResult) {
+    return this.invoke(() => this.pairing.pairingResult(pairingId, input))
+  }
+
+  confirmPairingOwner(token: string, pairingId: string) {
+    return this.invoke(() => this.pairing.confirmOwner(token, pairingId))
+  }
+
+  confirmPairingCandidate(pairingId: string, input: PairingCandidateConfirmation) {
+    return this.invoke(() => this.pairing.confirmCandidate(pairingId, input))
+  }
+
+  completePairing(pairingId: string, input: PairingCandidateConfirmation) {
+    return this.invoke(() => this.pairing.completePairing(pairingId, input))
+  }
+
+  cancelPairing(pairingId: string, input: PairingCancel) {
+    return this.invoke(() => this.pairing.cancelPairing(pairingId, input))
+  }
+
+  rejectPairing(token: string, pairingId: string) {
+    return this.invoke(() => this.pairing.rejectPairing(token, pairingId))
+  }
+
+  commitOperation(token: string, operation: Operation) {
+    return this.invoke(() => this.operations.commitOperation(token, operation))
+  }
+
+  putCheckpoint(token: string, checkpoint: Checkpoint) {
+    return this.invoke(() => this.records.putCheckpoint(token, checkpoint))
+  }
+
+  latestCheckpoint(token: string) {
+    return this.invoke(() => this.records.latestCheckpoint(token))
+  }
+
+  acknowledgeRetention(token: string, acknowledgement: RetentionAcknowledgement) {
+    return this.invoke(() => this.records.acknowledgeRetention(token, acknowledgement))
+  }
+
+  putSnapshot(token: string, snapshot: Snapshot) {
+    return this.invoke(() => this.records.putSnapshot(token, snapshot))
+  }
+
+  getSnapshot(token: string, snapshotId: string | null) {
+    return this.invoke(() => this.records.getSnapshot(token, snapshotId))
+  }
+
+  changes(token: string, after: number, limit: number, afterHash: string | null) {
+    return this.invoke(() => this.operations.changes(token, after, limit, afterHash))
+  }
+
+  storageStats(token: string) {
+    return this.invoke(() => this.blobs.storageStats(token))
+  }
+
+  pruneOrphanBlobs(token: string) {
+    return this.invoke(() => this.blobs.pruneOrphanBlobs(token))
+  }
+
+  accessBlob(token: string, blobId: string) {
+    return this.invoke(() => this.blobs.accessBlob(token, blobId))
+  }
+
+  claimBlob(token: string, blobId: string, expectedSize: number) {
+    return this.invoke(() => this.blobs.claimBlob(token, blobId, expectedSize))
+  }
+
+  finalizeBlob(token: string, blobId: string, expectedSize: number) {
+    return this.invoke(() => this.blobs.finalizeBlob(token, blobId, expectedSize))
+  }
+
   override async fetch(request: Request): Promise<Response> {
     try {
       await this.initialized
       const { pathname } = new URL(request.url)
-
-      if (request.method === "GET" && pathname === "/internal/status") {
-        const state = vaultState(this.sql)
-        return json({ claimed: state !== undefined, cursor: state?.cursor ?? 0 })
-      }
-      if (request.method === "POST" && pathname === "/internal/setup/session")
-        return await this.setup.createSetupSession()
-      if (request.method === "POST" && pathname === "/v1/setup/claim")
-        return await this.setup.claim(request)
-      if (request.method === "POST" && pathname === "/v1/auth/challenge")
-        return await this.sessions.createAuthChallenge(request)
-      if (request.method === "POST" && pathname === "/v1/auth/session")
-        return await this.sessions.createAuthSession(request)
-      if (request.method === "GET" && pathname === "/v1/recovery/package")
-        return this.recovery.recoveryPackage()
-      if (request.method === "POST" && pathname === "/v1/recovery/challenge")
-        return await this.recovery.createRecoveryChallenge()
-      if (request.method === "POST" && pathname === "/v1/recovery/claim")
-        return await this.recovery.recover(request)
-      if (request.method === "GET" && pathname === "/v1/devices")
-        return await this.pairing.listDevices(request)
-      if (request.method === "PUT" && pathname === "/v1/device/descriptor")
-        return await this.pairing.updateDeviceDescriptor(request)
-
-      const revokeMatch = /^\/v1\/devices\/([^/]+)\/revoke$/.exec(pathname)
-      const revokeId = revokeMatch?.at(1)
-      if (request.method === "POST" && revokeId !== undefined)
-        return await this.operations.revokeDevice(request, revokeId)
-      if (request.method === "POST" && pathname === "/v1/pairings")
-        return await this.pairing.createPairing(request)
-      if (request.method === "GET" && pathname === "/v1/changes")
-        return await this.operations.changes(request)
-      if (request.method === "GET" && pathname === "/v1/storage")
-        return await this.blobs.storageStats(request)
-      if (request.method === "POST" && pathname === "/v1/storage/prune-orphans")
-        return await this.blobs.pruneOrphanBlobs(request)
-      const blobAccessMatch = /^\/internal\/blobs\/([^/]+)\/access$/.exec(pathname)
-      const accessedBlobId = blobAccessMatch?.at(1)
-      if (request.method === "GET" && accessedBlobId !== undefined)
-        return await this.blobs.accessBlob(request, accessedBlobId)
-      const blobClaimMatch = /^\/internal\/blobs\/([^/]+)\/claim$/.exec(pathname)
-      const claimedBlobId = blobClaimMatch?.at(1)
-      if (request.method === "POST" && claimedBlobId !== undefined)
-        return await this.blobs.claimBlob(request, claimedBlobId)
-      const blobFinalizeMatch = /^\/internal\/blobs\/([^/]+)\/finalize$/.exec(pathname)
-      const finalizedBlobId = blobFinalizeMatch?.at(1)
-      if (request.method === "POST" && finalizedBlobId !== undefined)
-        return await this.blobs.finalizeBlob(request, finalizedBlobId)
-      if (request.method === "POST" && pathname === "/v1/operations")
-        return await this.operations.commitOperation(request)
-      if (request.method === "PUT" && pathname === "/v1/checkpoints")
-        return await this.records.putCheckpoint(request)
-      if (request.method === "GET" && pathname === "/v1/checkpoints/latest")
-        return await this.records.latestCheckpoint(request)
-      if (request.method === "PUT" && pathname === "/v1/retention/acknowledgement")
-        return await this.records.acknowledgeRetention(request)
-      if (request.method === "PUT" && pathname === "/v1/snapshot")
-        return await this.records.putSnapshot(request)
-      if (request.method === "GET" && pathname === "/v1/snapshot")
-        return await this.records.getSnapshot(request)
-      if (request.method === "GET" && pathname === "/v1/notifications") {
-        const session = await authenticate(this.sql, request)
-        return this.notifications.websocket(request, session)
+      if (request.method !== "GET" || pathname !== "/v1/notifications") {
+        throw new HttpError(404, "not_found", "Route not found")
       }
 
-      const pairingMatch = /^\/v1\/pairings\/([^/]+)$/.exec(pathname)
-      const pairingId = pairingMatch?.at(1)
-      if (request.method === "GET" && pairingId !== undefined)
-        return await this.pairing.pairingStatus(request, pairingId)
-      const progressMatch = /^\/v1\/pairings\/([^/]+)\/status$/.exec(pathname)
-      const progressId = progressMatch?.at(1)
-      if (request.method === "POST" && progressId !== undefined)
-        return await this.pairing.pairingProgress(request, progressId)
-      const joinMatch = /^\/v1\/pairings\/([^/]+)\/join$/.exec(pathname)
-      const joinId = joinMatch?.at(1)
-      if (request.method === "POST" && joinId !== undefined)
-        return await this.pairing.joinPairing(request, joinId)
-      const approveMatch = /^\/v1\/pairings\/([^/]+)\/approve$/.exec(pathname)
-      const approveId = approveMatch?.at(1)
-      if (request.method === "POST" && approveId !== undefined)
-        return await this.pairing.approvePairing(request, approveId)
-      const releaseMatch = /^\/v1\/pairings\/([^/]+)\/release$/.exec(pathname)
-      const releaseId = releaseMatch?.at(1)
-      if (request.method === "POST" && releaseId !== undefined)
-        return await this.pairing.releasePairing(request, releaseId)
-      const resultMatch = /^\/v1\/pairings\/([^/]+)\/result$/.exec(pathname)
-      const resultId = resultMatch?.at(1)
-      if (request.method === "POST" && resultId !== undefined)
-        return await this.pairing.pairingResult(request, resultId)
-      const ownerConfirmationMatch = /^\/v1\/pairings\/([^/]+)\/confirm-owner$/.exec(pathname)
-      const ownerConfirmationId = ownerConfirmationMatch?.at(1)
-      if (request.method === "POST" && ownerConfirmationId !== undefined)
-        return await this.pairing.confirmOwner(request, ownerConfirmationId)
-      const candidateConfirmationMatch = /^\/v1\/pairings\/([^/]+)\/confirm-candidate$/.exec(
-        pathname,
-      )
-      const candidateConfirmationId = candidateConfirmationMatch?.at(1)
-      if (request.method === "POST" && candidateConfirmationId !== undefined)
-        return await this.pairing.confirmCandidate(request, candidateConfirmationId)
-      const completionMatch = /^\/v1\/pairings\/([^/]+)\/complete$/.exec(pathname)
-      const completionId = completionMatch?.at(1)
-      if (request.method === "POST" && completionId !== undefined)
-        return await this.pairing.completePairing(request, completionId)
-      const cancelMatch = /^\/v1\/pairings\/([^/]+)\/cancel$/.exec(pathname)
-      const cancelId = cancelMatch?.at(1)
-      if (request.method === "POST" && cancelId !== undefined)
-        return await this.pairing.cancelPairing(request, cancelId)
-      const rejectMatch = /^\/v1\/pairings\/([^/]+)\/reject$/.exec(pathname)
-      const rejectId = rejectMatch?.at(1)
-      if (request.method === "POST" && rejectId !== undefined)
-        return await this.pairing.rejectPairing(request, rejectId)
-
-      throw new HttpError(404, "not_found", "Route not found")
+      const authorization = request.headers.get("authorization") ?? ""
+      const token = /^Bearer ([A-Za-z0-9_-]{32,256})$/.exec(authorization)?.at(1) ?? ""
+      const session = await authenticate(this.sql, token)
+      return this.notifications.websocket(request, session)
     } catch (error) {
       return errorResponse(error)
     }
@@ -198,5 +264,12 @@ export class VaultDurableObject extends DurableObject<VaultDurableObjectEnv> {
 
   override async webSocketError(socket: WebSocket): Promise<void> {
     this.notifications.webSocketError(socket)
+  }
+
+  private invoke<T>(operation: () => T | Promise<T>) {
+    return runRpc(async () => {
+      await this.initialized
+      return operation()
+    })
   }
 }

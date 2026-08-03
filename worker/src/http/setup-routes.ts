@@ -6,7 +6,7 @@ import { SECURITY_HEADERS, SETUP_PAGE, SETUP_SCRIPT } from "../setup-page"
 import { decodeJsonEffect, runHttpEffect } from "./effect-boundary"
 import { proxyJson } from "./json-proxy"
 import type { WorkerApp } from "./types"
-import { callVaultEffect } from "./vault-proxy"
+import { vaultResponseEffect } from "./vault-proxy"
 
 export function registerSetupRoutes(app: WorkerApp): void {
   app.use("*", async (c, next) => {
@@ -31,7 +31,7 @@ export function registerSetupRoutes(app: WorkerApp): void {
   })
 
   app.get("/v1/setup/status", (c) =>
-    runHttpEffect(callVaultEffect(c.env, "/internal/status", "GET")),
+    runHttpEffect(vaultResponseEffect(c.env, (vault) => vault.status())),
   )
 
   app.post("/v1/setup/session", (c) =>
@@ -53,13 +53,13 @@ export function registerSetupRoutes(app: WorkerApp): void {
             new HttpError(401, "invalid_setup_token", "Setup token is invalid"),
           )
         }
-        return yield* callVaultEffect(c.env, "/internal/setup/session", "POST")
+        return yield* vaultResponseEffect(c.env, (vault) => vault.createSetupSession())
       }),
     ),
   )
 
   app.post(
     "/v1/setup/claim",
-    proxyJson(SetupClaimSchema, () => "/v1/setup/claim"),
+    proxyJson(SetupClaimSchema, (vault, input) => vault.claimSetup(input)),
   )
 }

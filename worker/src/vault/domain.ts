@@ -1,5 +1,4 @@
 import type { StoredOperation } from "@meridian/protocol"
-import * as Schema from "effect/Schema"
 import { base64UrlDecode, hashToken } from "../encoding"
 import { assert, HttpError } from "../errors"
 
@@ -63,35 +62,6 @@ export type OperationRow = {
 
 export type TransactionSync = <T>(callback: () => T) => T
 
-export function json(data: unknown, init: ResponseInit = {}): Response {
-  const headers = new Headers(init.headers)
-  headers.set("cache-control", "no-store")
-  return Response.json(data, { ...init, headers })
-}
-
-export function decode<S extends Schema.ConstraintDecoder<unknown, never>>(
-  schema: S,
-  input: unknown,
-): S["Type"] {
-  try {
-    return Schema.decodeUnknownSync(schema, { onExcessProperty: "error" })(input)
-  } catch {
-    throw new HttpError(400, "invalid_request", "Request body does not match the protocol schema")
-  }
-}
-
-export async function requestJson(request: Request): Promise<unknown> {
-  const contentType = request.headers.get("content-type") ?? ""
-  if (!contentType.toLowerCase().startsWith("application/json")) {
-    throw new HttpError(415, "unsupported_media_type", "Expected application/json")
-  }
-  try {
-    return await request.json()
-  } catch {
-    throw new HttpError(400, "invalid_json", "Request body is not valid JSON")
-  }
-}
-
 export function validatePublicKey(value: string, field: string): void {
   const bytes = base64UrlDecode(value, 32)
   assert(bytes.length === 32, new HttpError(400, "invalid_public_key", `${field} must be 32 bytes`))
@@ -117,15 +87,10 @@ export function activeDevice(sql: SqlStorage, deviceId: string): DeviceRow | und
     .toArray()[0]
 }
 
-export async function authenticate(sql: SqlStorage, request: Request): Promise<SessionContext> {
-  const authorization = request.headers.get("authorization") ?? ""
-  const match = /^Bearer ([A-Za-z0-9_-]{32,256})$/.exec(authorization)
-  assert(match, new HttpError(401, "authentication_required", "A valid device session is required"))
-
-  const token = match.at(1)
+export async function authenticate(sql: SqlStorage, token: string): Promise<SessionContext> {
   assert(
-    token !== undefined,
-    new HttpError(401, "authentication_required", "Session token is missing"),
+    /^[A-Za-z0-9_-]{32,256}$/.test(token),
+    new HttpError(401, "authentication_required", "A valid device session is required"),
   )
   const tokenHash = await hashToken(token)
   const row = sql

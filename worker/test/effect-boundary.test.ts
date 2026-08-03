@@ -20,6 +20,51 @@ describe("JSON request boundary", () => {
     expect(decoded.payload).toHaveLength(1_500_000)
   })
 
+  it("rejects the wrong content type", async () => {
+    const request = new Request("https://example.test", {
+      method: "POST",
+      headers: { "content-type": "text/plain" },
+      body: JSON.stringify({ payload: "value" }),
+    })
+
+    await expect(Effect.runPromise(decodeJsonEffect(request, PayloadSchema))).rejects.toMatchObject(
+      {
+        status: 415,
+        code: "unsupported_media_type",
+      },
+    )
+  })
+
+  it("rejects malformed JSON", async () => {
+    const request = new Request("https://example.test", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{",
+    })
+
+    await expect(Effect.runPromise(decodeJsonEffect(request, PayloadSchema))).rejects.toMatchObject(
+      {
+        status: 400,
+        code: "invalid_json",
+      },
+    )
+  })
+
+  it("rejects schema mismatches and excess properties", async () => {
+    const request = new Request("https://example.test", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ payload: 1, extra: true }),
+    })
+
+    await expect(Effect.runPromise(decodeJsonEffect(request, PayloadSchema))).rejects.toMatchObject(
+      {
+        status: 400,
+        code: "invalid_request",
+      },
+    )
+  })
+
   it("still rejects bodies beyond the public limit", async () => {
     await expect(
       Effect.runPromise(decodeJsonEffect(jsonRequest(2 * 1024 * 1024), PayloadSchema)),
