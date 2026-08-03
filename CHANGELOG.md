@@ -1,3 +1,12 @@
+## [1.11.13](https://github.com/angristan/meridian/compare/1.11.12...1.11.13) (2026-08-03)
+
+
+### Bug Fixes
+
+* cancel pairing polls on unload ([fe1e9ef](https://github.com/angristan/meridian/commit/fe1e9efcd1af55035dcd8155a41541116fcdba1f))
+* keep blob cleanup concurrent ([ca50b56](https://github.com/angristan/meridian/commit/ca50b561f20b5cd0362346a29f5a664ce8be4137))
+* own vault events in sync lifecycle ([39220fe](https://github.com/angristan/meridian/commit/39220fe83d8e8ec8e8477926e1abe308c367522f))
+
 ## [1.11.12](https://github.com/angristan/meridian/compare/1.11.11...1.11.12) (2026-08-03)
 
 
