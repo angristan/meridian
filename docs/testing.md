@@ -63,11 +63,19 @@ Run the focused fault tests on demand:
 
 ```bash
 bun run fault:test
+bun run fault:test --seed 12345
+bun run fault:test:long
 bun run fault:test:plugin
 bun run fault:test:worker
 ```
 
-These tests use promise barriers and explicit injected failures instead of timing sleeps. They force index repair to race with an active reconciliation, force blob pruning to race with a commit on both sides of the R2 `HEAD` boundary, and discard a successful operation response before restarting the client from the same IndexedDB database. A committed revision must always keep its blob, repair must never erase a planned deletion, and an exact response-loss retry must preserve one cursor and hash while draining pending work.
+The root command prints its seed before running. `--seed` replays the same fault order, actions, and restarts. The long command derives 50 seeds and runs 20 stateful steps for each seed. Use `--seeds` and `--steps` to override either count.
+
+These tests use promise barriers and explicit injected failures instead of timing sleeps. They force index repair to race with an active reconciliation, force blob pruning to race with a commit on both sides of the R2 `HEAD` boundary, and discard a successful operation response before restarting the client from the same IndexedDB database. The seeded campaign repeatedly edits or deletes one file, injects every commit fault through a shuffled deterministic deck, reopens the same IndexedDB database, and verifies convergence plus a no-op sync.
+
+On failure, Meridian writes `.fault-traces/plugin-seed-<seed>-steps-<steps>.json`. The ordered trace contains stable actions, fault points, checkpoints, and invariant results. Rerun the printed command, then keep the minimized schedule as a fixed regression test.
+
+A committed revision must always keep its blob, repair must never erase a planned deletion, and an exact response-loss retry must preserve one cursor and hash while draining pending work.
 
 ### Responsiveness and index recovery
 

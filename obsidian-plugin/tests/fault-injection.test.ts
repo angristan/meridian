@@ -21,6 +21,14 @@ import {
 } from "../src/platform/background-sync"
 import { IndexedDbJournal, MemoryJournal } from "../src/storage/journal"
 import { SyncController } from "../src/sync/controller"
+import {
+  campaignConfiguration,
+  clearFailureTrace,
+  createTrace,
+  DeterministicRandom,
+  persistFailureTrace,
+  traceEvent,
+} from "./fault-campaign"
 import { ALL_CATEGORIES, FakeCrypto, FakeRemote, FakeVault, TEST_DEVICE } from "./fakes"
 
 class BlockingVault extends FakeVault {
@@ -128,6 +136,11 @@ class PostCommitCrashJournal extends IndexedDbJournal {
     if (this.boundary === "snapshot") this.crash()
   }
 
+  override async removeSnapshot(path: string): Promise<void> {
+    await super.removeSnapshot(path)
+    if (this.boundary === "snapshot") this.crash()
+  }
+
   override async putEntry(entry: JournalEntry): Promise<void> {
     await super.putEntry(entry)
     if (this.boundary === "completion" && entry.state === "complete") this.crash()
@@ -167,6 +180,10 @@ class IdempotentCommitRemote extends FakeRemote {
     this.responseLossPending = loseFirstResponse
   }
 
+  loseNextResponse(): void {
+    this.responseLossPending = true
+  }
+
   override async putBlob(blob: EncryptedBlob): Promise<void> {
     this.blobAttempts.push(structuredClone(blob))
     await super.putBlob(blob)
@@ -198,6 +215,7 @@ async function deleteDatabase(name: string): Promise<void> {
     const request = indexedDB.deleteDatabase(name)
     request.onsuccess = () => resolve()
     request.onerror = () => reject(request.error)
+    request.onblocked = () => reject(new Error(`IndexedDB deletion is blocked for ${name}`))
   })
 }
 
@@ -585,3 +603,218 @@ describe("deterministic local fault injection", () => {
     await deleteDatabase(databaseName)
   })
 })
+
+type SeededFault = "none" | "response" | PostCommitCrashBoundary
+
+const SEEDED_FAULTS: readonly SeededFault[] = [
+  "none",
+  "response",
+  "snapshot",
+  "revision",
+  "completion",
+  "checkpoint",
+]
+const seededCampaign = campaignConfiguration()
+
+describe("seeded local fault campaign", () => {
+  it(
+    "converges after deterministic commit faults and restarts",
+    async () => {
+      for (const seed of seededCampaign.seeds) {
+        await runSeededRestartCampaign(seed, seededCampaign.steps)
+      }
+    },
+    seededCampaign.timeout,
+  )
+})
+
+async function runSeededRestartCampaign(seed: number, steps: number): Promise<void> {
+  const databaseName = `meridian-seeded-${seed}`
+  const random = new DeterministicRandom(seed)
+  const trace = createTrace(seed, steps)
+  const vault = new FakeVault()
+  const remote = new IdempotentCommitRemote()
+  let activeController: SyncController | null = null
+  let faultDeck = random.shuffle(SEEDED_FAULTS)
+
+  await deleteDatabase(databaseName)
+  await clearFailureTrace(seed, steps)
+  try {
+    for (let step = 0; step < steps; step += 1) {
+      if (step > 0 && step % SEEDED_FAULTS.length === 0) {
+        faultDeck = random.shuffle(SEEDED_FAULTS)
+      }
+      const fault = faultDeck[step % SEEDED_FAULTS.length] as SeededFault
+      const deletesFile = vault.files.has("note.md") && random.chance(1, 3)
+      const content = deletesFile ? null : `seed-${seed}-step-${step}-${"x".repeat(step + 1)}`
+      if (content === null) vault.files.delete("note.md")
+      else vault.files.set("note.md", new TextEncoder().encode(content).buffer)
+      if (fault === "response") remote.loseNextResponse()
+      traceEvent(trace, "planned", {
+        step,
+        fault,
+        action: content === null ? "delete" : "upsert",
+        contentLength: content?.length ?? 0,
+      })
+
+      const faultJournal = isPostCommitBoundary(fault)
+        ? new PostCommitCrashJournal(databaseName, fault)
+        : new IndexedDbJournal(databaseName)
+      const faulted = new SyncController(
+        vault,
+        faultJournal,
+        remote,
+        new FakeCrypto(),
+        () => ALL_CATEGORIES,
+        () => {},
+      )
+      activeController = faulted
+      await faulted.start(TEST_DEVICE)
+      const faultStatus = faulted.getStatus()
+      const pendingAfterFault = (await faultJournal.listPending()).length
+      const checkpointAfterFault = (await faultJournal.getCheckpoint())?.cursor ?? 0
+      await faulted.quiesce()
+      activeController = null
+
+      if (fault === "none") {
+        campaignAssert(faultStatus.error === null, `step ${step} unexpectedly failed`)
+      } else {
+        campaignAssert(
+          faultStatus.error?.includes(expectedFaultMessage(fault)) === true,
+          `step ${step} did not expose ${fault}`,
+        )
+      }
+      const expectedCursor = step + 1
+      campaignAssert(
+        remote.operations.length === expectedCursor,
+        `step ${step} appended ${remote.operations.length} operations instead of ${expectedCursor}`,
+      )
+      traceEvent(trace, "fault-settled", {
+        step,
+        fault,
+        checkpoint: checkpointAfterFault,
+        pending: pendingAfterFault,
+        remoteCursor: remote.operations.length,
+      })
+
+      const recoveredJournal = new IndexedDbJournal(databaseName)
+      const recovered = new SyncController(
+        vault,
+        recoveredJournal,
+        remote,
+        new FakeCrypto(),
+        () => ALL_CATEGORIES,
+        () => {},
+      )
+      activeController = recovered
+      await recovered.start(TEST_DEVICE)
+      const operationsBeforeNoop = remote.operations.length
+      await recovered.sync("manual")
+      campaignAssert(
+        remote.operations.length === operationsBeforeNoop,
+        `step ${step} appended work during a no-op sync`,
+      )
+      const pending = await recoveredJournal.listPending()
+      const conflicts = await recoveredJournal.listConflicts(true)
+      const revisions = await recoveredJournal.listRevisions("note.md")
+      const checkpoint = await recoveredJournal.getCheckpoint()
+      const snapshot = (await recoveredJournal.getSnapshots()).get("note.md")
+      const actualContent = vault.text("note.md")
+      await recovered.quiesce()
+      activeController = null
+
+      campaignAssert(pending.length === 0, `step ${step} left ${pending.length} pending entries`)
+      campaignAssert(conflicts.length === 0, `step ${step} created ${conflicts.length} conflicts`)
+      campaignAssert(
+        remote.operations.length === expectedCursor,
+        `step ${step} duplicated a remote operation during recovery`,
+      )
+      campaignAssert(
+        revisions.length === expectedCursor,
+        `step ${step} retained ${revisions.length} revisions instead of ${expectedCursor}`,
+      )
+      campaignAssert(
+        checkpoint?.cursor === expectedCursor && checkpoint.logHash === `hash-${expectedCursor}`,
+        `step ${step} recovered checkpoint ${checkpoint?.cursor ?? 0} incorrectly`,
+      )
+      campaignAssert(
+        actualContent === content,
+        `step ${step} changed the vault content during replay`,
+      )
+      for (const [operationIndex, operation] of remote.operations.entries()) {
+        campaignAssert(
+          operation.cursor === operationIndex + 1 &&
+            operation.logHash === `hash-${operationIndex + 1}`,
+          `step ${step} found a discontinuous remote log at ${operationIndex + 1}`,
+        )
+        const envelope = operation.envelope as Record<string, unknown>
+        if (typeof envelope.blobId === "string") {
+          campaignAssert(
+            remote.blobs.has(envelope.blobId),
+            `step ${step} found a committed operation with a missing blob`,
+          )
+        }
+      }
+      if (content === null) {
+        campaignAssert(snapshot === undefined, `step ${step} retained a deleted snapshot`)
+      } else {
+        const expectedFingerprint = await fingerprintBytes(new TextEncoder().encode(content).buffer)
+        campaignAssert(
+          snapshot?.fingerprint === expectedFingerprint,
+          `step ${step} recovered a stale snapshot`,
+        )
+      }
+      const audit = new IndexedDbJournal(databaseName)
+      await audit.open()
+      const auditPending = await audit.listPending()
+      const auditCheckpoint = await audit.getCheckpoint()
+      const auditSnapshots = await audit.getSnapshots()
+      audit.close()
+      campaignAssert(auditPending.length === 0, `step ${step} reopened with pending work`)
+      campaignAssert(
+        auditCheckpoint?.cursor === expectedCursor &&
+          auditCheckpoint.logHash === `hash-${expectedCursor}`,
+        `step ${step} did not retain its checkpoint after reopen`,
+      )
+      campaignAssert(
+        auditSnapshots.has("note.md") === (content !== null),
+        `step ${step} changed snapshot paths after reopen`,
+      )
+      traceEvent(trace, "recovered", {
+        step,
+        checkpoint: checkpoint.cursor,
+        revisions: revisions.length,
+        pending: pending.length,
+        conflicts: conflicts.length,
+        snapshot: snapshot !== undefined,
+      })
+    }
+  } catch (error) {
+    if (activeController) {
+      await activeController.quiesce().catch(() => undefined)
+      activeController = null
+    }
+    const tracePath = await persistFailureTrace(trace, error).catch(() => "trace-write-failed")
+    const failure = error instanceof Error ? error.message : String(error)
+    throw new Error(
+      `Seeded fault campaign failed for seed ${seed}: ${failure}. Trace: ${tracePath}. Replay with: bun run fault:test --seed ${seed} --steps ${steps}`,
+    )
+  } finally {
+    if (activeController) await activeController.quiesce()
+    await deleteDatabase(databaseName)
+  }
+}
+
+function isPostCommitBoundary(fault: SeededFault): fault is PostCommitCrashBoundary {
+  return fault !== "none" && fault !== "response"
+}
+
+function expectedFaultMessage(fault: Exclude<SeededFault, "none">): string {
+  return fault === "response"
+    ? "Injected response loss after commit"
+    : `Injected crash after ${fault}`
+}
+
+function campaignAssert(condition: boolean, message: string): asserts condition {
+  if (!condition) throw new Error(message)
+}
