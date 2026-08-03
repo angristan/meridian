@@ -7,7 +7,6 @@ import {
   ErrorResponseSchema,
   OperationReceiptResponseSchema,
   type PairingApproval,
-  type PairingCandidateConfirmation,
   PairingCapabilityResponseSchema,
   type PairingJoin,
   type PairingRelease,
@@ -383,19 +382,13 @@ export class MeridianRemoteClient implements RemotePort {
     return this.pairingResultRequest(pairingId, "confirm-owner", {}, { authenticated: true })
   }
 
-  async confirmPairingCandidate(
-    pairingId: string,
-    payload: PairingCandidateConfirmation,
-  ): Promise<PairingResult> {
+  async confirmPairingCandidate(pairingId: string, payload: unknown): Promise<PairingResult> {
     return this.pairingResultRequest(pairingId, "confirm-candidate", payload, {
       authenticated: false,
     })
   }
 
-  async completePairing(
-    pairingId: string,
-    payload: PairingCandidateConfirmation,
-  ): Promise<PairingResult> {
+  async completePairing(pairingId: string, payload: unknown): Promise<PairingResult> {
     return this.pairingResultRequest(pairingId, "complete", payload, { authenticated: false })
   }
 

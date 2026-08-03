@@ -54,7 +54,7 @@ describe("HistoryBackfillService", () => {
     await journal.setCheckpoint({ cursor: 7, logHash: "live-sync-hash" })
     const service = new HistoryBackfillService(journal, remote, new FakeCrypto())
 
-    await expect(service.backfill(TEST_DEVICE)).resolves.toEqual({ added: 2, throughCursor: 2 })
+    await expect(service.backfill(TEST_DEVICE)).resolves.toBeUndefined()
 
     expect(await journal.listRevisions()).toEqual([])
     expect(await journal.getCheckpoint()).toEqual({ cursor: 7, logHash: "live-sync-hash" })
@@ -82,10 +82,7 @@ describe("HistoryBackfillService", () => {
 
     expect(remote.getChangesCount).toBe(1)
     barrier.release()
-    await expect(Promise.all([first, second])).resolves.toEqual([
-      { added: 2, throughCursor: 2 },
-      { added: 2, throughCursor: 2 },
-    ])
+    await expect(Promise.all([first, second])).resolves.toEqual([undefined, undefined])
     expect(remote.getChangesCount).toBe(1)
   })
 
@@ -138,7 +135,7 @@ describe("HistoryBackfillService", () => {
 
     await expect(
       new HistoryBackfillService(journal, remote, new FakeCrypto()).backfill(TEST_DEVICE),
-    ).resolves.toEqual({ added: 1, throughCursor: 1 })
+    ).resolves.toBeUndefined()
     expect((await journal.listRetainedRevisions()).map((revision) => revision.revisionId)).toEqual([
       "revision-one",
     ])
@@ -241,7 +238,7 @@ describe("HistoryBackfillService", () => {
       logFormat: "legacy-http-v1",
     })
     crypto.interrupted = false
-    await expect(service.backfill(TEST_DEVICE)).resolves.toEqual({ added: 1, throughCursor: 2 })
+    await expect(service.backfill(TEST_DEVICE)).resolves.toBeUndefined()
     expect(await journal.listRetainedRevisions()).toHaveLength(2)
   })
 
@@ -276,7 +273,7 @@ describe("HistoryBackfillService", () => {
     const restartedJournal = new IndexedDbJournal(databaseName)
     await restartedJournal.open()
     const restarted = new HistoryBackfillService(restartedJournal, remote, new FakeCrypto())
-    await expect(restarted.backfill(TEST_DEVICE)).resolves.toEqual({ added: 1, throughCursor: 2 })
+    await expect(restarted.backfill(TEST_DEVICE)).resolves.toBeUndefined()
     expect(await restartedJournal.getHistoryCheckpoint()).toMatchObject({
       cursor: 2,
       logHash: "hash-2",

@@ -1,7 +1,6 @@
 import type {
   LogFormat,
   PairingApproval,
-  PairingCandidateConfirmation,
   PairingCapabilityResponseSchema,
   PairingJoin,
   PairingRelease,
@@ -18,14 +17,7 @@ export type ConfigCategory =
   | "core-plugins"
   | "core-plugin-settings"
 
-export type {
-  LogFormat,
-  PairingApproval,
-  PairingCandidateConfirmation,
-  PairingJoin,
-  PairingRelease,
-  RetentionAcknowledgement,
-}
+export type { LogFormat, PairingApproval, PairingJoin, PairingRelease, RetentionAcknowledgement }
 export type PairingCapability = typeof PairingCapabilityResponseSchema.Type
 export type PairingState = typeof PairingStateSchema.Type
 export type StoragePruneResult = typeof StoragePruneResponseSchema.Type
@@ -691,11 +683,8 @@ export interface RemotePort {
   releasePairing(pairingId: string, payload: PairingRelease): Promise<PairingResult>
   getPairingResult(pairingId: string, capability: string): Promise<PairingResult>
   confirmPairingOwner(pairingId: string): Promise<PairingResult>
-  confirmPairingCandidate(
-    pairingId: string,
-    payload: PairingCandidateConfirmation,
-  ): Promise<PairingResult>
-  completePairing(pairingId: string, payload: PairingCandidateConfirmation): Promise<PairingResult>
+  confirmPairingCandidate(pairingId: string, payload: unknown): Promise<PairingResult>
+  completePairing(pairingId: string, payload: unknown): Promise<PairingResult>
   cancelPairing(pairingId: string, capability: string): Promise<PairingResult>
   rejectPairing(pairingId: string): Promise<PairingResult>
   connectNotifications(

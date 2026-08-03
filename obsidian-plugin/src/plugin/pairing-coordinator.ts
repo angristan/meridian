@@ -1,7 +1,6 @@
 import {
   type PairingApproval,
   PairingApprovalSchema,
-  type PairingCandidateConfirmation,
   PairingCandidateConfirmationSchema,
   type PairingJoin,
   PairingJoinSchema,
@@ -437,7 +436,7 @@ export class PairingCoordinator {
     }
   }
 
-  private pendingCompletionPayload(pairingId: string): PairingCandidateConfirmation {
+  private pendingCompletionPayload(pairingId: string) {
     const serialized = this.secrets.getPendingPairingCompletion(pairingId)
     if (!serialized) throw new Error("Pending pairing completion is missing from SecretStorage")
     try {

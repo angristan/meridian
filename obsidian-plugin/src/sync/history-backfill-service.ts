@@ -15,13 +15,8 @@ import {
   verifiedLogCursor,
 } from "./verified-log"
 
-interface HistoryBackfillResult {
-  added: number
-  throughCursor: number
-}
-
 export class HistoryBackfillService {
-  private running: Promise<HistoryBackfillResult> | null = null
+  private running: Promise<void> | null = null
 
   constructor(
     private readonly journal: JournalPort,
@@ -29,7 +24,7 @@ export class HistoryBackfillService {
     private readonly crypto: CryptoPort,
   ) {}
 
-  backfill(device: DeviceKeyMaterial): Promise<HistoryBackfillResult> {
+  backfill(device: DeviceKeyMaterial): Promise<void> {
     if (this.running) return this.running
     const running = this.runBackfill(device).finally(() => {
       if (this.running === running) this.running = null
@@ -38,7 +33,7 @@ export class HistoryBackfillService {
     return running
   }
 
-  private async runBackfill(device: DeviceKeyMaterial): Promise<HistoryBackfillResult> {
+  private async runBackfill(device: DeviceKeyMaterial): Promise<void> {
     if (!device.trustedCheckpointAuthorized) {
       throw new Error("Re-pair this legacy device before downloading complete history")
     }
@@ -52,7 +47,6 @@ export class HistoryBackfillService {
     let log = verifiedLogCursor(
       (await this.journal.getHistoryCheckpoint()) ?? initialCheckpoint(trustedInitialFormat),
     )
-    let added = 0
     while (log.targetCursor === null || log.checkpoint.cursor < log.targetCursor) {
       const page = acceptVerifiedLogPage(
         log,
@@ -95,10 +89,8 @@ export class HistoryBackfillService {
         }
         log = nextLog
         await this.journal.commitHistoryOperation(revision, log.checkpoint, revocation)
-        if (revision) added += 1
       }
     }
-    return { added, throughCursor: log.checkpoint.cursor }
   }
 
   private async inspectFileOperation(
