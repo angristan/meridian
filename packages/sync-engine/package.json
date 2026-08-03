@@ -5,11 +5,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./protocol-adapter": "./src/protocol-adapter.ts",
     "./text-merge": "./src/text-merge.ts"
-  },
-  "dependencies": {
-    "@meridian/protocol": "workspace:*"
   },
   "scripts": {
     "build": "tsc --project tsconfig.build.json",

@@ -1,6 +1,5 @@
 import {
   type Hash,
-  hashBytes,
   logEntryHashInput,
   type SignedOperation,
   type VaultId,
@@ -14,8 +13,4 @@ export async function computeLogEntryHash(
   operation: SignedOperation,
 ): Promise<Hash> {
   return sha256(logEntryHashInput(vaultId, cursor, previousHash, operation))
-}
-
-export function initialLogHash(): Hash {
-  return hashBytes(new Uint8Array(32))
 }

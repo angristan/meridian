@@ -29,7 +29,6 @@ import type {
   EpochDeclarationBody,
   PairingContext,
   PairingDeviceMetadata,
-  Signed,
   SignedCheckpoint,
 } from "./models.js"
 
@@ -553,27 +552,6 @@ export function pairingVerificationPreviewSigningBytes(
     approverDeviceId,
     transferHash,
   })
-}
-
-export function decodePairingIdentity(value: Uint8Array): {
-  pairingId: ReturnType<typeof pairingId>
-  vaultId: ReturnType<typeof vaultId>
-} {
-  const decoded = record(decodeCanonical(value), "pairing identity")
-  exactKeys(decoded, ["pairingId", "vaultId"], "pairing identity")
-  return {
-    pairingId: pairingId(bytes(decoded.pairingId, 16, "pairing ID")),
-    vaultId: vaultId(bytes(decoded.vaultId, 16, "vault ID")),
-  }
-}
-
-export function encodeSigned<T>(
-  domain: string,
-  signed: Signed<T>,
-  bodyToCbor: (body: T) => CborValue,
-): Uint8Array {
-  if (domain.length === 0) throw new TypeError("Signature domain must not be empty")
-  return encodeCanonical({ body: bodyToCbor(signed.body), signature: signed.signature })
 }
 
 export type CertificateLookup = (certificateId: CertificateId) => DeviceCertificate | undefined

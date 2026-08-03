@@ -15,8 +15,6 @@ export const DevicePublicIdentitySchema = Schema.Struct({
   certificate: Schema.String,
 })
 
-export type DevicePublicIdentity = typeof DevicePublicIdentitySchema.Type
-
 export const DeviceDescriptorSchema = Schema.Struct({
   deviceName: Schema.String,
   platform: Schema.String,
@@ -99,8 +97,6 @@ export const PairingCandidateConfirmationSchema = Schema.Struct({
   transferHash: Schema.String,
   proof: Schema.String,
 })
-
-export type PairingCandidateConfirmation = typeof PairingCandidateConfirmationSchema.Type
 
 export const PairingCancelSchema = Schema.Struct({ capability: Schema.String })
 

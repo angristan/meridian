@@ -18,18 +18,3 @@ export function randomBytes(length: number): Uint8Array {
   }
   return webCrypto().getRandomValues(new Uint8Array(length))
 }
-
-export function concatenateBytes(...values: readonly Uint8Array[]): Uint8Array {
-  const length = values.reduce((total, value) => total + value.byteLength, 0)
-  const output = new Uint8Array(length)
-  let offset = 0
-  for (const value of values) {
-    output.set(value, offset)
-    offset += value.byteLength
-  }
-  return output
-}
-
-export function zeroize(value: Uint8Array): void {
-  value.fill(0)
-}

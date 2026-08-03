@@ -314,12 +314,3 @@ export function decodeCanonical(bytes: Uint8Array, limits: CborDecodeLimits = {}
   }
   return value
 }
-
-export function isCanonicalEncoding(bytes: Uint8Array, limits: CborDecodeLimits = {}): boolean {
-  try {
-    const decoded = decodeCanonical(bytes, limits)
-    return compareBytes(bytes, encodeCanonical(decoded)) === 0
-  } catch {
-    return false
-  }
-}
