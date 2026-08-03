@@ -1,3 +1,10 @@
+## [1.12.1](https://github.com/angristan/meridian/compare/1.12.0...1.12.1) (2026-08-03)
+
+
+### Bug Fixes
+
+* repair missing local revision ancestry ([edfee26](https://github.com/angristan/meridian/commit/edfee2623d60bc4b7dea385f42d23d21e08d8131))
+
 # [1.12.0](https://github.com/angristan/meridian/compare/1.11.13...1.12.0) (2026-08-03)
 
 
