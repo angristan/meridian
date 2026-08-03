@@ -95,15 +95,8 @@ export class VaultDurableObject extends DurableObject<VaultDurableObjectEnv> {
         return await this.operations.changes(request)
       if (request.method === "GET" && pathname === "/v1/storage")
         return await this.blobs.storageStats(request)
-      if (request.method === "POST" && pathname === "/v1/storage/prune-orphans") {
-        return await this.ctx.blockConcurrencyWhile(async () => {
-          try {
-            return await this.blobs.pruneOrphanBlobs(request)
-          } catch (error) {
-            return errorResponse(error)
-          }
-        })
-      }
+      if (request.method === "POST" && pathname === "/v1/storage/prune-orphans")
+        return await this.blobs.pruneOrphanBlobs(request)
       const blobClaimMatch = /^\/internal\/blobs\/([^/]+)\/claim$/.exec(pathname)
       const claimedBlobId = blobClaimMatch?.at(1)
       if (request.method === "POST" && claimedBlobId !== undefined)

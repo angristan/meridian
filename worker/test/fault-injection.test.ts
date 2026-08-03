@@ -266,6 +266,52 @@ class PausedDeleteBucket {
 }
 
 describe("deterministic Worker fault injection", () => {
+  it("does not globally serialize R2 deletion", async () => {
+    const stub = env.VAULT.get(env.VAULT.idFromName(`blob-prune-availability-${randomToken(8)}`))
+    const owner = await setupOwner(stub)
+
+    await runInDurableObject(stub, async (instance, state) => {
+      const transactionSync: TransactionSync = (callback) => state.storage.transactionSync(callback)
+      const bucket = new PausedDeleteBucket()
+      const blobIdentifier = protocolBlobId(randomBytes(16))
+      const blobId = base64UrlEncode(blobIdentifier)
+      bucket.seed(`vaults/${owner.vaultId}/blobs/${blobId}`, new Uint8Array([1, 2, 3]))
+
+      const injectable = instance as unknown as { blobs: VaultBlobs }
+      let requestTimeConcurrencyBlocks = 0
+      const mutableState = state as unknown as {
+        blockConcurrencyWhile: DurableObjectState["blockConcurrencyWhile"]
+      }
+      const blockConcurrencyWhile = mutableState.blockConcurrencyWhile.bind(state)
+      mutableState.blockConcurrencyWhile = (callback) => {
+        requestTimeConcurrencyBlocks += 1
+        return blockConcurrencyWhile(callback)
+      }
+      injectable.blobs = new VaultBlobs(
+        state.storage.sql,
+        bucket as unknown as R2Bucket,
+        transactionSync,
+      )
+
+      const authorization = { authorization: `Bearer ${owner.sessionToken}` }
+      const pruning = instance.fetch(
+        new Request("https://vault.internal/v1/storage/prune-orphans", {
+          method: "POST",
+          headers: authorization,
+        }),
+      )
+      await bucket.deleteStarted
+      const changes = await instance.fetch(
+        new Request("https://vault.internal/v1/changes?after=0", { headers: authorization }),
+      )
+
+      bucket.releaseDelete()
+      expect(requestTimeConcurrencyBlocks).toBe(0)
+      expect(changes.status).toBe(200)
+      expect((await pruning).status).toBe(200)
+    })
+  })
+
   it("never commits a revision while pruning its blob", async () => {
     const stub = env.VAULT.get(env.VAULT.idFromName(`blob-prune-race-${randomToken(8)}`))
     const owner = await setupOwner(stub)
