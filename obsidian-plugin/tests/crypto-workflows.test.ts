@@ -1,7 +1,21 @@
-import { computeRecoveryStateId, deserializeEncryptedRecoveryPackage } from "@meridian/crypto"
-import { decodeOperation } from "@meridian/protocol"
+import {
+  computeRecoveryStateId,
+  deserializeDeviceKeyBundle,
+  deserializeEncryptedRecoveryPackage,
+  sign,
+  signOperation,
+} from "@meridian/crypto"
+import {
+  decodeDeviceCertificate,
+  decodeOperation,
+  ed25519Signature,
+  encodeDeviceCertificate,
+  encodeOperation,
+  operationId,
+} from "@meridian/protocol"
 import { describe, expect, it } from "vitest"
 import { packageCrypto } from "../src/crypto/package-crypto"
+import { parseWorkerOperation, workerOperationSigningBytes } from "../src/crypto/worker-operation"
 import { fromBase64Url, randomId, toBase64Url } from "../src/platform/bytes"
 
 function record(value: unknown): Record<string, unknown> {
@@ -145,6 +159,85 @@ describe("shared crypto adapter", () => {
       previousRecoveryStateId: recoveryStateId,
       challengeId: "recovery-challenge",
     })
+  })
+
+  it("rejects outer tampering and inner mismatches consistently", async () => {
+    const crypto = packageCrypto
+    const claim = await crypto.createFirstDevice("setup-session", "claim-challenge")
+    const device = await crypto.loadDevice(claim.keyBundle)
+    const stored = record(JSON.parse(claim.keyBundle))
+    const bundle = deserializeDeviceKeyBundle(fromBase64Url(stringField(stored, "deviceBundle")))
+    const encrypted = await crypto.encryptRevision(device, {
+      operationId: randomId(),
+      revisionId: randomId(),
+      fileId: randomId(),
+      action: "upsert",
+      path: "tamper.md",
+      previousPath: null,
+      parents: [],
+      bytes: new TextEncoder().encode("tamper test").buffer,
+      chunkSize: 4 * 1024 * 1024,
+    })
+    const original = parseWorkerOperation(encrypted.envelope)
+    const verifyBothPaths = async (envelope: unknown, message: RegExp) => {
+      const remote = { cursor: 1, logHash: randomId(32), envelope }
+      await expect(crypto.inspectRevision(device, remote, Number.MAX_SAFE_INTEGER)).rejects.toThrow(
+        message,
+      )
+      await expect(
+        crypto.decryptRevision(device, remote, Number.MAX_SAFE_INTEGER, async () => {
+          throw new Error("Tampered operations must be rejected before loading blobs")
+        }),
+      ).rejects.toThrow(message)
+    }
+
+    for (const tampered of [
+      { ...original, operationId: randomId() },
+      { ...original, epochId: randomId() },
+      { ...original, type: "tombstone" },
+      { ...original, subjectDeviceId: randomId() },
+    ]) {
+      await verifyBothPaths(tampered, /file operation signature is invalid/)
+    }
+
+    const signed = decodeOperation(fromBase64Url(original.envelope))
+    const invalidInnerSignature = new Uint8Array(signed.signature)
+    invalidInnerSignature[0] = (invalidInnerSignature[0] ?? 0) ^ 1
+    const resignWrapper = (innerEnvelope: string) => {
+      const unsigned = {
+        operationId: original.operationId,
+        authorDeviceId: original.authorDeviceId,
+        epochId: original.epochId,
+        type: original.type,
+        envelope: innerEnvelope,
+      }
+      return {
+        ...unsigned,
+        signature: toBase64Url(
+          sign(workerOperationSigningBytes(unsigned), bundle.signingPrivateKey),
+        ),
+      }
+    }
+    await verifyBothPaths(
+      resignWrapper(
+        toBase64Url(
+          encodeOperation({ ...signed, signature: ed25519Signature(invalidInnerSignature) }),
+        ),
+      ),
+      /Revision operation signature is invalid/,
+    )
+
+    const mismatched = signOperation(
+      {
+        ...signed.body,
+        operationId: operationId(fromBase64Url(randomId())),
+      },
+      bundle.signingPrivateKey,
+    )
+    await verifyBothPaths(
+      resignWrapper(toBase64Url(encodeOperation(mismatched))),
+      /does not match its signed revision/,
+    )
   })
 
   it("applies epoch transitions after an offline checkpoint and retries safely", async () => {
@@ -426,6 +519,28 @@ describe("shared crypto adapter", () => {
     })
     const repairedSecret = JSON.parse(repairedMember.serialized) as Record<string, unknown>
     expect(repairedSecret.checkpointAuthorizationChain).toHaveLength(2)
+
+    const conflictingSecret = JSON.parse(paired.keyBundle) as Record<string, unknown>
+    const conflictingChain = conflictingSecret.checkpointAuthorizationChain
+    if (!Array.isArray(conflictingChain)) throw new Error("Expected stored authorization chain")
+    const conflictingOwner = decodeDeviceCertificate(fromBase64Url(ownerCertificate))
+    conflictingSecret.checkpointAuthorizationChain = [
+      ...conflictingChain,
+      toBase64Url(
+        encodeDeviceCertificate({
+          ...conflictingOwner,
+          body: { ...conflictingOwner.body, expiresAt: Date.now() + 1 },
+        }),
+      ),
+    ]
+    const conflictingMember = await crypto.loadDevice(JSON.stringify(conflictingSecret))
+    await expect(
+      crypto.refreshTrustedCheckpoint(conflictingMember, {
+        ...trustedHead,
+        cursor: 7,
+        logHash: randomId(32),
+      }),
+    ).rejects.toThrow(/conflicting certificates/)
 
     const incompleteSecret = JSON.parse(paired.keyBundle) as Record<string, unknown>
     incompleteSecret.checkpointAuthorizationChain = []

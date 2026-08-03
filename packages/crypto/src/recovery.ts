@@ -39,6 +39,13 @@ import {
 } from "@meridian/protocol"
 import { ed25519 } from "@noble/curves/ed25519.js"
 import { validateDeviceCertificate, verifyCheckpoint } from "./authorization.js"
+import {
+  currentEpochKeyMatches,
+  decodeEpochKeyring,
+  fixedBytes,
+  hasExactFields,
+  strictRecord,
+} from "./cbor.js"
 import { AuthenticationError } from "./errors.js"
 import { sha256 } from "./hash.js"
 import { hpkeOpen, hpkeSeal } from "./hpke.js"
@@ -129,7 +136,7 @@ export function deserializeEncryptedRecoveryPackage(encoded: Uint8Array): Encryp
     "protocolGeneration",
     "vaultId",
   ].sort()
-  if (Object.keys(value).sort().join("\0") !== expected.join("\0")) {
+  if (!hasExactFields(value, expected)) {
     throw new AuthenticationError("Recovery package has missing or unknown fields")
   }
   if (
@@ -284,24 +291,16 @@ export async function encryptRecoveryPackageForPublicKey(
   }
 }
 
-function fixedBytes(value: CborValue | undefined, length: number, label: string): Uint8Array {
-  if (!(value instanceof Uint8Array) || value.byteLength !== length) {
+function recoveryBytes(value: CborValue | undefined, length: number, label: string): Uint8Array {
+  return fixedBytes(value, length, () => {
     throw new AuthenticationError(`Recovery package ${label} must contain ${length} bytes`)
-  }
-  return value
+  })
 }
 
 function asRecord(value: CborValue): Record<string, CborValue> {
-  if (
-    value === null ||
-    typeof value !== "object" ||
-    Array.isArray(value) ||
-    value instanceof Uint8Array ||
-    value instanceof Map
-  ) {
+  return strictRecord(value, () => {
     throw new AuthenticationError("Recovery package plaintext is not a map")
-  }
-  return value as Record<string, CborValue>
+  })
 }
 
 export async function decryptRecoveryPackage(
@@ -321,7 +320,7 @@ export async function decryptRecoveryPackage(
     recoveryAad(encrypted.vaultId),
   )
   const envelope = asRecord(decodeCanonical(plaintext))
-  if (Object.keys(envelope).sort().join("\0") !== "authorization\0state") {
+  if (!hasExactFields(envelope, ["authorization", "state"])) {
     throw new AuthenticationError("Recovery package update envelope is malformed")
   }
   const value = asRecord(envelope.state as CborValue)
@@ -335,7 +334,7 @@ export async function decryptRecoveryPackage(
     "recoverySequence",
     ...(value.requiredTransitionOperationId === undefined ? [] : ["requiredTransitionOperationId"]),
   ].sort()
-  if (Object.keys(value).sort().join("\0") !== expectedKeys.join("\0")) {
+  if (!hasExactFields(value, expectedKeys)) {
     throw new AuthenticationError("Recovery package has missing or unknown fields")
   }
   if (!(value.vaultId instanceof Uint8Array) || !bytesEqual(value.vaultId, encrypted.vaultId)) {
@@ -347,41 +346,31 @@ export async function decryptRecoveryPackage(
   if (!(value.vaultEpochKey instanceof Uint8Array)) {
     throw new AuthenticationError("Recovery package contains an invalid vault key")
   }
-  if (
-    !Array.isArray(value.epochKeys) ||
-    value.epochKeys.length < 1 ||
-    value.epochKeys.length > 1024
-  ) {
-    throw new AuthenticationError("Recovery package contains an invalid epoch keyring")
-  }
-  const epochKeys = value.epochKeys.map((entry) => {
-    const record = asRecord(entry)
-    if (
-      Object.keys(record).sort().join("\0") !== "epochId\0vaultEpochKey" ||
-      !(record.epochId instanceof Uint8Array) ||
-      !(record.vaultEpochKey instanceof Uint8Array)
-    ) {
-      throw new AuthenticationError("Recovery package contains an invalid epoch key entry")
-    }
-    return {
-      epochId: epochId(record.epochId),
-      vaultEpochKey: vaultEpochKey(record.vaultEpochKey),
-    }
-  })
-  for (let index = 0; index < epochKeys.length; index += 1) {
-    if (
-      epochKeys
-        .slice(index + 1)
-        .some((entry) => bytesEqual(entry.epochId, epochKeys[index]?.epochId ?? new Uint8Array()))
-    ) {
+  const epochKeys = decodeEpochKeyring(
+    value.epochKeys,
+    (entry) => {
+      const keyEntry = asRecord(entry)
+      if (
+        !hasExactFields(keyEntry, ["epochId", "vaultEpochKey"]) ||
+        !(keyEntry.epochId instanceof Uint8Array) ||
+        !(keyEntry.vaultEpochKey instanceof Uint8Array)
+      ) {
+        throw new AuthenticationError("Recovery package contains an invalid epoch key entry")
+      }
+      return {
+        epochId: epochId(keyEntry.epochId),
+        vaultEpochKey: vaultEpochKey(keyEntry.vaultEpochKey),
+      }
+    },
+    () => {
+      throw new AuthenticationError("Recovery package contains an invalid epoch keyring")
+    },
+    () => {
       throw new AuthenticationError("Recovery package contains duplicate epoch keys")
-    }
-  }
-  const declaredEpoch = decodeEpochDeclaration(value.epoch)
-  const currentKey = epochKeys.find((entry) =>
-    bytesEqual(entry.epochId, declaredEpoch.body.epochId),
+    },
   )
-  if (!currentKey || !bytesEqual(currentKey.vaultEpochKey, value.vaultEpochKey)) {
+  const declaredEpoch = decodeEpochDeclaration(value.epoch)
+  if (!currentEpochKeyMatches(epochKeys, declaredEpoch.body.epochId, value.vaultEpochKey)) {
     throw new AuthenticationError("Recovery package current epoch key is inconsistent")
   }
   if (
@@ -400,7 +389,9 @@ export async function decryptRecoveryPackage(
   const requiredTransitionOperationId =
     value.requiredTransitionOperationId === undefined
       ? undefined
-      : operationId(fixedBytes(value.requiredTransitionOperationId, 16, "transition operation ID"))
+      : operationId(
+          recoveryBytes(value.requiredTransitionOperationId, 16, "transition operation ID"),
+        )
   const checkpointMatchesCurrent = bytesEqual(checkpoint.body.epochId, declaredEpoch.body.epochId)
   const checkpointPrecedesRequiredTransition =
     requiredTransitionOperationId !== undefined &&
@@ -438,9 +429,7 @@ function validateRecoveryStateAuthorization(
     throw new AuthenticationError("Owner-updated recovery state lacks its required transition")
   }
   const authorization = asRecord(value as CborValue)
-  if (
-    Object.keys(authorization).sort().join("\0") !== "authorizationChain\0signature\0signerDeviceId"
-  ) {
+  if (!hasExactFields(authorization, ["authorizationChain", "signature", "signerDeviceId"])) {
     throw new AuthenticationError("Recovery state authorization is malformed")
   }
   if (
@@ -454,7 +443,7 @@ function validateRecoveryStateAuthorization(
     decodeDeviceCertificate(fixedRecoveryObject(encoded, "authorization certificate")),
   )
   const signerDeviceId = deviceId(
-    fixedBytes(authorization.signerDeviceId, 16, "state signer device ID"),
+    recoveryBytes(authorization.signerDeviceId, 16, "state signer device ID"),
   )
   const signer = certificates.find((certificate) =>
     bytesEqual(certificate.body.deviceId, signerDeviceId),
@@ -472,7 +461,7 @@ function validateRecoveryStateAuthorization(
     atTime: Date.now(),
   })
   const signature = ed25519Signature(
-    fixedBytes(authorization.signature, 64, "state update signature"),
+    recoveryBytes(authorization.signature, 64, "state update signature"),
   )
   const epochAuthorized =
     state.epoch.body.createdBy === "recovery"

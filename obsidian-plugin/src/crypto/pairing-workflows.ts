@@ -13,8 +13,6 @@ import {
   verify,
 } from "@meridian/crypto"
 import {
-  bytesToHex,
-  type DeviceCertificate,
   decodeDeviceCertificate,
   deviceId,
   ed25519PrivateKey,
@@ -22,6 +20,9 @@ import {
   ed25519Signature,
   encodeDeviceCertificate,
   hashBytes,
+  type PairingApproval,
+  type PairingJoin,
+  type PairingRelease,
   pairingApprovalRequestSigningBytes,
   pairingCandidateConfirmationSigningBytes,
   pairingCompletionSigningBytes,
@@ -42,7 +43,11 @@ import type {
   PairingVerificationMaterial,
 } from "../model"
 import { fromBase64Url, toBase64Url } from "../platform/bytes"
-import { deviceBundle, parseStoredSecret, serializeStoredDeviceSecret } from "./device-secret"
+import {
+  decodedDeviceSecret,
+  exactCertificateChain,
+  serializeStoredDeviceSecret,
+} from "./device-secret"
 
 interface CandidatePackage {
   readonly pairingId: string
@@ -100,19 +105,20 @@ export async function createPairingJoin(
     signingPrivateKey: toBase64Url(pending.signingPrivateKey),
     hpkePrivateKey: toBase64Url(pending.hpkePrivateKey),
   }
-  return {
-    payload: {
-      capability: pairing.capability,
-      device: {
-        deviceId: candidate.deviceId,
-        signingPublicKey: candidate.signingPublicKey,
-        hpkePublicKey: candidate.hpkePublicKey,
-        deviceName: candidate.deviceName,
-        platform: candidate.platform,
-      },
-      proof: toBase64Url(workerProof),
-      requestProof: candidate.requestProof,
+  const payload: PairingJoin = {
+    capability: pairing.capability,
+    device: {
+      deviceId: candidate.deviceId,
+      signingPublicKey: candidate.signingPublicKey,
+      hpkePublicKey: candidate.hpkePublicKey,
+      deviceName: candidate.deviceName,
+      platform: candidate.platform,
     },
+    proof: toBase64Url(workerProof),
+    requestProof: candidate.requestProof,
+  }
+  return {
+    payload,
     candidatePackage: JSON.stringify(candidate),
     pendingSecret: JSON.stringify(secret),
   }
@@ -124,7 +130,8 @@ export async function approvePairing(
   certificates: string[],
 ): Promise<PairingApprovalMaterial> {
   const candidate = parseCandidatePackage(candidatePackage)
-  const bundle = deviceBundle(device)
+  const secret = decodedDeviceSecret(device)
+  const { bundle } = secret
   const request = {
     pairingId: pairingId(fromBase64Url(candidate.pairingId)),
     vaultId: vaultId(fromBase64Url(candidate.vaultId)),
@@ -136,14 +143,13 @@ export async function approvePairing(
     proofOfPossession: ed25519Signature(fromBase64Url(candidate.requestProof)),
   }
   const authorizationChain = exactAuthorizationChain(bundle.certificate, certificates)
-  const secret = parseStoredSecret(device.serialized)
-  if (!secret.recoveryPublicKey) {
+  if (!secret.stored.recoveryPublicKey) {
     throw new Error("The local key bundle has no recovery trust anchor")
   }
   const prepared = await preparePairingEpochPackage({
     approver: bundle,
     request,
-    recoveryPublicKey: ed25519PublicKey(fromBase64Url(secret.recoveryPublicKey)),
+    recoveryPublicKey: ed25519PublicKey(fromBase64Url(secret.stored.recoveryPublicKey)),
     authorizationChain,
     expiresAt: candidate.expiresAt,
   })
@@ -151,13 +157,10 @@ export async function approvePairing(
   const verificationPreview = serializePairingVerificationPreview(prepared.preview)
   const certificate = encodeDeviceCertificate(prepared.package.context.certificate)
   const transcriptHash = toBase64Url(await sha256(transfer))
-  const verificationPayload = {
+  const verificationPayload: PairingApproval = {
     certificate: toBase64Url(certificate),
     transcriptHash,
     verificationPreview: toBase64Url(verificationPreview),
-  }
-  const releasePayload = {
-    hpkeTransfer: toBase64Url(transfer),
   }
   const approvalSignature = sign(
     pairingApprovalRequestSigningBytes({
@@ -172,46 +175,33 @@ export async function approvePairing(
     }),
     bundle.signingPrivateKey,
   )
+  const releasePayload: PairingRelease = {
+    hpkeTransfer: toBase64Url(transfer),
+    approvalSignature: toBase64Url(approvalSignature),
+  }
   return {
     payload: verificationPayload,
-    releasePayload: { ...releasePayload, approvalSignature: toBase64Url(approvalSignature) },
+    releasePayload,
     verificationPhrase: prepared.verificationPhrase,
     transferHash: transcriptHash,
   }
 }
 
 function exactAuthorizationChain(
-  approver: DeviceCertificate,
+  approver: ReturnType<typeof decodeDeviceCertificate>,
   encodedRegistry: string[],
-): DeviceCertificate[] {
+): ReturnType<typeof decodeDeviceCertificate>[] {
   if (approver.body.issuer.kind === "recovery") return [approver]
 
-  const registry = new Map<string, DeviceCertificate>()
+  const registry: ReturnType<typeof decodeDeviceCertificate>[] = []
   for (const encoded of encodedRegistry) {
     try {
-      const certificate = decodeDeviceCertificate(fromBase64Url(encoded))
-      registry.set(bytesToHex(certificate.body.certificateId), certificate)
+      registry.push(decodeDeviceCertificate(fromBase64Url(encoded)))
     } catch {
       // Unrelated malformed registry history is not part of the approver's issuer path.
     }
   }
-  registry.set(bytesToHex(approver.body.certificateId), approver)
-
-  const chain: DeviceCertificate[] = []
-  const visited = new Set<string>()
-  let current = approver
-  while (true) {
-    const currentId = bytesToHex(current.body.certificateId)
-    if (visited.has(currentId)) throw new Error("Approver certificate chain contains a cycle")
-    visited.add(currentId)
-    chain.push(current)
-    if (current.body.issuer.kind === "recovery") return chain
-
-    const issuerId = bytesToHex(current.body.issuer.certificateId)
-    const issuer = registry.get(issuerId)
-    if (!issuer) throw new Error("Approver certificate chain is incomplete")
-    current = issuer
-  }
+  return exactCertificateChain(approver, registry, "pairing-approver")
 }
 
 export async function inspectPairingVerification(
@@ -320,8 +310,19 @@ function pendingDevice(pending: PendingPairingSecret) {
 }
 
 function parseCandidatePackage(serialized: string): CandidatePackage {
-  const value: unknown = JSON.parse(serialized)
-  if (!isRecord(value)) throw new Error("Candidate package is invalid")
+  return candidatePackage(parseJsonRecord(serialized))
+}
+
+function parsePendingSecret(serialized: string): PendingPairingSecret {
+  const value = parseJsonRecord(serialized)
+  return {
+    ...candidatePackage(value),
+    signingPrivateKey: requireString(value, "signingPrivateKey"),
+    hpkePrivateKey: requireString(value, "hpkePrivateKey"),
+  }
+}
+
+function candidatePackage(value: Record<string, unknown>): CandidatePackage {
   return {
     pairingId: requireString(value, "pairingId"),
     vaultId: requireString(value, "vaultId"),
@@ -335,14 +336,10 @@ function parseCandidatePackage(serialized: string): CandidatePackage {
   }
 }
 
-function parsePendingSecret(serialized: string): PendingPairingSecret {
-  const candidate = parseCandidatePackage(serialized)
-  const value = JSON.parse(serialized) as Record<string, unknown>
-  return {
-    ...candidate,
-    signingPrivateKey: requireString(value, "signingPrivateKey"),
-    hpkePrivateKey: requireString(value, "hpkePrivateKey"),
-  }
+function parseJsonRecord(serialized: string): Record<string, unknown> {
+  const value: unknown = JSON.parse(serialized)
+  if (!isRecord(value)) throw new Error("Candidate package is invalid")
+  return value
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -1,17 +1,28 @@
 import { Aes256Gcm, CipherSuite, DhkemX25519HkdfSha256, HkdfSha256 } from "@hpke/core"
-import { bytesToHex, hexToBytes, nonce } from "@meridian/protocol"
+import {
+  bytesToHex,
+  epochId,
+  hexToBytes,
+  nonce,
+  revisionId,
+  revisionKey,
+  vaultEpochKey,
+  vaultId,
+  wrappedRevisionKey,
+} from "@meridian/protocol"
 import { describe, expect, it } from "vitest"
 import {
   aesGcmDecrypt,
   aesGcmEncrypt,
   aesKwUnwrap,
   aesKwWrap,
-  asArrayBuffer,
-  hkdfSha256,
-  sign,
-  signingKeyPairFromSeed,
-  verify,
-} from "../src/index.js"
+  deriveRevisionKek,
+  unwrapRevisionKey,
+  wrapRevisionKey,
+} from "../src/aes.js"
+import { hkdfSha256 } from "../src/kdf.js"
+import { asArrayBuffer } from "../src/runtime.js"
+import { sign, signingKeyPairFromSeed, verify } from "../src/signatures.js"
 import vector from "./vectors/hpke-x25519-aes256.json"
 
 describe("cryptographic known-answer vectors", () => {
@@ -66,6 +77,29 @@ describe("cryptographic known-answer vectors", () => {
         "fb988b9b7a02dd21",
     )
     await expect(aesKwUnwrap(kek, wrapped)).resolves.toEqual(key)
+
+    const tampered = new Uint8Array(wrapped)
+    tampered[0] = (tampered[0] ?? 0) ^ 1
+    await expect(aesKwUnwrap(kek, tampered)).rejects.toThrow("AES-KW integrity check failed")
+  })
+
+  it("uses the generic AES-KW codec for revision keys", async () => {
+    const epochKey = vaultEpochKey(new Uint8Array(32).fill(1))
+    const vault = vaultId(new Uint8Array(16).fill(2))
+    const epoch = epochId(new Uint8Array(16).fill(3))
+    const revision = revisionId(new Uint8Array(16).fill(4))
+    const key = revisionKey(new Uint8Array(32).fill(5))
+
+    const kek = await deriveRevisionKek(epochKey, vault, epoch, revision)
+    const wrapped = await wrapRevisionKey(epochKey, vault, epoch, revision, key)
+    expect(wrapped).toEqual(await aesKwWrap(kek, key))
+    await expect(unwrapRevisionKey(epochKey, vault, epoch, revision, wrapped)).resolves.toEqual(key)
+
+    const tampered = wrappedRevisionKey(wrapped)
+    tampered[0] = (tampered[0] ?? 0) ^ 1
+    await expect(unwrapRevisionKey(epochKey, vault, epoch, revision, tampered)).rejects.toThrow(
+      "Revision key unwrap failed",
+    )
   })
 
   it("matches the CFRG selected X25519/HKDF-SHA256/AES-256-GCM vector", async () => {

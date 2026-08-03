@@ -1,19 +1,11 @@
-import {
-  sign,
-  signOperation,
-  validateDeviceCertificate,
-  verify,
-  verifyOperation,
-} from "@meridian/crypto"
+import { sign, signOperation, validateDeviceCertificate } from "@meridian/crypto"
 import {
   bytesEqual,
   bytesToHex,
   CIPHER_SUITE,
   decodeDeviceCertificate,
-  decodeOperation,
   deviceId,
   ed25519PublicKey,
-  ed25519Signature,
   encodeDeviceCertificate,
   encodeOperation,
   operationId,
@@ -27,9 +19,9 @@ import type {
   RemoteOperation,
 } from "../model"
 import { fromBase64Url, randomId, toBase64Url } from "../platform/bytes"
-import { deviceBundle, parseStoredSecret, trustedAuthorCertificate } from "./device-secret"
+import { decodedDeviceSecret } from "./device-secret"
 import {
-  parseWorkerOperation,
+  verifyWorkerOperation,
   type WorkerOperation,
   workerOperationSigningBytes,
 } from "./worker-operation"
@@ -38,7 +30,8 @@ export async function createDeviceRevocation(
   device: DeviceKeyMaterial,
   target: RemoteDevice,
 ): Promise<DeviceRevocationMaterial> {
-  const bundle = deviceBundle(device)
+  const secret = decodedDeviceSecret(device)
+  const { bundle } = secret
   const targetDeviceId = deviceId(fromBase64Url(target.deviceId))
   const selfRevocation = bytesEqual(targetDeviceId, bundle.deviceId)
   const managesDevices = bundle.certificate.body.permissions.includes(Permission.ManageDevices)
@@ -67,8 +60,7 @@ export async function createDeviceRevocation(
       throw new Error("The current device certificate does not match the registry")
     }
   } else {
-    const stored = parseStoredSecret(device.serialized)
-    if (!stored.recoveryPublicKey) {
+    if (!secret.stored.recoveryPublicKey) {
       throw new Error("The local key bundle has no recovery trust anchor")
     }
     const certificates = new Map([
@@ -76,7 +68,7 @@ export async function createDeviceRevocation(
       [bytesToHex(targetCertificate.body.certificateId), targetCertificate],
     ])
     validateDeviceCertificate(targetCertificate, {
-      recoveryPublicKey: ed25519PublicKey(fromBase64Url(stored.recoveryPublicKey)),
+      recoveryPublicKey: ed25519PublicKey(fromBase64Url(secret.stored.recoveryPublicKey)),
       lookup: (certificateId) => certificates.get(bytesToHex(certificateId)),
       atCursor: bundle.checkpoint.body.cursor,
       atTime: Date.now(),
@@ -119,17 +111,10 @@ export async function verifyDeviceRevocation(
   device: DeviceKeyMaterial,
   operation: RemoteOperation,
 ): Promise<DeviceRevocationRecord> {
-  const wire = parseWorkerOperation(operation.envelope)
-  if (wire.type !== "device-revocation" || !wire.subjectDeviceId) {
-    throw new Error("Remote operation is not a device revocation")
-  }
-
-  const bundle = deviceBundle(device)
-  const authorCertificate =
-    wire.authorDeviceId === device.deviceId
-      ? bundle.certificate
-      : trustedAuthorCertificate(device, operation)
-  const selfRevocation = wire.authorDeviceId === wire.subjectDeviceId
+  const verified = verifyWorkerOperation(device, operation, "device-revocation")
+  const { wire, authorCertificate, signedOperation: lifecycleOperation } = verified
+  const subjectDeviceId = wire.subjectDeviceId as string
+  const selfRevocation = wire.authorDeviceId === subjectDeviceId
   const managesDevices = authorCertificate.body.permissions.includes(Permission.ManageDevices)
   if ((!selfRevocation && !managesDevices) || (selfRevocation && managesDevices)) {
     throw new Error(
@@ -137,31 +122,6 @@ export async function verifyDeviceRevocation(
         ? "The owner device cannot revoke itself"
         : "Revocation author is not an authorized device manager",
     )
-  }
-  const unsigned: Omit<WorkerOperation, "signature"> = {
-    operationId: wire.operationId,
-    authorDeviceId: wire.authorDeviceId,
-    epochId: wire.epochId,
-    type: wire.type,
-    subjectDeviceId: wire.subjectDeviceId,
-    envelope: wire.envelope,
-  }
-  if (
-    !verify(
-      workerOperationSigningBytes(unsigned),
-      ed25519Signature(fromBase64Url(wire.signature)),
-      authorCertificate.body.signingPublicKey,
-    )
-  ) {
-    throw new Error("Device revocation signature is invalid")
-  }
-
-  const lifecycleOperation = decodeOperation(fromBase64Url(wire.envelope))
-  if (lifecycleOperation.body.type !== "device-revocation") {
-    throw new Error("Revocation envelope has the wrong operation type")
-  }
-  if (!verifyOperation(lifecycleOperation, authorCertificate)) {
-    throw new Error("Canonical device revocation signature is invalid")
   }
   const targetCertificate = findTargetCertificate(
     lifecycleOperation.body.certificateId,
@@ -172,16 +132,12 @@ export async function verifyDeviceRevocation(
   }
   if (
     lifecycleOperation.body.reason !== "retired" ||
-    toBase64Url(lifecycleOperation.body.operationId) !== wire.operationId ||
-    toBase64Url(lifecycleOperation.body.vaultId) !== device.vaultId ||
-    toBase64Url(lifecycleOperation.body.epochId) !== wire.epochId ||
-    toBase64Url(lifecycleOperation.body.authorDeviceId) !== wire.authorDeviceId ||
-    toBase64Url(targetCertificate.body.deviceId) !== wire.subjectDeviceId
+    toBase64Url(targetCertificate.body.deviceId) !== subjectDeviceId
   ) {
     throw new Error("Device revocation envelope does not match its signed operation")
   }
 
-  return { deviceId: wire.subjectDeviceId, operationId: wire.operationId, cursor: operation.cursor }
+  return { deviceId: subjectDeviceId, operationId: wire.operationId, cursor: operation.cursor }
 }
 
 function findTargetCertificate(

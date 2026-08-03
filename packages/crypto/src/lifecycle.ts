@@ -1,5 +1,4 @@
 import {
-  type AuthChallenge,
   type CborValue,
   CIPHER_SUITE,
   certificateId,
@@ -19,7 +18,6 @@ import {
   type EpochKeyMaterial,
   ed25519PrivateKey,
   ed25519PublicKey,
-  type ed25519Signature,
   encodeCanonical,
   encodeCheckpoint,
   encodeDeviceCertificate,
@@ -43,6 +41,13 @@ import {
 } from "@meridian/protocol"
 import { x25519 } from "@noble/curves/ed25519.js"
 import { signCheckpoint, signDeviceCertificate, signEpochDeclaration } from "./authorization.js"
+import {
+  currentEpochKeyMatches,
+  decodeEpochKeyring,
+  fixedBytes,
+  hasExactFields,
+  strictRecord,
+} from "./cbor.js"
 import { CryptoError } from "./errors.js"
 import { generateHpkeKeyPair } from "./hpke.js"
 import { deriveRecoveryKeys } from "./kdf.js"
@@ -54,7 +59,7 @@ import {
   parseRecoveryCode,
 } from "./recovery.js"
 import { randomBytes } from "./runtime.js"
-import { generateSigningKeyPair, sign, signingKeyPairFromSeed } from "./signatures.js"
+import { generateSigningKeyPair, signingKeyPairFromSeed } from "./signatures.js"
 
 export interface DeviceKeyBundle {
   readonly version: 2
@@ -83,10 +88,8 @@ export interface FirstDeviceClaimBundle {
 const randomId = () => randomBytes(16)
 
 export async function createFirstDeviceClaimBundle(): Promise<FirstDeviceClaimBundle> {
-  const [signing, hpke] = await Promise.all([
-    Promise.resolve(generateSigningKeyPair()),
-    generateHpkeKeyPair(),
-  ])
+  const signing = generateSigningKeyPair()
+  const hpke = await generateHpkeKeyPair()
   const recoverySeed = generateRecoverySeed()
   const recoveryKeys = await deriveRecoveryKeys(recoverySeed)
   const recoverySigning = signingKeyPairFromSeed(recoveryKeys.signingPrivateKey)
@@ -199,10 +202,8 @@ export async function recoverDeviceFromPackage(
     recoveryKeys.signingPrivateKey,
     recoverySigning.publicKey,
   )
-  const [signing, hpke] = await Promise.all([
-    Promise.resolve(generateSigningKeyPair()),
-    generateHpkeKeyPair(),
-  ])
+  const signing = generateSigningKeyPair()
+  const hpke = await generateHpkeKeyPair()
   const replacementDeviceId = deviceId(randomId())
   const nextEpochId = epochId(randomId())
   const nextEpochKey = vaultEpochKey(randomBytes(32))
@@ -319,23 +320,15 @@ export function serializeDeviceKeyBundle(bundle: DeviceKeyBundle): Uint8Array {
 }
 
 function record(value: CborValue): Record<string, CborValue> {
-  if (
-    value === null ||
-    typeof value !== "object" ||
-    Array.isArray(value) ||
-    value instanceof Uint8Array ||
-    value instanceof Map
-  ) {
+  return strictRecord(value, () => {
     throw new CryptoError("INVALID_DEVICE_BUNDLE", "Device key bundle must be a CBOR map")
-  }
-  return value as Record<string, CborValue>
+  })
 }
 
 function fixed(value: CborValue | undefined, length: number, label: string): Uint8Array {
-  if (!(value instanceof Uint8Array) || value.byteLength !== length) {
+  return fixedBytes(value, length, () => {
     throw new CryptoError("INVALID_DEVICE_BUNDLE", `${label} must contain ${length} bytes`)
-  }
-  return value
+  })
 }
 
 function nonNegativeInteger(value: CborValue | undefined, label: string): number {
@@ -366,7 +359,7 @@ export function deserializeDeviceKeyBundle(encoded: Uint8Array): DeviceKeyBundle
     ...(value.requiredTransitionOperationId === undefined ? [] : ["requiredTransitionOperationId"]),
     "checkpoint",
   ].sort()
-  if (Object.keys(value).sort().join("\0") !== keys.join("\0")) {
+  if (!hasExactFields(value, keys)) {
     throw new CryptoError("INVALID_DEVICE_BUNDLE", "Device key bundle has an unsupported shape")
   }
   const signingPrivate = ed25519PrivateKey(
@@ -384,36 +377,25 @@ export function deserializeDeviceKeyBundle(encoded: Uint8Array): DeviceKeyBundle
   ) {
     throw new CryptoError("INVALID_DEVICE_BUNDLE", "Device bundle signed objects are malformed")
   }
-  if (
-    !Array.isArray(value.epochKeys) ||
-    value.epochKeys.length < 1 ||
-    value.epochKeys.length > 1024
-  ) {
-    throw new CryptoError("INVALID_DEVICE_BUNDLE", "Device epoch keyring is malformed")
-  }
-  const epochKeys = value.epochKeys.map((entry) => {
-    const keyEntry = record(entry)
-    if (Object.keys(keyEntry).sort().join("\0") !== "epochId\0vaultEpochKey") {
-      throw new CryptoError("INVALID_DEVICE_BUNDLE", "Device epoch key entry is malformed")
-    }
-    return {
-      epochId: epochId(fixed(keyEntry.epochId, 16, "epoch key ID")),
-      vaultEpochKey: vaultEpochKey(fixed(keyEntry.vaultEpochKey, 32, "vault epoch key")),
-    }
-  })
-  for (let index = 0; index < epochKeys.length; index += 1) {
-    const current = epochKeys[index]
-    if (
-      current &&
-      epochKeys
-        .slice(index + 1)
-        .some((entry) =>
-          entry.epochId.every((byte, byteIndex) => byte === current.epochId[byteIndex]),
-        )
-    ) {
+  const epochKeys = decodeEpochKeyring(
+    value.epochKeys,
+    (entry) => {
+      const keyEntry = record(entry)
+      if (!hasExactFields(keyEntry, ["epochId", "vaultEpochKey"])) {
+        throw new CryptoError("INVALID_DEVICE_BUNDLE", "Device epoch key entry is malformed")
+      }
+      return {
+        epochId: epochId(fixed(keyEntry.epochId, 16, "epoch key ID")),
+        vaultEpochKey: vaultEpochKey(fixed(keyEntry.vaultEpochKey, 32, "vault epoch key")),
+      }
+    },
+    () => {
+      throw new CryptoError("INVALID_DEVICE_BUNDLE", "Device epoch keyring is malformed")
+    },
+    () => {
       throw new CryptoError("INVALID_DEVICE_BUNDLE", "Device epoch keyring contains duplicates")
-    }
-  }
+    },
+  )
   const hpkePrivate = x25519PrivateKey(fixed(value.hpkePrivateKey, 32, "HPKE private key"))
   const hpkePublic = x25519PublicKey(fixed(value.hpkePublicKey, 32, "HPKE public key"))
   const expectedHpkePublic = x25519.getPublicKey(hpkePrivate)
@@ -459,13 +441,7 @@ export function deserializeDeviceKeyBundle(encoded: Uint8Array): DeviceKeyBundle
       "Device certificate does not bind the bundle keys",
     )
   }
-  const currentKey = bundle.epochKeys.find((entry) =>
-    entry.epochId.every((byte, index) => byte === bundle.epoch.body.epochId[index]),
-  )
-  if (
-    !currentKey ||
-    currentKey.vaultEpochKey.some((byte, index) => byte !== bundle.vaultEpochKey[index])
-  ) {
+  if (!currentEpochKeyMatches(bundle.epochKeys, bundle.epoch.body.epochId, bundle.vaultEpochKey)) {
     throw new CryptoError("INVALID_DEVICE_BUNDLE", "Current epoch key is inconsistent")
   }
   return bundle
@@ -477,28 +453,4 @@ export function deviceEpochKey(bundle: DeviceKeyBundle, targetEpochId: EpochId):
   )
   if (!entry) throw new CryptoError("EPOCH_KEY_MISSING", "Device does not retain this epoch key")
   return entry.vaultEpochKey
-}
-
-export function authChallengeSigningBytes(challenge: AuthChallenge): Uint8Array {
-  return encodeCanonical({
-    domain: "meridian/v1/auth-challenge",
-    challengeId: challenge.challengeId,
-    vaultId: challenge.vaultId,
-    deviceId: challenge.deviceId,
-    challenge: challenge.challenge,
-    expiresAt: challenge.expiresAt,
-  })
-}
-
-export function signAuthChallenge(
-  challenge: AuthChallenge,
-  device: DeviceKeyBundle,
-): ReturnType<typeof ed25519Signature> {
-  if (
-    challenge.vaultId.some((byte, index) => byte !== device.vaultId[index]) ||
-    challenge.deviceId.some((byte, index) => byte !== device.deviceId[index])
-  ) {
-    throw new CryptoError("AUTH_CHALLENGE_SCOPE", "Authentication challenge targets another device")
-  }
-  return sign(authChallengeSigningBytes(challenge), device.signingPrivateKey)
 }

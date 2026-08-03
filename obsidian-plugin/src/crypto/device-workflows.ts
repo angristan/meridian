@@ -28,10 +28,10 @@ import type {
 } from "../model"
 import { fromBase64Url, randomId, toBase64Url } from "../platform/bytes"
 import {
+  decodedDeviceSecret,
+  decodeStoredDeviceSecret,
   deviceBundle,
-  deviceBundleFromSecret,
   hasAuthorizedCheckpoint,
-  parseStoredSecret,
   serializeStoredDeviceSecret,
 } from "./device-secret"
 
@@ -81,8 +81,7 @@ export async function createFirstDevice(
 }
 
 export async function loadDevice(serializedKeyBundle: string): Promise<DeviceKeyMaterial> {
-  const secret = parseStoredSecret(serializedKeyBundle)
-  const bundle = deviceBundleFromSecret(serializedKeyBundle)
+  const { stored, bundle } = decodeStoredDeviceSecret(serializedKeyBundle)
   return {
     vaultId: toBase64Url(bundle.vaultId),
     deviceId: toBase64Url(bundle.deviceId),
@@ -99,7 +98,7 @@ export async function loadDevice(serializedKeyBundle: string): Promise<DeviceKey
       logHash: toBase64Url(bundle.checkpoint.body.logHash),
       ...checkpointLogFormats(bundle.checkpoint.body),
     },
-    trustedCheckpointAuthorized: hasAuthorizedCheckpoint(secret),
+    trustedCheckpointAuthorized: hasAuthorizedCheckpoint(stored, bundle),
   }
 }
 
@@ -108,8 +107,7 @@ export async function refreshTrustedCheckpoint(
   checkpoint: TrustedCheckpoint,
   registryCertificates: readonly DeviceCertificate[] = [],
 ): Promise<DeviceKeyMaterial> {
-  const secret = parseStoredSecret(device.serialized)
-  const bundle = deviceBundle(device)
+  const { stored, bundle } = decodedDeviceSecret(device)
   if (checkpoint.cursor < bundle.checkpoint.body.cursor) {
     throw new Error("Cannot replace a trusted checkpoint with an older cursor")
   }
@@ -143,14 +141,14 @@ export async function refreshTrustedCheckpoint(
     bundle.signingPrivateKey,
   )
   const chain = [
-    ...secret.checkpointAuthorizationChain.map((encoded) =>
+    ...stored.checkpointAuthorizationChain.map((encoded) =>
       decodeDeviceCertificate(fromBase64Url(encoded)),
     ),
     ...registryCertificates,
   ]
   const serialized = serializeStoredDeviceSecret(
     { ...bundle, checkpoint: signed },
-    fromBase64Url(secret.recoveryPublicKey, 32),
+    fromBase64Url(stored.recoveryPublicKey, 32),
     chain,
   )
   return loadDevice(serialized)

@@ -2,14 +2,11 @@ import {
   applyEpochTransition as applyPackageEpochTransition,
   prepareEpochTransition as preparePackageEpochTransition,
   sign,
-  verify,
 } from "@meridian/crypto"
 import {
   decodeDeviceCertificate,
-  decodeOperation,
   deviceId,
   ed25519PublicKey,
-  ed25519Signature,
   encodeOperation,
   hashBytes,
   x25519PublicKey,
@@ -23,15 +20,13 @@ import type {
 } from "../model"
 import { fromBase64Url, toBase64Url } from "../platform/bytes"
 import {
-  deviceBundle,
+  decodedDeviceSecret,
   hasAuthorizedCheckpoint,
-  parseStoredSecret,
   serializeStoredDeviceSecret,
-  trustedAuthorCertificate,
 } from "./device-secret"
 import { loadDevice, refreshTrustedCheckpoint } from "./device-workflows"
 import {
-  parseWorkerOperation,
+  verifyWorkerOperation,
   type WorkerOperation,
   workerOperationSigningBytes,
 } from "./worker-operation"
@@ -42,12 +37,12 @@ export async function createEpochTransition(
   recoveryStateId: string,
   reason: "scheduled" | "revocation" | "migration",
 ): Promise<EpochTransitionMaterial> {
-  const bundle = deviceBundle(device)
-  const stored = parseStoredSecret(device.serialized)
+  const secret = decodedDeviceSecret(device)
+  const { bundle, stored } = secret
   if (
     !stored.recoveryPublicKey ||
     stored.checkpointAuthorizationChain.length === 0 ||
-    !hasAuthorizedCheckpoint(stored)
+    !hasAuthorizedCheckpoint(stored, bundle)
   ) {
     throw new Error("Device secret lacks recovery authorization for epoch rotation")
   }
@@ -86,38 +81,9 @@ export async function applyEpochTransition(
   operation: RemoteOperation,
   predecessor: TrustedCheckpoint,
 ): Promise<DeviceKeyMaterial> {
-  const wire = parseWorkerOperation(operation.envelope)
-  if (wire.type !== "key-epoch") throw new Error("Remote operation is not an epoch transition")
-  const bundle = deviceBundle(device)
-  const authorCertificate =
-    wire.authorDeviceId === device.deviceId
-      ? bundle.certificate
-      : trustedAuthorCertificate(device, operation)
-  const unsigned: Omit<WorkerOperation, "signature"> = {
-    operationId: wire.operationId,
-    authorDeviceId: wire.authorDeviceId,
-    epochId: wire.epochId,
-    type: wire.type,
-    envelope: wire.envelope,
-  }
-  if (
-    !verify(
-      workerOperationSigningBytes(unsigned),
-      ed25519Signature(fromBase64Url(wire.signature, 64)),
-      authorCertificate.body.signingPublicKey,
-    )
-  ) {
-    throw new Error("Epoch transition wrapper signature is invalid")
-  }
-  const signed = decodeOperation(fromBase64Url(wire.envelope, 2 * 1024 * 1024))
-  if (
-    signed.body.type !== "epoch-transition" ||
-    toBase64Url(signed.body.operationId) !== wire.operationId ||
-    toBase64Url(signed.body.vaultId) !== device.vaultId ||
-    toBase64Url(signed.body.epochId) !== wire.epochId ||
-    toBase64Url(signed.body.authorDeviceId) !== wire.authorDeviceId ||
-    signed.body.previousCursor + 1 !== operation.cursor
-  ) {
+  const verified = verifyWorkerOperation(device, operation, "key-epoch")
+  const { authorCertificate, signedOperation: signed } = verified
+  if (signed.body.previousCursor + 1 !== operation.cursor) {
     throw new Error("Epoch transition does not match its operation-log entry")
   }
   if (
@@ -133,18 +99,19 @@ export async function applyEpochTransition(
     signed.body.declaration.body.sequence > device.epochSequence
       ? await refreshTrustedCheckpoint(device, predecessor, registryCertificates)
       : device
+  const applyingSecret =
+    applyingDevice === device ? verified.secret : decodedDeviceSecret(applyingDevice)
   const updated = await applyPackageEpochTransition({
-    device: deviceBundle(applyingDevice),
+    device: applyingSecret.bundle,
     operation: signed,
     authorCertificate,
     cursor: operation.cursor,
     logHash: hashBytes(fromBase64Url(operation.logHash, 32)),
   })
-  const stored = parseStoredSecret(applyingDevice.serialized)
   const serialized = serializeStoredDeviceSecret(
     updated,
-    ed25519PublicKey(fromBase64Url(stored.recoveryPublicKey, 32)),
-    stored.checkpointAuthorizationChain.map((certificate) =>
+    ed25519PublicKey(fromBase64Url(applyingSecret.stored.recoveryPublicKey, 32)),
+    applyingSecret.stored.checkpointAuthorizationChain.map((certificate) =>
       decodeDeviceCertificate(fromBase64Url(certificate)),
     ),
   )

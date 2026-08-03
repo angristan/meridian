@@ -41,6 +41,13 @@ import {
   verifyPairingTransferSignature,
   verifyPairingVerificationPreviewSignature,
 } from "./authorization.js"
+import {
+  currentEpochKeyMatches,
+  decodeEpochKeyring,
+  fixedBytes,
+  hasExactFields,
+  strictRecord,
+} from "./cbor.js"
 import { AuthorizationError, CryptoError } from "./errors.js"
 import { sha256 } from "./hash.js"
 import { generateHpkeKeyPair, hpkeOpen, hpkeSeal } from "./hpke.js"
@@ -114,21 +121,18 @@ export async function createPendingPairingDevice(): Promise<PendingPairingDevice
   }
 }
 
-function pairingRequestBytes(
-  pairingIdentifier: PairingId,
-  vault: ReturnType<typeof vaultId>,
-  pending: PendingPairingDevice,
-  metadata: PairingDeviceMetadata,
-): Uint8Array {
+type PairingRequestPayload = Omit<PairingDeviceRequest, "proofOfPossession">
+
+function pairingRequestBytes(request: PairingRequestPayload): Uint8Array {
   return encodeCanonical({
     domain: "meridian/v1/pairing-request",
-    pairingId: pairingIdentifier,
-    vaultId: vault,
-    deviceId: pending.deviceId,
-    signingPublicKey: pending.signingPublicKey,
-    hpkePublicKey: pending.hpkePublicKey,
-    deviceName: metadata.deviceName,
-    platform: metadata.platform,
+    pairingId: request.pairingId,
+    vaultId: request.vaultId,
+    deviceId: request.deviceId,
+    signingPublicKey: request.signingPublicKey,
+    hpkePublicKey: request.hpkePublicKey,
+    deviceName: request.deviceName,
+    platform: request.platform,
   })
 }
 
@@ -139,7 +143,7 @@ export function createPairingDeviceRequest(
   metadata: PairingDeviceMetadata,
 ): PairingDeviceRequest {
   assertPairingDeviceMetadata(metadata)
-  return {
+  const request: PairingRequestPayload = {
     pairingId: pairingIdentifier,
     vaultId: vault,
     deviceId: pending.deviceId,
@@ -147,30 +151,17 @@ export function createPairingDeviceRequest(
     hpkePublicKey: pending.hpkePublicKey,
     deviceName: metadata.deviceName,
     platform: metadata.platform,
-    proofOfPossession: sign(
-      pairingRequestBytes(pairingIdentifier, vault, pending, metadata),
-      pending.signingPrivateKey,
-    ),
+  }
+  return {
+    ...request,
+    proofOfPossession: sign(pairingRequestBytes(request), pending.signingPrivateKey),
   }
 }
 
 export function verifyPairingDeviceRequest(request: PairingDeviceRequest): boolean {
   try {
     assertPairingDeviceMetadata(request)
-    return verify(
-      encodeCanonical({
-        domain: "meridian/v1/pairing-request",
-        pairingId: request.pairingId,
-        vaultId: request.vaultId,
-        deviceId: request.deviceId,
-        signingPublicKey: request.signingPublicKey,
-        hpkePublicKey: request.hpkePublicKey,
-        deviceName: request.deviceName,
-        platform: request.platform,
-      }),
-      request.proofOfPossession,
-      request.signingPublicKey,
-    )
+    return verify(pairingRequestBytes(request), request.proofOfPossession, request.signingPublicKey)
   } catch {
     return false
   }
@@ -322,33 +313,22 @@ export function serializePairingVerificationPreview(value: PairingVerificationPr
 }
 
 function record(value: CborValue, label: string): Record<string, CborValue> {
-  if (
-    value === null ||
-    typeof value !== "object" ||
-    Array.isArray(value) ||
-    value instanceof Uint8Array ||
-    value instanceof Map
-  ) {
+  return strictRecord(value, () => {
     throw new CryptoError("INVALID_PAIRING_PACKAGE", `${label} must be a map`)
-  }
-  return value as Record<string, CborValue>
+  })
 }
 
 function fixed(value: CborValue | undefined, length: number, label: string): Uint8Array {
-  if (!(value instanceof Uint8Array) || value.byteLength !== length) {
+  return fixedBytes(value, length, () => {
     throw new CryptoError("INVALID_PAIRING_PACKAGE", `${label} must contain ${length} bytes`)
-  }
-  return value
+  })
 }
 
 export function deserializePairingVerificationPreview(
   encoded: Uint8Array,
 ): PairingVerificationPreview {
   const envelope = record(decodeCanonical(encoded), "pairing verification preview")
-  if (
-    Object.keys(envelope).sort().join("\0") !==
-    ["approverDeviceId", "context", "signature", "transferHash"].join("\0")
-  ) {
+  if (!hasExactFields(envelope, ["approverDeviceId", "context", "signature", "transferHash"])) {
     throw new CryptoError(
       "INVALID_PAIRING_PACKAGE",
       "Pairing verification preview has missing or unknown fields",
@@ -364,19 +344,14 @@ export function deserializePairingVerificationPreview(
 
 export function deserializePairingPackage(encoded: Uint8Array): SignedPairingTransfer {
   const envelope = record(decodeCanonical(encoded), "pairing package")
-  if (
-    Object.keys(envelope).sort().join("\0") !==
-    ["approverDeviceId", "context", "signature", "transfer"].join("\0")
-  ) {
+  if (!hasExactFields(envelope, ["approverDeviceId", "context", "signature", "transfer"])) {
     throw new CryptoError(
       "INVALID_PAIRING_PACKAGE",
       "Pairing package has missing or unknown fields",
     )
   }
   const transferValue = record(envelope.transfer as CborValue, "HPKE transfer")
-  if (
-    Object.keys(transferValue).sort().join("\0") !== ["ciphertext", "encapsulatedKey"].join("\0")
-  ) {
+  if (!hasExactFields(transferValue, ["ciphertext", "encapsulatedKey"])) {
     throw new CryptoError("INVALID_PAIRING_PACKAGE", "HPKE transfer has missing or unknown fields")
   }
   const encapsulatedKey = fixed(transferValue.encapsulatedKey, 32, "encapsulated key")
@@ -577,47 +552,37 @@ export async function consumePairingEpochPackage(
   )
   const state = record(decodeCanonical(plaintext), "pairing epoch state")
   if (
-    Object.keys(state).sort().join("\0") !==
-    ["checkpointCursor", "checkpointHash", "epochId", "epochKeys", "vaultEpochKey", "vaultId"].join(
-      "\0",
-    )
+    !hasExactFields(state, [
+      "checkpointCursor",
+      "checkpointHash",
+      "epochId",
+      "epochKeys",
+      "vaultEpochKey",
+      "vaultId",
+    ])
   ) {
     throw new AuthorizationError("Pairing epoch state has missing or unknown fields")
   }
-  if (
-    !Array.isArray(state.epochKeys) ||
-    state.epochKeys.length < 1 ||
-    state.epochKeys.length > 1024
-  ) {
-    throw new AuthorizationError("Pairing epoch keyring is invalid")
-  }
-  const epochKeys = state.epochKeys.map((entry) => {
-    const keyEntry = record(entry, "pairing epoch key")
-    if (Object.keys(keyEntry).sort().join("\0") !== "epochId\0vaultEpochKey") {
-      throw new AuthorizationError("Pairing epoch key entry is invalid")
-    }
-    return {
-      epochId: epochId(fixed(keyEntry.epochId, 16, "epoch key ID")),
-      vaultEpochKey: vaultEpochKey(fixed(keyEntry.vaultEpochKey, 32, "vault epoch key")),
-    }
-  })
-  for (let index = 0; index < epochKeys.length; index += 1) {
-    const current = epochKeys[index]
-    if (
-      current &&
-      epochKeys.slice(index + 1).some((entry) => bytesEqual(entry.epochId, current.epochId))
-    ) {
+  const epochKeys = decodeEpochKeyring(
+    state.epochKeys,
+    (entry) => {
+      const keyEntry = record(entry, "pairing epoch key")
+      if (!hasExactFields(keyEntry, ["epochId", "vaultEpochKey"])) {
+        throw new AuthorizationError("Pairing epoch key entry is invalid")
+      }
+      return {
+        epochId: epochId(fixed(keyEntry.epochId, 16, "epoch key ID")),
+        vaultEpochKey: vaultEpochKey(fixed(keyEntry.vaultEpochKey, 32, "vault epoch key")),
+      }
+    },
+    () => {
+      throw new AuthorizationError("Pairing epoch keyring is invalid")
+    },
+    () => {
       throw new AuthorizationError("Pairing epoch keyring contains duplicates")
-    }
-  }
-  const currentEpochKey = epochKeys.find((entry) =>
-    bytesEqual(entry.epochId, context.epoch.body.epochId),
+    },
   )
-  if (
-    !(state.vaultEpochKey instanceof Uint8Array) ||
-    !currentEpochKey ||
-    !bytesEqual(currentEpochKey.vaultEpochKey, state.vaultEpochKey)
-  ) {
+  if (!currentEpochKeyMatches(epochKeys, context.epoch.body.epochId, state.vaultEpochKey)) {
     throw new AuthorizationError("Pairing current epoch key is inconsistent")
   }
   if (

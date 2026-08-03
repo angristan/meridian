@@ -1,5 +1,4 @@
 import {
-  type AuthChallenge,
   bytesEqual,
   bytesToHex,
   type CborValue,
@@ -16,24 +15,24 @@ import {
 } from "@meridian/protocol"
 import { describe, expect, it } from "vitest"
 import {
-  authChallengeSigningBytes,
+  signDeviceCertificate,
+  signEpochDeclaration,
+  signPairingVerificationPreview,
+} from "../src/authorization.js"
+import {
   computeRecoveryStateId,
   consumePairingEpochPackage,
   createFirstDeviceClaimBundle,
   createPairingDeviceRequest,
   createPendingPairingDevice,
   decryptFileRevision,
-  decryptRecoveryPackage,
-  deriveRecoveryKeys,
   deserializeDeviceKeyBundle,
   deserializeEncryptedRecoveryPackage,
   deserializePairingPackage,
   deserializePairingVerificationPreview,
   deviceEpochKey,
   encryptFileRevision,
-  encryptRecoveryPackageForPublicKey,
   inspectPairingVerificationPreview,
-  parseRecoveryCode,
   preparePairingEpochPackage,
   recoverDeviceFromPackage,
   recoveryClaimSigningBytes,
@@ -42,20 +41,62 @@ import {
   serializePairingPackage,
   serializePairingVerificationPreview,
   sha256,
-  signAuthChallenge,
-  signDeviceCertificate,
-  signEpochDeclaration,
-  signPairingVerificationPreview,
   signRecoveryClaim,
   verify,
-  verifyPairingDeviceRequest,
 } from "../src/index.js"
+import { deriveRecoveryKeys } from "../src/kdf.js"
+import { verifyPairingDeviceRequest } from "../src/pairing.js"
+import {
+  decryptRecoveryPackage,
+  encryptRecoveryPackageForPublicKey,
+  parseRecoveryCode,
+} from "../src/recovery.js"
 
 const textEncoder = new TextEncoder()
 const textDecoder = new TextDecoder()
 
 describe("plugin-facing cryptography workflows", () => {
-  it("creates, serializes, authenticates, and recovers a first device", async () => {
+  it("rejects malformed device epoch keyrings", async () => {
+    const claim = await createFirstDeviceClaimBundle()
+    const encoded = decodeCanonical(serializeDeviceKeyBundle(claim.device)) as Record<
+      string,
+      CborValue
+    >
+    const entry = (encoded.epochKeys as CborValue[])[0]
+    if (entry === undefined || typeof entry !== "object" || entry instanceof Uint8Array) {
+      throw new Error("expected an encoded epoch key")
+    }
+
+    expect(() =>
+      deserializeDeviceKeyBundle(encodeCanonical({ ...encoded, epochKeys: [] })),
+    ).toThrow("Device epoch keyring is malformed")
+    expect(() =>
+      deserializeDeviceKeyBundle(encodeCanonical({ ...encoded, epochKeys: [entry, entry] })),
+    ).toThrow("Device epoch keyring contains duplicates")
+    expect(() =>
+      deserializeDeviceKeyBundle(
+        encodeCanonical({ ...encoded, epochKeys: [{ ...entry, unsupported: true }] }),
+      ),
+    ).toThrow("Device epoch key entry is malformed")
+    expect(() =>
+      deserializeDeviceKeyBundle(
+        encodeCanonical({
+          ...encoded,
+          epochKeys: [{ ...entry, epochId: new Uint8Array(15) }],
+        }),
+      ),
+    ).toThrow("epoch key ID must contain 16 bytes")
+
+    const differentCurrentKey = new Uint8Array(claim.device.vaultEpochKey)
+    differentCurrentKey[0] = (differentCurrentKey[0] ?? 0) ^ 1
+    expect(() =>
+      deserializeDeviceKeyBundle(
+        encodeCanonical({ ...encoded, vaultEpochKey: differentCurrentKey }),
+      ),
+    ).toThrow("Current epoch key is inconsistent")
+  })
+
+  it("creates, serializes, and recovers a first device", async () => {
     const claim = await createFirstDeviceClaimBundle()
     const serializedDevice = serializeDeviceKeyBundle(claim.device)
     const restored = deserializeDeviceKeyBundle(serializedDevice)
@@ -70,18 +111,6 @@ describe("plugin-facing cryptography workflows", () => {
       ),
     ).toThrow(/HPKE keypair does not match/)
 
-    const challenge: AuthChallenge = {
-      challengeId: "challenge-1",
-      vaultId: claim.device.vaultId,
-      deviceId: claim.device.deviceId,
-      challenge: new Uint8Array(32).fill(9),
-      expiresAt: Date.now() + 60_000,
-    }
-    const signature = signAuthChallenge(challenge, restored)
-    expect(verify(authChallengeSigningBytes(challenge), signature, restored.signingPublicKey)).toBe(
-      true,
-    )
-
     const seed = await parseRecoveryCode(claim.recoveryCode)
     const keys = await deriveRecoveryKeys(seed)
     const transportedPackage = deserializeEncryptedRecoveryPackage(
@@ -93,6 +122,21 @@ describe("plugin-facing cryptography workflows", () => {
       claim.recoveryPublicKey,
     )
     expect(bytesEqual(recovered.vaultEpochKey, claim.device.vaultEpochKey)).toBe(true)
+
+    const duplicateRecoveryKey = recovered.epochKeys[0]
+    if (duplicateRecoveryKey === undefined) throw new Error("expected a recovery epoch key")
+    const duplicateKeyPackage = await encryptRecoveryPackageForPublicKey(
+      { ...recovered, epochKeys: [...recovered.epochKeys, duplicateRecoveryKey] },
+      claim.recoveryPublicKey,
+      {
+        deviceId: claim.device.deviceId,
+        signingPrivateKey: claim.device.signingPrivateKey,
+        authorizationChain: [claim.device.certificate],
+      },
+    )
+    await expect(
+      decryptRecoveryPackage(duplicateKeyPackage, keys.signingPrivateKey, claim.recoveryPublicKey),
+    ).rejects.toThrow("Recovery package contains duplicate epoch keys")
 
     const tamperedCheckpointSignature = new Uint8Array(transportedPackage.checkpoint.signature)
     tamperedCheckpointSignature[0] = (tamperedCheckpointSignature[0] ?? 0) ^ 1
@@ -515,5 +559,27 @@ describe("plugin-facing cryptography workflows", () => {
     expect(bytesEqual(paired.vaultEpochKey, first.device.vaultEpochKey)).toBe(true)
     expect(bytesEqual(paired.deviceId, pending.deviceId)).toBe(true)
     expect(() => deserializeDeviceKeyBundle(serializeDeviceKeyBundle(paired))).not.toThrow()
+
+    const duplicatePairingKey = first.device.epochKeys[0]
+    if (duplicatePairingKey === undefined) throw new Error("expected a pairing epoch key")
+    const malformed = await preparePairingEpochPackage({
+      approver: {
+        ...first.device,
+        epochKeys: [...first.device.epochKeys, duplicatePairingKey],
+      },
+      request,
+      recoveryPublicKey: first.recoveryPublicKey,
+      authorizationChain: [first.device.certificate],
+      expiresAt: Date.now() + 60_000,
+    })
+    await expect(
+      consumePairingEpochPackage({
+        pending,
+        package: malformed.package,
+        expectedTransferHash: malformed.preview.transferHash,
+        confirmedVerificationPhrase: malformed.verificationPhrase,
+        now: Date.now(),
+      }),
+    ).rejects.toThrow("Pairing epoch keyring contains duplicates")
   })
 })

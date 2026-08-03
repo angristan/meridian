@@ -23,16 +23,22 @@ export interface StoredDeviceSecret {
   readonly checkpointAuthorizationChain: string[]
 }
 
+export interface DecodedStoredDeviceSecret {
+  readonly stored: StoredDeviceSecret
+  readonly bundle: DeviceKeyBundle
+}
+
+type CertificateChainPolicy = "stored-device" | "pairing-approver"
+
 export function serializeStoredDeviceSecret(
   device: DeviceKeyBundle,
   recoveryPublicKey: Uint8Array,
-  checkpointAuthorizationChain: readonly ReturnType<typeof decodeDeviceCertificate>[] = [
-    device.certificate,
-  ],
+  checkpointAuthorizationChain: readonly DeviceCertificate[] = [device.certificate],
 ): string {
-  const completeChain = exactDeviceAuthorizationChain(
+  const completeChain = exactCertificateChain(
     device.certificate,
     checkpointAuthorizationChain,
+    "stored-device",
   )
   const stored = {
     version: 2,
@@ -42,28 +48,36 @@ export function serializeStoredDeviceSecret(
       toBase64Url(encodeDeviceCertificate(certificate)),
     ),
   } satisfies StoredDeviceSecret
-  if (!hasAuthorizedCheckpoint(stored)) {
+  if (!hasAuthorizedCheckpoint(stored, device)) {
     throw new Error("Device checkpoint authorization chain is invalid")
   }
   return JSON.stringify(stored)
 }
 
-export function deviceBundle(device: DeviceKeyMaterial): DeviceKeyBundle {
-  const bundle = deviceBundleFromSecret(device.serialized)
+export function decodedDeviceSecret(device: DeviceKeyMaterial): DecodedStoredDeviceSecret {
+  const decoded = decodeStoredDeviceSecret(device.serialized)
   if (
-    toBase64Url(bundle.deviceId) !== device.deviceId ||
-    toBase64Url(bundle.vaultId) !== device.vaultId
+    toBase64Url(decoded.bundle.deviceId) !== device.deviceId ||
+    toBase64Url(decoded.bundle.vaultId) !== device.vaultId
   ) {
     throw new Error("Device key bundle scope does not match the connected vault")
   }
-  return bundle
+  return decoded
 }
 
-export function deviceBundleFromSecret(serialized: string): DeviceKeyBundle {
-  return deserializeDeviceKeyBundle(fromBase64Url(parseStoredSecret(serialized).deviceBundle))
+export function deviceBundle(device: DeviceKeyMaterial): DeviceKeyBundle {
+  return decodedDeviceSecret(device).bundle
 }
 
-export function parseStoredSecret(serialized: string): StoredDeviceSecret {
+export function decodeStoredDeviceSecret(serialized: string): DecodedStoredDeviceSecret {
+  const stored = parseStoredSecret(serialized)
+  return {
+    stored,
+    bundle: deserializeDeviceKeyBundle(fromBase64Url(stored.deviceBundle)),
+  }
+}
+
+function parseStoredSecret(serialized: string): StoredDeviceSecret {
   try {
     const value: unknown = JSON.parse(serialized)
     if (
@@ -86,7 +100,10 @@ export function parseStoredSecret(serialized: string): StoredDeviceSecret {
   throw new Error("Stored device secret is not a supported Meridian key bundle")
 }
 
-export function hasAuthorizedCheckpoint(secret: StoredDeviceSecret): boolean {
+export function hasAuthorizedCheckpoint(
+  secret: StoredDeviceSecret,
+  decodedBundle?: DeviceKeyBundle,
+): boolean {
   try {
     if (
       !secret.recoveryPublicKey ||
@@ -95,7 +112,7 @@ export function hasAuthorizedCheckpoint(secret: StoredDeviceSecret): boolean {
     ) {
       return false
     }
-    const bundle = deserializeDeviceKeyBundle(fromBase64Url(secret.deviceBundle))
+    const bundle = decodedBundle ?? deserializeDeviceKeyBundle(fromBase64Url(secret.deviceBundle))
     const certificates = secret.checkpointAuthorizationChain.map((encoded) =>
       decodeDeviceCertificate(fromBase64Url(encoded)),
     )
@@ -121,14 +138,13 @@ export function hasAuthorizedCheckpoint(secret: StoredDeviceSecret): boolean {
 }
 
 export function trustedAuthorCertificate(
-  device: DeviceKeyMaterial,
+  secret: DecodedStoredDeviceSecret,
   operation: RemoteOperation,
-): ReturnType<typeof decodeDeviceCertificate> {
+): DeviceCertificate {
   if (!operation.authorCertificate || !operation.certificateChain) {
     throw new Error("The operation author certificate is missing from the device registry")
   }
-  const secret = parseStoredSecret(device.serialized)
-  if (!secret.recoveryPublicKey) {
+  if (!secret.stored.recoveryPublicKey) {
     throw new Error("The local key bundle has no recovery trust anchor")
   }
   const certificates = operation.certificateChain.map((encoded) =>
@@ -139,7 +155,7 @@ export function trustedAuthorCertificate(
     certificates.map((certificate) => [bytesToHex(certificate.body.certificateId), certificate]),
   )
   validateDeviceCertificate(author, {
-    recoveryPublicKey: ed25519PublicKey(fromBase64Url(secret.recoveryPublicKey)),
+    recoveryPublicKey: ed25519PublicKey(fromBase64Url(secret.stored.recoveryPublicKey)),
     lookup: (certificateId) => byId.get(bytesToHex(certificateId)),
     atCursor: operation.cursor,
     atTime: Date.now(),
@@ -147,15 +163,19 @@ export function trustedAuthorCertificate(
   return author
 }
 
-function exactDeviceAuthorizationChain(
-  deviceCertificate: DeviceCertificate,
+export function exactCertificateChain(
+  leaf: DeviceCertificate,
   certificates: readonly DeviceCertificate[],
+  policy: CertificateChainPolicy,
 ): DeviceCertificate[] {
+  const storedDevice = policy === "stored-device"
+  const label = storedDevice ? "Device authorization" : "Approver certificate"
   const registry = new Map<string, DeviceCertificate>()
   for (const certificate of certificates) {
     const id = bytesToHex(certificate.body.certificateId)
     const existing = registry.get(id)
     if (
+      storedDevice &&
       existing &&
       !bytesEqual(encodeDeviceCertificate(existing), encodeDeviceCertificate(certificate))
     ) {
@@ -164,28 +184,30 @@ function exactDeviceAuthorizationChain(
     registry.set(id, certificate)
   }
 
-  const deviceId = bytesToHex(deviceCertificate.body.certificateId)
-  const storedDevice = registry.get(deviceId)
+  const leafId = bytesToHex(leaf.body.certificateId)
+  const storedLeaf = registry.get(leafId)
   if (
     storedDevice &&
-    !bytesEqual(encodeDeviceCertificate(storedDevice), encodeDeviceCertificate(deviceCertificate))
+    storedLeaf &&
+    !bytesEqual(encodeDeviceCertificate(storedLeaf), encodeDeviceCertificate(leaf))
   ) {
     throw new Error("Stored device certificate conflicts with the key bundle")
   }
-  registry.set(deviceId, deviceCertificate)
+  registry.set(leafId, leaf)
 
   const chain: DeviceCertificate[] = []
   const visited = new Set<string>()
-  let current = deviceCertificate
-  for (let depth = 0; depth < 32; depth += 1) {
+  let current = leaf
+  const maximumDepth = storedDevice ? 32 : Number.MAX_SAFE_INTEGER
+  for (let depth = 0; depth < maximumDepth; depth += 1) {
     const currentId = bytesToHex(current.body.certificateId)
-    if (visited.has(currentId)) throw new Error("Device authorization chain contains a cycle")
+    if (visited.has(currentId)) throw new Error(`${label} chain contains a cycle`)
     visited.add(currentId)
     chain.push(current)
     if (current.body.issuer.kind === "recovery") return chain
 
     const issuer = registry.get(bytesToHex(current.body.issuer.certificateId))
-    if (!issuer) throw new Error("Device authorization chain is incomplete")
+    if (!issuer) throw new Error(`${label} chain is incomplete`)
     current = issuer
   }
   throw new Error("Device authorization chain exceeds the maximum depth")

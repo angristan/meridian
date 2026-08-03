@@ -134,16 +134,43 @@ export async function deriveRevisionKek(
   })
 }
 
+async function wrapAesKw(
+  kekBytes: Uint8Array,
+  keyBytes: Uint8Array,
+  keyUsages: KeyUsage[],
+): Promise<Uint8Array> {
+  const subtle = webCrypto().subtle
+  const [kek, keyToWrap] = await Promise.all([
+    subtle.importKey("raw", asArrayBuffer(kekBytes), "AES-KW", false, ["wrapKey"]),
+    subtle.importKey("raw", asArrayBuffer(keyBytes), "AES-GCM", true, keyUsages),
+  ])
+  return new Uint8Array(await subtle.wrapKey("raw", keyToWrap, kek, "AES-KW"))
+}
+
+async function unwrapAesKw(
+  kekBytes: Uint8Array,
+  wrapped: Uint8Array,
+  keyUsages: KeyUsage[],
+): Promise<Uint8Array> {
+  const subtle = webCrypto().subtle
+  const kek = await subtle.importKey("raw", asArrayBuffer(kekBytes), "AES-KW", false, ["unwrapKey"])
+  const key = await subtle.unwrapKey(
+    "raw",
+    asArrayBuffer(wrapped),
+    kek,
+    "AES-KW",
+    "AES-GCM",
+    true,
+    keyUsages,
+  )
+  return new Uint8Array(await subtle.exportKey("raw", key))
+}
+
 export async function aesKwWrap(kekBytes: Uint8Array, keyBytes: Uint8Array): Promise<Uint8Array> {
   if (kekBytes.byteLength !== 32 || keyBytes.byteLength !== 32) {
     throw new RangeError("AES-256-KW requires a 32-byte KEK and 32-byte wrapped key")
   }
-  const subtle = webCrypto().subtle
-  const [kek, keyToWrap] = await Promise.all([
-    subtle.importKey("raw", asArrayBuffer(kekBytes), "AES-KW", false, ["wrapKey"]),
-    subtle.importKey("raw", asArrayBuffer(keyBytes), "AES-GCM", true, ["encrypt"]),
-  ])
-  return new Uint8Array(await subtle.wrapKey("raw", keyToWrap, kek, "AES-KW"))
+  return wrapAesKw(kekBytes, keyBytes, ["encrypt"])
 }
 
 export async function aesKwUnwrap(kekBytes: Uint8Array, wrapped: Uint8Array): Promise<Uint8Array> {
@@ -151,20 +178,7 @@ export async function aesKwUnwrap(kekBytes: Uint8Array, wrapped: Uint8Array): Pr
     throw new RangeError("AES-256-KW requires a 32-byte KEK and 40-byte wrapped value")
   }
   try {
-    const subtle = webCrypto().subtle
-    const kek = await subtle.importKey("raw", asArrayBuffer(kekBytes), "AES-KW", false, [
-      "unwrapKey",
-    ])
-    const key = await subtle.unwrapKey(
-      "raw",
-      asArrayBuffer(wrapped),
-      kek,
-      "AES-KW",
-      "AES-GCM",
-      true,
-      ["encrypt"],
-    )
-    return new Uint8Array(await subtle.exportKey("raw", key))
+    return await unwrapAesKw(kekBytes, wrapped, ["encrypt"])
   } catch (error) {
     throw new AuthenticationError("AES-KW integrity check failed", error)
   }
@@ -178,13 +192,7 @@ export async function wrapRevisionKey(
   key: RevisionKey,
 ): Promise<WrappedRevisionKey> {
   const kekBytes = await deriveRevisionKek(epochKey, vaultId, epochId, revisionIdValue)
-  const subtle = webCrypto().subtle
-  const [kek, keyToWrap] = await Promise.all([
-    subtle.importKey("raw", asArrayBuffer(kekBytes), "AES-KW", false, ["wrapKey"]),
-    subtle.importKey("raw", asArrayBuffer(key), "AES-GCM", true, ["encrypt", "decrypt"]),
-  ])
-  const wrapped = await subtle.wrapKey("raw", keyToWrap, kek, "AES-KW")
-  return wrappedRevisionKey(new Uint8Array(wrapped))
+  return wrappedRevisionKey(await wrapAesKw(kekBytes, key, ["encrypt", "decrypt"]))
 }
 
 export async function unwrapRevisionKey(
@@ -196,20 +204,7 @@ export async function unwrapRevisionKey(
 ): Promise<RevisionKey> {
   try {
     const kekBytes = await deriveRevisionKek(epochKey, vaultId, epochId, revisionIdValue)
-    const subtle = webCrypto().subtle
-    const kek = await subtle.importKey("raw", asArrayBuffer(kekBytes), "AES-KW", false, [
-      "unwrapKey",
-    ])
-    const unwrapped = await subtle.unwrapKey(
-      "raw",
-      asArrayBuffer(wrapped),
-      kek,
-      "AES-KW",
-      "AES-GCM",
-      true,
-      ["encrypt", "decrypt"],
-    )
-    return revisionKey(new Uint8Array(await subtle.exportKey("raw", unwrapped)))
+    return revisionKey(await unwrapAesKw(kekBytes, wrapped, ["encrypt", "decrypt"]))
   } catch (error) {
     throw new AuthenticationError("Revision key unwrap failed", error)
   }

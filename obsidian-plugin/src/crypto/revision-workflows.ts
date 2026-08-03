@@ -4,15 +4,8 @@ import {
   encryptFileRevision,
   inspectFileRevision,
   sign,
-  verify,
 } from "@meridian/crypto"
-import {
-  decodeOperation,
-  ed25519Signature,
-  fileId,
-  operationId,
-  revisionId,
-} from "@meridian/protocol"
+import { fileId, operationId, revisionId } from "@meridian/protocol"
 import type {
   BlobTransferProgress,
   DecryptedRevision,
@@ -23,9 +16,9 @@ import type {
   RevisionDraft,
 } from "../model"
 import { fromBase64Url, toBase64Url } from "../platform/bytes"
-import { deviceBundle, trustedAuthorCertificate } from "./device-secret"
+import { deviceBundle } from "./device-secret"
 import {
-  parseFileWorkerOperation,
+  verifyWorkerOperation,
   type WorkerOperation,
   workerOperationSigningBytes,
 } from "./worker-operation"
@@ -79,6 +72,7 @@ export async function inspectRevision(
     authorCertificate: verified.authorCertificate,
     maximumPlaintextBytes,
   })
+  assertRevisionAction(verified.wire, inspected.metadata.tombstone)
   return revisionMetadata(verified.wire, inspected)
 }
 
@@ -122,9 +116,7 @@ export async function decryptRevision(
       return new Uint8Array(bytes)
     },
   })
-  if (decrypted.metadata.tombstone !== (wire.type === "tombstone")) {
-    throw new Error("Worker file operation type does not match its signed revision")
-  }
+  assertRevisionAction(wire, decrypted.metadata.tombstone)
   return {
     ...revisionMetadata(wire, decrypted),
     bytes: decrypted.content ? copyBuffer(decrypted.content) : null,
@@ -132,44 +124,17 @@ export async function decryptRevision(
 }
 
 function verifiedRevision(device: DeviceKeyMaterial, operation: RemoteOperation) {
-  const bundle = deviceBundle(device)
-  const wire = parseFileWorkerOperation(operation.envelope)
-  const authorCertificate =
-    wire.authorDeviceId === device.deviceId
-      ? bundle.certificate
-      : trustedAuthorCertificate(device, operation)
-  const unsigned: Omit<WorkerOperation, "signature"> = {
-    operationId: wire.operationId,
-    authorDeviceId: wire.authorDeviceId,
-    epochId: wire.epochId,
-    type: wire.type,
-    envelope: wire.envelope,
-  }
-  if (
-    !verify(
-      workerOperationSigningBytes(unsigned),
-      ed25519Signature(fromBase64Url(wire.signature)),
-      authorCertificate.body.signingPublicKey,
-    )
-  ) {
-    throw new Error("Worker file operation signature is invalid")
-  }
-  const signedOperation = decodeOperation(fromBase64Url(wire.envelope))
-  if (signedOperation.body.type !== "revision") {
-    throw new Error("Worker file operation does not contain an encrypted revision")
-  }
-  if (
-    toBase64Url(signedOperation.body.authorDeviceId) !== wire.authorDeviceId ||
-    toBase64Url(signedOperation.body.epochId) !== wire.epochId
-  ) {
-    throw new Error("Worker file operation does not match its signed revision")
-  }
+  const verified = verifyWorkerOperation(device, operation, "file")
   return {
-    bundle,
-    wire,
-    authorCertificate,
-    signedOperation,
-    revisionBody: signedOperation.body,
+    ...verified,
+    bundle: verified.secret.bundle,
+    revisionBody: verified.signedOperation.body,
+  }
+}
+
+function assertRevisionAction(wire: WorkerOperation, tombstone: boolean): void {
+  if (tombstone !== (wire.type === "tombstone")) {
+    throw new Error("Worker file operation type does not match its signed revision")
   }
 }
 
