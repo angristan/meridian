@@ -19,7 +19,7 @@ import type {
 } from "../src/platform/background-sync"
 import { planIndexCooperatively } from "../src/platform/background-sync"
 import { fingerprint, randomId } from "../src/platform/bytes"
-import { MemoryJournal } from "../src/storage/journal"
+import { MemoryJournal } from "../src/storage/memory-journal"
 import { SyncController } from "../src/sync/controller"
 import { ALL_CATEGORIES, FakeCrypto, FakeRemote, FakeVault, TEST_DEVICE } from "./fakes"
 

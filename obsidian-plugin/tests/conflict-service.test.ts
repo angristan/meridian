@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest"
 import type { ConflictRecord, LocalRevision } from "../src/model"
 import { fingerprint } from "../src/platform/bytes"
-import { MemoryJournal } from "../src/storage/journal"
+import { MemoryJournal } from "../src/storage/memory-journal"
 import { ConflictService } from "../src/sync/conflict-service"
 import { FakeVault } from "./fakes"
 

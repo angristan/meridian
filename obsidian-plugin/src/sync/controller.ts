@@ -25,7 +25,7 @@ import {
   isQuotaExceededError,
   requestLocalStoragePersistence,
 } from "../platform/storage-estimate"
-import type { JournalPort } from "../storage/journal"
+import type { JournalPort } from "../storage/contracts"
 import { normalizeVaultPath } from "../vault/path-policy"
 import { ConflictService } from "./conflict-service"
 import {

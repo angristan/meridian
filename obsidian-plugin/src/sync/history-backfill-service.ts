@@ -7,7 +7,7 @@ import type {
   TrustedCheckpoint,
 } from "../model"
 import { toBase64Url } from "../platform/bytes"
-import type { JournalPort } from "../storage/journal"
+import type { JournalPort } from "../storage/contracts"
 
 export interface HistoryBackfillResult {
   added: number

@@ -7,7 +7,7 @@ import type {
   TrustedCheckpoint,
   VaultPort,
 } from "../model"
-import type { JournalPort } from "../storage/journal"
+import type { JournalPort } from "../storage/contracts"
 import { uploadBlobsConcurrently } from "./blob-transfer"
 import { snapshotFor } from "./snapshots"
 

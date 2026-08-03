@@ -1,5 +1,7 @@
 import { Notice, type Plugin } from "obsidian"
-import { type MeridianUiHost, PairingJoinModal, SetupLinkModal } from "../ui/views"
+import { SetupLinkModal } from "../ui/connection-modals"
+import { PairingJoinModal } from "../ui/devices-pairing"
+import type { MeridianUiHost } from "../ui/host"
 import { hasConfiguredMeridianIdentity, parsePairingLinkParameters } from "./pairing-link"
 
 export function registerProtocolHandlers(plugin: Plugin, host: MeridianUiHost): void {

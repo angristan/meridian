@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { MemoryJournal } from "../src/storage/journal"
+import { MemoryJournal } from "../src/storage/memory-journal"
 
 describe("durable dirty path journal", () => {
   it("coalesces repeated events to the newest path token", async () => {

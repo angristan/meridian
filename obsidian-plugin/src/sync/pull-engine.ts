@@ -8,7 +8,7 @@ import type {
 } from "../model"
 import { toBase64Url } from "../platform/bytes"
 import { yieldToEventLoop } from "../platform/scheduling"
-import type { JournalPort } from "../storage/journal"
+import type { JournalPort } from "../storage/contracts"
 import type { OperationApplier } from "./operation-applier"
 
 export interface PullResult {

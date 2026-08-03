@@ -1,7 +1,7 @@
 import "fake-indexeddb/auto"
 import { afterEach, describe, expect, it } from "vitest"
 import type { FileSnapshot, JournalEntry, LocalRevision } from "../src/model"
-import { IndexedDbJournal } from "../src/storage/journal"
+import { IndexedDbJournal } from "../src/storage/indexed-db-journal"
 
 const databaseNames: string[] = []
 

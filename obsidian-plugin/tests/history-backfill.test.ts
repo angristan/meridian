@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { MemoryJournal } from "../src/storage/journal"
+import { MemoryJournal } from "../src/storage/memory-journal"
 import { HistoryBackfillService } from "../src/sync/history-backfill-service"
 import { FakeCrypto, FakeRemote, TEST_DEVICE } from "./fakes"
 

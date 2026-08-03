@@ -1,6 +1,6 @@
 import { type App, type Plugin, PluginSettingTab, type SettingDefinitionItem } from "obsidian"
-import type { MeridianUiHost } from "../ui/views"
-import { getMeridianSettingDefinitions, renderSettings } from "../ui/views"
+import type { MeridianUiHost } from "../ui/host"
+import { getMeridianSettingDefinitions, renderSettings } from "../ui/settings"
 import { getMeridianControlValue, setMeridianControlValue } from "./settings-controls"
 
 export class MeridianSettingsTab extends PluginSettingTab {

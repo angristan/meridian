@@ -9,7 +9,7 @@ import type {
   VaultPort,
 } from "../model"
 import { fingerprint, randomId } from "../platform/bytes"
-import type { JournalPort } from "../storage/journal"
+import type { JournalPort } from "../storage/contracts"
 import { revisionActivity } from "./activity"
 import { buildLineDiff } from "./revision-diff"
 import { revisionHeads } from "./revision-heads"

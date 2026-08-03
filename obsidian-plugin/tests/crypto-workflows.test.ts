@@ -1,7 +1,7 @@
 import { computeRecoveryStateId, deserializeEncryptedRecoveryPackage } from "@meridian/crypto"
 import { decodeOperation } from "@meridian/protocol"
 import { describe, expect, it } from "vitest"
-import { createPackageCryptoPort } from "../src/crypto/package-adapter"
+import { packageCrypto } from "../src/crypto/package-crypto"
 import { fromBase64Url, randomId, toBase64Url } from "../src/platform/bytes"
 
 function record(value: unknown): Record<string, unknown> {
@@ -19,7 +19,7 @@ function stringField(value: unknown, key: string): string {
 
 describe("shared crypto adapter", () => {
   it("creates SecretStorage material and round-trips an encrypted revision", async () => {
-    const crypto = createPackageCryptoPort()
+    const crypto = packageCrypto
     const claim = await crypto.createFirstDevice("setup-session", "claim-challenge")
     const device = await crypto.loadDevice(claim.keyBundle)
     const plaintext = new TextEncoder().encode("private note").buffer
@@ -148,7 +148,7 @@ describe("shared crypto adapter", () => {
   })
 
   it("applies epoch transitions after an offline checkpoint and retries safely", async () => {
-    const crypto = createPackageCryptoPort()
+    const crypto = packageCrypto
     const claim = await crypto.createFirstDevice("setup-session", "claim-challenge")
     const device = await crypto.loadDevice(claim.keyBundle)
     const initialDevice = record(record(claim.publicClaim).initialDevice)
@@ -227,7 +227,7 @@ describe("shared crypto adapter", () => {
   })
 
   it("creates signed device revocations bound to their target certificate", async () => {
-    const crypto = createPackageCryptoPort()
+    const crypto = packageCrypto
     const claim = await crypto.createFirstDevice("setup-session", "claim-challenge")
     const owner = await crypto.loadDevice(claim.keyBundle)
     const ownerCertificate = stringField(record(claim.publicClaim).initialDevice, "certificate")
@@ -342,7 +342,7 @@ describe("shared crypto adapter", () => {
   })
 
   it("pairs a second device and trusts its certificate for decryption", async () => {
-    const crypto = createPackageCryptoPort()
+    const crypto = packageCrypto
     const ownerClaim = await crypto.createFirstDevice("setup-session", "claim-challenge")
     const owner = await crypto.loadDevice(ownerClaim.keyBundle)
     const joining = await crypto.createPairingJoin(

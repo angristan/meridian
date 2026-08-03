@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { DATABASE_VERSION } from "../src/storage/journal"
+import { DATABASE_VERSION } from "../src/storage/migration"
 
 describe("journal schema", () => {
   it("keeps the current IndexedDB version", () => {

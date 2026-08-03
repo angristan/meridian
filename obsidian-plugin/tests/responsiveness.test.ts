@@ -5,7 +5,7 @@ import {
   planIndexCooperatively,
   type SyncComputePort,
 } from "../src/platform/background-sync"
-import { MemoryJournal } from "../src/storage/journal"
+import { MemoryJournal } from "../src/storage/memory-journal"
 import type { OperationApplier } from "../src/sync/operation-applier"
 import { PullEngine } from "../src/sync/pull-engine"
 import { Reconciler } from "../src/sync/reconciler"

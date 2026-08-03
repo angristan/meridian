@@ -6,7 +6,7 @@ import type {
   SyncStatus,
 } from "../model"
 import { MeridianHttpError } from "../network/response-parsers"
-import type { JournalPort } from "../storage/journal"
+import type { JournalPort } from "../storage/contracts"
 
 export interface EpochTransitionStore {
   load(): EpochTransitionMaterial | null

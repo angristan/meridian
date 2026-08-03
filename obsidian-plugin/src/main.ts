@@ -1,5 +1,5 @@
 import { apiVersion, Notice, Platform, Plugin, TFile } from "obsidian"
-import { createPackageCryptoPort } from "./crypto/package-adapter"
+import { packageCrypto } from "./crypto/package-crypto"
 import {
   type ConflictDetails,
   type ConflictRecord,
@@ -34,24 +34,20 @@ import { PluginScheduling } from "./plugin/scheduling"
 import { MeridianSecretStorage } from "./plugin/secret-storage"
 import { MeridianSettingsTab } from "./plugin/settings"
 import { normalizeSettings, withoutMeridianIdentity } from "./plugin/settings-state"
-import { IndexedDbJournal } from "./storage/journal"
+import { IndexedDbJournal } from "./storage/indexed-db-journal"
 import { SyncController } from "./sync/controller"
+import { RecoveryConnectModal, RecoveryModal } from "./ui/connection-modals"
+import { DeletedFilesModal } from "./ui/deleted-files-modal"
+import { HistoryModal } from "./ui/history-conflicts"
+import type { MeridianUiHost } from "./ui/host"
 import { showQuickStatusMenu, showQuickStatusMenuAtElement } from "./ui/quick-status-menu"
-import {
-  DeletedFilesModal,
-  HistoryModal,
-  MeridianStatusView,
-  type MeridianUiHost,
-  RecoveryConnectModal,
-  RecoveryModal,
-  STATUS_VIEW_TYPE,
-} from "./ui/views"
+import { MeridianStatusView, STATUS_VIEW_TYPE } from "./ui/status-view"
 import { ObsidianVaultPort } from "./vault/obsidian-vault"
 
 export default class MeridianPlugin extends Plugin implements MeridianUiHost {
   override settings: MeridianSettings = structuredClone(DEFAULT_SETTINGS)
   private controller: SyncController | null = null
-  private readonly cryptoPort = createPackageCryptoPort()
+  private readonly cryptoPort = packageCrypto
   private readonly secrets = new MeridianSecretStorage(this.app.secretStorage)
   private readonly pairing = new PairingCoordinator(
     () => this.controller,

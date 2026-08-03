@@ -14,7 +14,7 @@ import type {
   VaultPort,
 } from "../model"
 import { equalBytes, fingerprint, randomId } from "../platform/bytes"
-import type { JournalPort } from "../storage/journal"
+import type { JournalPort } from "../storage/contracts"
 import {
   configCategoryForPath,
   conflictPath,

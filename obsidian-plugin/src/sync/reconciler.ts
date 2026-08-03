@@ -11,7 +11,7 @@ import type {
 import { BackgroundSyncCompute, type SyncComputePort } from "../platform/background-sync"
 import { randomId } from "../platform/bytes"
 import { yieldToEventLoop } from "../platform/scheduling"
-import type { JournalPort } from "../storage/journal"
+import type { JournalPort } from "../storage/contracts"
 import { configCategoryForPath, isSelectedForSync } from "../vault/path-policy"
 import { revisionHeads } from "./revision-heads"
 

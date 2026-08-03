@@ -1,6 +1,5 @@
 import { DurableObject } from "cloudflare:workers"
 import { errorResponse, HttpError } from "./errors"
-import { VaultAuth } from "./vault/auth"
 import { VaultBlobs } from "./vault/blobs"
 import { authenticate, json, type TransactionSync, vaultState } from "./vault/domain"
 import { migrateVaultSchema } from "./vault/migrations"
@@ -8,6 +7,9 @@ import { VaultNotifications } from "./vault/notifications"
 import { VaultOperations } from "./vault/operations"
 import { VaultPairing } from "./vault/pairing"
 import { VaultRecords } from "./vault/records"
+import { VaultRecovery } from "./vault/recovery"
+import { VaultSessions } from "./vault/sessions"
+import { VaultSetup } from "./vault/setup"
 
 export {
   authSigningMessage,
@@ -25,7 +27,9 @@ export type VaultDurableObjectEnv = Pick<Env, "BLOBS">
 export class VaultDurableObject extends DurableObject<VaultDurableObjectEnv> {
   private readonly sql: SqlStorage
   private readonly initialized: Promise<void>
-  private readonly auth: VaultAuth
+  private readonly setup: VaultSetup
+  private readonly sessions: VaultSessions
+  private readonly recovery: VaultRecovery
   private readonly blobs: VaultBlobs
   private readonly pairing: VaultPairing
   private readonly operations: VaultOperations
@@ -40,7 +44,9 @@ export class VaultDurableObject extends DurableObject<VaultDurableObjectEnv> {
       migrateVaultSchema(this.sql, transactionSync),
     )
     this.notifications = new VaultNotifications(ctx, this.sql)
-    this.auth = new VaultAuth(this.sql, transactionSync, () =>
+    this.setup = new VaultSetup(this.sql, transactionSync)
+    this.sessions = new VaultSessions(this.sql, transactionSync)
+    this.recovery = new VaultRecovery(this.sql, transactionSync, () =>
       this.notifications.closeForRecovery(),
     )
     this.blobs = new VaultBlobs(this.sql, env.BLOBS, transactionSync)
@@ -65,19 +71,19 @@ export class VaultDurableObject extends DurableObject<VaultDurableObjectEnv> {
         return json({ claimed: state !== undefined, cursor: state?.cursor ?? 0 })
       }
       if (request.method === "POST" && pathname === "/internal/setup/session")
-        return await this.auth.createSetupSession()
+        return await this.setup.createSetupSession()
       if (request.method === "POST" && pathname === "/v1/setup/claim")
-        return await this.auth.claim(request)
+        return await this.setup.claim(request)
       if (request.method === "POST" && pathname === "/v1/auth/challenge")
-        return await this.auth.createAuthChallenge(request)
+        return await this.sessions.createAuthChallenge(request)
       if (request.method === "POST" && pathname === "/v1/auth/session")
-        return await this.auth.createAuthSession(request)
+        return await this.sessions.createAuthSession(request)
       if (request.method === "GET" && pathname === "/v1/recovery/package")
-        return this.auth.recoveryPackage()
+        return this.recovery.recoveryPackage()
       if (request.method === "POST" && pathname === "/v1/recovery/challenge")
-        return await this.auth.createRecoveryChallenge()
+        return await this.recovery.createRecoveryChallenge()
       if (request.method === "POST" && pathname === "/v1/recovery/claim")
-        return await this.auth.recover(request)
+        return await this.recovery.recover(request)
       if (request.method === "GET" && pathname === "/v1/devices")
         return await this.pairing.listDevices(request)
       if (request.method === "PUT" && pathname === "/v1/device/descriptor")

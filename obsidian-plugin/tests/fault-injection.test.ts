@@ -19,7 +19,8 @@ import {
   type IndexPlanningInput,
   type SyncComputePort,
 } from "../src/platform/background-sync"
-import { IndexedDbJournal, MemoryJournal } from "../src/storage/journal"
+import { IndexedDbJournal } from "../src/storage/indexed-db-journal"
+import { MemoryJournal } from "../src/storage/memory-journal"
 import { SyncController } from "../src/sync/controller"
 import {
   campaignConfiguration,

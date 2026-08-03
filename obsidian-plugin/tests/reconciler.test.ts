@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest"
 import type { ConfigCategory, ScannedFileSnapshot, SelectiveSyncSettings } from "../src/model"
 import { fingerprint, randomId } from "../src/platform/bytes"
 import type { ReconciliationCommit } from "../src/storage/contracts"
-import { MemoryJournal } from "../src/storage/journal"
+import { MemoryJournal } from "../src/storage/memory-journal"
 import { FINGERPRINT_AUDIT_INTERVAL_MS, Reconciler } from "../src/sync/reconciler"
 import { ALL_CATEGORIES, FakeVault } from "./fakes"
 
