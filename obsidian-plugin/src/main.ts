@@ -25,19 +25,15 @@ import { ObsidianHttpTransport } from "./network/obsidian-transport"
 import { MeridianRemoteClient, normalizeEndpoint } from "./network/remote-client"
 import { BackgroundSyncCompute } from "./platform/background-sync"
 import { connectionControlState } from "./plugin/connection-control"
+import { defaultDeviceName, defaultDevicePlatform } from "./plugin/device-descriptor"
 import { createSanitizedDebugReport, SyncDiagnostics } from "./plugin/diagnostics"
 import { PairingCoordinator } from "./plugin/pairing-coordinator"
 import { hasConfiguredMeridianIdentity } from "./plugin/pairing-link"
 import { registerProtocolHandlers } from "./plugin/protocol-handlers"
 import { PluginScheduling } from "./plugin/scheduling"
 import { MeridianSecretStorage } from "./plugin/secret-storage"
-import {
-  defaultDeviceName,
-  defaultDevicePlatform,
-  MeridianSettingsTab,
-  normalizeSettings,
-  withoutMeridianIdentity,
-} from "./plugin/settings"
+import { MeridianSettingsTab } from "./plugin/settings"
+import { normalizeSettings, withoutMeridianIdentity } from "./plugin/settings-state"
 import { IndexedDbJournal } from "./storage/journal"
 import { SyncController } from "./sync/controller"
 import { showQuickStatusMenu, showQuickStatusMenuAtElement } from "./ui/quick-status-menu"
@@ -204,6 +200,7 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
   override onunload(): void {
     this.pluginLoaded = false
     this.scheduling.stop()
+    this.pairing.stop()
     this.controller?.stop()
     this.controller = null
   }

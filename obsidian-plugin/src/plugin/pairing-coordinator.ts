@@ -2,13 +2,17 @@ import type { CryptoPort, MeridianSettings, PairingInvitation, PairingStatus } f
 import { ObsidianHttpTransport } from "../network/obsidian-transport"
 import { MeridianRemoteClient, normalizeEndpoint } from "../network/remote-client"
 import { MeridianHttpError } from "../network/response-parsers"
+import { pollUntil } from "../platform/polling"
 import type { SyncController } from "../sync/controller"
+import { defaultDeviceName, defaultDevicePlatform } from "./device-descriptor"
 import { confirmRemotePairingCompletion } from "./pairing-completion"
 import { createPairingDeepLink, hasConfiguredMeridianIdentity } from "./pairing-link"
 import type { MeridianSecretStorage } from "./secret-storage"
-import { defaultDeviceName, defaultDevicePlatform, withoutMeridianIdentity } from "./settings"
+import { withoutMeridianIdentity } from "./settings-state"
 
 export class PairingCoordinator {
+  private readonly polling = new AbortController()
+
   constructor(
     private readonly getController: () => SyncController | null,
     private readonly getSettings: () => MeridianSettings,
@@ -18,6 +22,10 @@ export class PairingCoordinator {
     private readonly crypto: CryptoPort,
     private readonly secrets: MeridianSecretStorage,
   ) {}
+
+  stop(): void {
+    this.polling.abort()
+  }
 
   async createLink(): Promise<PairingInvitation> {
     const controller = this.controller()
@@ -78,10 +86,13 @@ export class PairingCoordinator {
     const controller = this.controller()
     await controller.confirmPairingOwner(pairingId)
     let status = await controller.pairingStatus(pairingId)
-    while (status.status === "verifying") {
-      if (Date.now() >= status.expiresAt) throw new Error("Pairing request expired")
-      await new Promise((resolve) => globalThis.setTimeout(resolve, 1_000))
-      status = await controller.pairingStatus(pairingId)
+    if (status.status === "verifying") {
+      status = await pollUntil({
+        read: () => controller.pairingStatus(pairingId),
+        isDone: (value) => value.status !== "verifying",
+        expiresAt: status.expiresAt,
+        signal: this.polling.signal,
+      })
     }
     if (status.status === "released" || status.status === "completed") return
     if (
@@ -227,12 +238,13 @@ export class PairingCoordinator {
       capability,
       ...confirmation,
     })
-    while (result.status === "verifying" || result.status === "confirmed") {
-      if (Date.now() >= this.pairingExpiry(pendingSecret)) {
-        throw new Error("Pairing request expired")
-      }
-      await new Promise((resolve) => globalThis.setTimeout(resolve, 1_000))
-      result = await remote.getPairingResult(pairingId, capability)
+    if (result.status === "verifying" || result.status === "confirmed") {
+      result = await pollUntil({
+        read: () => remote.getPairingResult(pairingId, capability),
+        isDone: (value) => value.status !== "verifying" && value.status !== "confirmed",
+        expiresAt: this.pairingExpiry(pendingSecret),
+        signal: this.polling.signal,
+      })
     }
     if ((result.status === "released" || result.status === "completed") && !result.hpkeTransfer) {
       result = await remote.getPairingResult(pairingId, capability)

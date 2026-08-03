@@ -1,9 +1,9 @@
 import { type ButtonComponent, Modal, Notice, Setting } from "obsidian"
 import type { PairingInvitation, RemoteDevice } from "../model"
+import { isPollingCanceled, pollUntil } from "../platform/polling"
 import { formatTime } from "./format-time"
 import type { MeridianUiHost } from "./host"
 import { renderPairingQr } from "./pairing-qr"
-import { isPollingCanceled, pollUntil } from "./polling"
 
 export class DevicesModal extends Modal {
   constructor(private readonly host: MeridianUiHost) {

@@ -23,6 +23,7 @@ export async function pollUntil<T>(options: PollUntilOptions<T>): Promise<T> {
 
     const remaining = options.expiresAt - now()
     if (remaining <= 0) throw new Error("Pairing request expired")
+    throwIfAborted(options.signal)
     await wait(Math.min(pairingPollDelay(attempt), remaining), options.signal)
     attempt += 1
   }

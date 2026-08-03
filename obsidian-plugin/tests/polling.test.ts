@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { isPollingCanceled, pairingPollDelay, pollUntil } from "../src/ui/polling"
+import { isPollingCanceled, pairingPollDelay, pollUntil } from "../src/platform/polling"
 
 describe("pairing polling", () => {
   it("uses a bounded backoff and stops at approval", async () => {
@@ -38,6 +38,24 @@ describe("pairing polling", () => {
         },
       }),
     ).rejects.toThrow("Pairing request expired")
+  })
+
+  it("observes cancellation that happens while reading", async () => {
+    const controller = new AbortController()
+    const polling = pollUntil({
+      read: async () => {
+        controller.abort()
+        return "pending"
+      },
+      isDone: () => false,
+      expiresAt: Date.now() + 1_000,
+      signal: controller.signal,
+      wait: async () => {
+        throw new Error("Polling waited after cancellation")
+      },
+    })
+
+    await expect(polling).rejects.toMatchObject({ name: "AbortError" })
   })
 
   it("recognizes modal cancellation", async () => {
