@@ -20,6 +20,8 @@ import {
   verifiedLogCursor,
 } from "./verified-log"
 
+const HISTORY_INDEX_VERSION = 1
+
 export class HistoryBackfillService {
   private running: Promise<void> | null = null
 
@@ -43,6 +45,7 @@ export class HistoryBackfillService {
       throw new Error("Re-pair this legacy device before downloading complete history")
     }
     const trustedInitialFormat = checkpointFormats(device.trustedCheckpoint).initialLogFormat
+    await this.journal.prepareHistoryBackfill(HISTORY_INDEX_VERSION)
     const liveCheckpoint = await this.journal.getCheckpoint()
     const maximumTargetCursor = liveCheckpoint?.cursor ?? Number.MAX_SAFE_INTEGER
     const revocations = new Map(

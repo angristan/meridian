@@ -377,29 +377,44 @@ describe("HistoryBackfillService", () => {
     expect(await journal.getHistoryCheckpoint()).toBeNull()
   })
 
-  it("replaces stale local metadata for the same immutable log entry", async () => {
+  it("restarts a partial old index before repairing a cross-file parent", async () => {
     const remote = new FakeRemote()
     remote.addRemoteRevision(
       {
-        operationId: "operation-id",
-        revisionId: "revision-id",
+        operationId: "parent-operation",
+        revisionId: "parent-revision",
         fileId: "verified-file",
         action: "upsert",
         path: "note.md",
         previousPath: null,
         parents: [],
         authorDeviceId: TEST_DEVICE.deviceId,
-        blobId: "blob-id",
+        blobId: "parent-blob",
         isText: true,
       },
-      new TextEncoder().encode("content").buffer,
+      new TextEncoder().encode("parent").buffer,
+    )
+    remote.addRemoteRevision(
+      {
+        operationId: "child-operation",
+        revisionId: "child-revision",
+        fileId: "verified-file",
+        action: "upsert",
+        path: "note.md",
+        previousPath: null,
+        parents: ["parent-revision"],
+        authorDeviceId: TEST_DEVICE.deviceId,
+        blobId: "child-blob",
+        isText: true,
+      },
+      new TextEncoder().encode("child").buffer,
     )
     const operation = remote.operations[0]
     if (!operation) throw new Error("Missing test operation")
     const journal = new MemoryJournal()
     await journal.commitAppliedOperation({
       revision: {
-        revisionId: "revision-id",
+        revisionId: "parent-revision",
         fileId: "stale-file",
         path: "stale.md",
         parents: [],
@@ -415,15 +430,22 @@ describe("HistoryBackfillService", () => {
       removeSnapshotPaths: [],
       conflicts: [],
     })
-    await journal.setCheckpoint({ cursor: 1, logHash: "hash-1" })
+    await journal.setCheckpoint({ cursor: 2, logHash: "hash-2" })
+    await journal.commitHistoryOperation(null, { cursor: 1, logHash: "hash-1" })
 
     await new HistoryBackfillService(journal, remote, new FakeCrypto()).backfill(TEST_DEVICE)
 
-    expect(await journal.getRetainedRevision("revision-id")).toMatchObject({
+    expect(await journal.getHistoryCheckpoint()).toMatchObject({ cursor: 2 })
+    expect(await journal.getRetainedRevision("parent-revision")).toMatchObject({
       fileId: "verified-file",
       cursor: 1,
     })
-    expect(await journal.getRevision("revision-id")).toMatchObject({ fileId: "stale-file" })
+    expect(await journal.getRetainedRevision("child-revision")).toMatchObject({
+      fileId: "verified-file",
+      parents: ["parent-revision"],
+      cursor: 2,
+    })
+    expect(await journal.getRevision("parent-revision")).toMatchObject({ fileId: "stale-file" })
   })
 
   it("carries epoch state through one history traversal", async () => {

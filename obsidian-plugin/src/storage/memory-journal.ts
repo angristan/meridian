@@ -31,6 +31,7 @@ export class MemoryJournal implements JournalPort {
   private readonly revisions = new Map<string, LocalRevision>()
   private readonly historyRevisions = new Map<string, LocalRevision>()
   private historyCheckpoint: TrustedCheckpoint | null = null
+  private historyIndexVersion: number | null = null
   private readonly conflicts = new Map<string, ConflictRecord>()
 
   async open(): Promise<void> {}
@@ -226,6 +227,13 @@ export class MemoryJournal implements JournalPort {
 
   async getHistoryCheckpoint(): Promise<TrustedCheckpoint | null> {
     return this.historyCheckpoint ? structuredClone(this.historyCheckpoint) : null
+  }
+
+  async prepareHistoryBackfill(version: number): Promise<void> {
+    if (this.historyIndexVersion === version) return
+    this.historyRevisions.clear()
+    this.historyCheckpoint = null
+    this.historyIndexVersion = version
   }
 
   async commitHistoryOperation(

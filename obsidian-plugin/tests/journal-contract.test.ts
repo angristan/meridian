@@ -236,6 +236,61 @@ describe.each(implementations)("$0 journal contract", (_name, createHarness) => 
     })
   })
 
+  it("resets only stale history indexes once per version", async () => {
+    await withJournal(createHarness, async (journal) => {
+      const revision = {
+        revisionId: "history-revision",
+        fileId: "file",
+        path: "note.md",
+        parents: [],
+        deviceId: "device",
+        createdAt: 1,
+        cursor: 1,
+        tombstone: false,
+        isConflict: false,
+        operation: null,
+      }
+      const pending = entry()
+      const snapshot = {
+        fileId: "live-file",
+        path: "live.md",
+        fingerprint: "fingerprint",
+        size: 4,
+        mtime: 1,
+        kind: "vault" as const,
+      }
+      const revocation = { deviceId: "revoked", operationId: "revocation", cursor: 8 }
+      await journal.putEntry(pending)
+      await journal.commitReconciliation({
+        entries: [],
+        putSnapshots: [snapshot],
+        removeSnapshotPaths: [],
+        consumeDirtyPaths: [],
+      })
+      await journal.putDeviceRevocation(revocation)
+      await journal.setCheckpoint({ cursor: 9, logHash: "live-hash" })
+      await journal.commitHistoryOperation(revision, { cursor: 1, logHash: "history-hash" })
+
+      await journal.prepareHistoryBackfill(1)
+
+      expect(await journal.getHistoryCheckpoint()).toBeNull()
+      expect(await journal.listRetainedRevisions()).toEqual([])
+      expect(await journal.getCheckpoint()).toMatchObject({ cursor: 9, logHash: "live-hash" })
+      expect(await journal.listPending()).toEqual([pending])
+      expect((await journal.getSnapshots()).get("live.md")).toEqual(snapshot)
+      expect(await journal.getDeviceRevocation("revoked")).toEqual(revocation)
+
+      await journal.commitHistoryOperation(revision, { cursor: 1, logHash: "history-hash" })
+      await journal.prepareHistoryBackfill(1)
+      expect(await journal.getHistoryCheckpoint()).toMatchObject({ cursor: 1 })
+      expect(await journal.listRetainedRevisions()).toEqual([revision])
+
+      await journal.prepareHistoryBackfill(2)
+      expect(await journal.getHistoryCheckpoint()).toBeNull()
+      expect(await journal.listRetainedRevisions()).toEqual([])
+    })
+  })
+
   it("commits history revocations with their checkpoint", async () => {
     await withJournal(createHarness, async (journal) => {
       const checkpoint = { cursor: 3, logHash: "hash-3" }

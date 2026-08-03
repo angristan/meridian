@@ -70,6 +70,7 @@ export interface JournalPort {
   listRevisions(path?: string): Promise<LocalRevision[]>
   listFileRevisions(fileId: string): Promise<LocalRevision[]>
   getHistoryCheckpoint(): Promise<TrustedCheckpoint | null>
+  prepareHistoryBackfill(version: number): Promise<void>
   commitHistoryOperation(
     revision: LocalRevision | null,
     checkpoint: TrustedCheckpoint,

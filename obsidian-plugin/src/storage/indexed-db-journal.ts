@@ -358,6 +358,22 @@ export class IndexedDbJournal implements JournalPort {
     return (await this.getMetadata<TrustedCheckpoint>("history-checkpoint")) ?? null
   }
 
+  async prepareHistoryBackfill(version: number): Promise<void> {
+    const database = this.requireDatabase()
+    const transaction = database.transaction(["history-revisions", "meta"], "readwrite")
+    const done = transactionDone(transaction)
+    const meta = transaction.objectStore("meta")
+    const current = await requestResult<MetadataRecord | undefined>(
+      meta.get("history-index-version"),
+    )
+    if (current?.value !== version) {
+      transaction.objectStore("history-revisions").clear()
+      meta.delete("history-checkpoint")
+      meta.put({ key: "history-index-version", value: version } satisfies MetadataRecord)
+    }
+    await done
+  }
+
   async commitHistoryOperation(
     revision: LocalRevision | null,
     checkpoint: TrustedCheckpoint,
