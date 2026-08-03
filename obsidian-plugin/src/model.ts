@@ -1,13 +1,23 @@
-export const CONFIG_CATEGORIES = [
-  "main",
-  "appearance",
-  "themes",
-  "hotkeys",
-  "core-plugins",
-  "core-plugin-settings",
-] as const
+import type {
+  LogFormat,
+  PairingCapabilityResponseSchema,
+  PairingStateSchema,
+  RetentionAcknowledgement,
+  StoragePruneResponseSchema,
+} from "@meridian/protocol"
 
-export type ConfigCategory = (typeof CONFIG_CATEGORIES)[number]
+export type ConfigCategory =
+  | "main"
+  | "appearance"
+  | "themes"
+  | "hotkeys"
+  | "core-plugins"
+  | "core-plugin-settings"
+
+export type { LogFormat, RetentionAcknowledgement }
+export type PairingCapability = typeof PairingCapabilityResponseSchema.Type
+export type PairingState = typeof PairingStateSchema.Type
+export type StoragePruneResult = typeof StoragePruneResponseSchema.Type
 
 export interface PendingDeviceRemoval {
   endpoint: string
@@ -242,15 +252,6 @@ export interface RevisionComparison {
   unavailableReason: string | null
 }
 
-export interface RetentionAcknowledgement {
-  deviceId: string
-  cursor: number
-  logHash: string
-  epochId: string
-  historyRetention: "forever"
-  signature: string
-}
-
 export interface RemoteStorageUsage {
   totalBytes: number
   blobBytes: number
@@ -283,12 +284,6 @@ export interface StorageUsage extends RemoteStorageUsage {
 export interface LocalCompactionResult {
   completedEntries: number
   duplicateHistoryRevisions: number
-}
-
-export interface StoragePruneResult {
-  deletedBytes: number
-  deletedCount: number
-  graceDays: number
 }
 
 export interface SyncDiagnostic {
@@ -346,8 +341,6 @@ export interface ConflictDetails {
   preserved: ConflictFilePreview
   comparison: RevisionComparison
 }
-
-export type LogFormat = "legacy-http-v1" | "canonical-cbor-v1"
 
 export interface TrustedCheckpoint {
   cursor: number
@@ -633,25 +626,9 @@ export interface RemoteDevice {
   platform: string | null
 }
 
-export interface PairingCapability {
-  pairingId: string
-  capability: string
-  vaultId: string
-  expiresAt: number
-}
-
 export interface PairingInvitation extends PairingCapability {
   link: string
 }
-
-export type PairingState =
-  | "pending"
-  | "joined"
-  | "verifying"
-  | "confirmed"
-  | "released"
-  | "completed"
-  | "canceled"
 
 export interface PairingStatus {
   pairingId: string

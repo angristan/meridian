@@ -259,10 +259,6 @@ export class IndexedDbJournal implements JournalPort {
     await this.put("revocations", revocation)
   }
 
-  async putRevision(revision: LocalRevision): Promise<void> {
-    await this.put("revisions", revision)
-  }
-
   async finishPushedRevision(commit: PushedRevisionCommit): Promise<void> {
     const snapshot = commit.snapshot ? cachedSnapshot(commit.snapshot) : null
     const removeSnapshotPaths = [...commit.removeSnapshotPaths]
@@ -374,10 +370,6 @@ export class IndexedDbJournal implements JournalPort {
       byId.set(revision.revisionId, revision)
     }
     return sortRevisions([...byId.values()])
-  }
-
-  async putConflict(conflict: ConflictRecord): Promise<void> {
-    await this.put("conflicts", conflict)
   }
 
   async listConflicts(unresolvedOnly = false): Promise<ConflictRecord[]> {

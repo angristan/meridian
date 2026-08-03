@@ -10,6 +10,22 @@ import { createPairingDeepLink, hasConfiguredMeridianIdentity } from "./pairing-
 import type { MeridianSecretStorage } from "./secret-storage"
 import { withoutMeridianIdentity } from "./settings-state"
 
+export type PairingUiCapability = Pick<
+  PairingCoordinator,
+  | "createLink"
+  | "status"
+  | "progress"
+  | "approve"
+  | "confirmOwner"
+  | "completeOwner"
+  | "reject"
+  | "join"
+  | "prepareVerification"
+  | "finish"
+  | "completePending"
+  | "cancel"
+>
+
 export class PairingCoordinator {
   private readonly polling = new AbortController()
 

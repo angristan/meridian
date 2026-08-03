@@ -58,7 +58,6 @@ export interface JournalPort {
   getDeviceRevocation(deviceId: string): Promise<DeviceRevocationRecord | null>
   listDeviceRevocations(): Promise<DeviceRevocationRecord[]>
   putDeviceRevocation(revocation: DeviceRevocationRecord): Promise<void>
-  putRevision(revision: LocalRevision): Promise<void>
   finishPushedRevision(commit: PushedRevisionCommit): Promise<void>
   commitAppliedOperation(commit: AppliedOperationCommit): Promise<void>
   getRevision(revisionId: string): Promise<LocalRevision | null>
@@ -71,7 +70,6 @@ export interface JournalPort {
   ): Promise<void>
   getRetainedRevision(revisionId: string): Promise<LocalRevision | null>
   listRetainedRevisions(): Promise<LocalRevision[]>
-  putConflict(conflict: ConflictRecord): Promise<void>
   listConflicts(unresolvedOnly?: boolean): Promise<ConflictRecord[]>
   resolveConflict(id: string): Promise<void>
   clearSnapshots(): Promise<void>

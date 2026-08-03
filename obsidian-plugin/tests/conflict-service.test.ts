@@ -4,6 +4,7 @@ import { fingerprint } from "../src/platform/bytes"
 import { MemoryJournal } from "../src/storage/memory-journal"
 import { ConflictService } from "../src/sync/conflict-service"
 import { FakeVault } from "./fakes"
+import { seedConflict, seedRevision } from "./journal-fixtures"
 
 const SOURCE_PATH = "note.md"
 const COPY_PATH = "note.conflict.md"
@@ -47,9 +48,9 @@ async function setup(remote: LocalRevision, source: string | null, copy: string)
     [COPY_PATH]: copy,
   })
   const journal = new MemoryJournal()
-  await journal.putRevision(revision({ revisionId: "base" }))
-  await journal.putRevision(remote)
-  await journal.putConflict(conflict())
+  await seedRevision(journal, revision({ revisionId: "base" }))
+  await seedRevision(journal, remote)
+  await seedConflict(journal, conflict())
   if (source !== null) {
     const sourceBytes = new TextEncoder().encode(source).buffer
     await journal.putSnapshot({
@@ -104,9 +105,9 @@ describe("ConflictService", () => {
     const remote = revision({ revisionId: "remote", parents: ["base"] })
     const vault = new RacingVault({ [SOURCE_PATH]: "same", [COPY_PATH]: "same" })
     const journal = new MemoryJournal()
-    await journal.putRevision(revision({ revisionId: "base" }))
-    await journal.putRevision(remote)
-    await journal.putConflict(conflict())
+    await seedRevision(journal, revision({ revisionId: "base" }))
+    await seedRevision(journal, remote)
+    await seedConflict(journal, conflict())
     const service = new ConflictService(vault, journal)
 
     await expect(service.resolveEquivalent()).resolves.toBe(0)
@@ -208,8 +209,8 @@ describe("ConflictService", () => {
   it("does not replace an untracked file occupying the original path", async () => {
     const vault = new FakeVault({ [SOURCE_PATH]: "untracked", [COPY_PATH]: "incoming" })
     const journal = new MemoryJournal()
-    await journal.putRevision(revision({ revisionId: "remote" }))
-    await journal.putConflict(conflict())
+    await seedRevision(journal, revision({ revisionId: "remote" }))
+    await seedConflict(journal, conflict())
     const service = new ConflictService(vault, journal)
 
     await expect(service.resolve("conflict-id", "use-incoming")).rejects.toThrow(/untracked/)
@@ -235,8 +236,8 @@ describe("ConflictService", () => {
     }
     const vault = new RacingVault({ [SOURCE_PATH]: "local", [COPY_PATH]: "incoming" })
     const journal = new MemoryJournal()
-    await journal.putRevision(revision({ revisionId: "remote" }))
-    await journal.putConflict(conflict())
+    await seedRevision(journal, revision({ revisionId: "remote" }))
+    await seedConflict(journal, conflict())
     const service = new ConflictService(vault, journal)
 
     await expect(service.resolve("conflict-id", "keep-current")).rejects.toThrow(/changed/)

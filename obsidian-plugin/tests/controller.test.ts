@@ -23,7 +23,7 @@ import type { AppliedOperationCommit } from "../src/storage/contracts"
 import { MemoryJournal } from "../src/storage/memory-journal"
 import { SyncController } from "../src/sync/controller"
 import { ALL_CATEGORIES, FakeCrypto, FakeRemote, FakeVault, TEST_DEVICE } from "./fakes"
-import { seedSnapshots } from "./journal-fixtures"
+import { seedRevision, seedSnapshots } from "./journal-fixtures"
 
 async function seedTrackedText(
   journal: MemoryJournal,
@@ -42,7 +42,7 @@ async function seedTrackedText(
     },
   ])
   remote.blobs.set("base-blob", baseBytes)
-  await journal.putRevision({
+  await seedRevision(journal, {
     revisionId: "common-base",
     fileId: identity,
     path: "note.md",
@@ -1691,7 +1691,7 @@ describe("SyncController", () => {
         kind: "vault",
       },
     ])
-    await journal.putRevision({
+    await seedRevision(journal, {
       revisionId: "base-revision",
       fileId: identity,
       path: "Note.md",
@@ -1869,7 +1869,7 @@ describe("SyncController", () => {
       ["cycle-a", "cycle-b"],
       ["cycle-b", "cycle-a"],
     ] as const) {
-      await journal.putRevision({
+      await seedRevision(journal, {
         revisionId,
         fileId: identity,
         path: "cycle.md",
@@ -1934,7 +1934,7 @@ describe("SyncController", () => {
     ])
     const remote = new FakeRemote()
     remote.blobs.set("base-blob", baseBytes)
-    await journal.putRevision({
+    await seedRevision(journal, {
       revisionId: "common-base",
       fileId: identity,
       path: "note.md",
@@ -2013,7 +2013,7 @@ describe("SyncController", () => {
         kind: "vault",
       },
     ])
-    await journal.putRevision({
+    await seedRevision(journal, {
       revisionId: "incoming-base",
       fileId: incomingIdentity,
       path: "old-name.md",
@@ -2077,7 +2077,7 @@ describe("SyncController", () => {
     ])
     const remote = new FakeRemote()
     remote.blobs.set("old-blob", oldBytes)
-    await journal.putRevision({
+    await seedRevision(journal, {
       revisionId: "revision-old",
       fileId: identity,
       path: "note.md",
@@ -2104,7 +2104,7 @@ describe("SyncController", () => {
         },
       },
     })
-    await journal.putRevision({
+    await seedRevision(journal, {
       revisionId: "revision-current",
       fileId: identity,
       path: "note.md",
@@ -2166,7 +2166,7 @@ describe("SyncController", () => {
     ])
     const remote = new FakeRemote()
     remote.blobs.set("source-blob", sourceBytes)
-    await journal.putRevision({
+    await seedRevision(journal, {
       revisionId: "source-revision",
       fileId: sourceIdentity,
       path: "shared.md",
@@ -2227,7 +2227,7 @@ describe("SyncController", () => {
         kind: "config",
       },
     ])
-    await journal.putRevision({
+    await seedRevision(journal, {
       revisionId: "config-base",
       fileId: identity,
       path: ".config/app.json",
@@ -2291,7 +2291,7 @@ describe("SyncController", () => {
         kind: "vault",
       },
     ])
-    await journal.putRevision({
+    await seedRevision(journal, {
       revisionId: "common-base",
       fileId: identity,
       path: "note.md",
@@ -2418,7 +2418,7 @@ describe("SyncController", () => {
         kind: "vault",
       },
     ])
-    await journal.putRevision({
+    await seedRevision(journal, {
       revisionId: "base-revision",
       fileId: identity,
       path: "note.md",

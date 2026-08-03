@@ -3,7 +3,7 @@ import { MemoryJournal } from "../src/storage/memory-journal"
 import { HistoryService } from "../src/sync/history-service"
 import { RevisionLoader } from "../src/sync/revision-loader"
 import { FakeCrypto, FakeRemote, FakeVault, TEST_DEVICE } from "./fakes"
-import { seedSnapshots } from "./journal-fixtures"
+import { seedRevision, seedSnapshots } from "./journal-fixtures"
 
 function service(
   vault: FakeVault,
@@ -31,7 +31,7 @@ describe("HistoryService", () => {
         kind: "vault",
       },
     ])
-    await journal.putRevision({
+    await seedRevision(journal, {
       revisionId: "old",
       fileId: "file-id",
       path: "Inbox/note.md",
@@ -45,7 +45,7 @@ describe("HistoryService", () => {
       isConflict: false,
       operation: null,
     })
-    await journal.putRevision({
+    await seedRevision(journal, {
       revisionId: "renamed",
       fileId: "file-id",
       path: "Archive/note.md",
@@ -84,7 +84,7 @@ describe("HistoryService", () => {
         kind: "vault",
       },
     ])
-    await journal.putRevision({
+    await seedRevision(journal, {
       revisionId: "source-revision",
       fileId: "file-id",
       path: "note.md",
@@ -139,7 +139,7 @@ describe("HistoryService", () => {
     const remote = new FakeRemote()
     const sourceBytes = new TextEncoder().encode("recover me").buffer
     remote.blobs.set("source-blob", sourceBytes)
-    await journal.putRevision({
+    await seedRevision(journal, {
       revisionId: "source-revision",
       fileId: "deleted-file",
       path: "Archive/deleted.md",
@@ -172,7 +172,7 @@ describe("HistoryService", () => {
       ["deletion-one", 2],
       ["deletion-two", 3],
     ] as const) {
-      await journal.putRevision({
+      await seedRevision(journal, {
         revisionId,
         fileId: "deleted-file",
         path: "Archive/deleted.md",
@@ -219,7 +219,7 @@ describe("HistoryService", () => {
     const remote = new FakeRemote()
     const sourceBytes = new TextEncoder().encode("historical content").buffer
     remote.blobs.set("source-blob", sourceBytes)
-    await journal.putRevision({
+    await seedRevision(journal, {
       revisionId: "source-revision",
       fileId: "source-file",
       path: "shared.md",

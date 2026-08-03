@@ -2,7 +2,7 @@ import "fake-indexeddb/auto"
 import { afterEach, describe, expect, it } from "vitest"
 import type { FileSnapshot, JournalEntry, LocalRevision } from "../src/model"
 import { IndexedDbJournal } from "../src/storage/indexed-db-journal"
-import { seedSnapshots } from "./journal-fixtures"
+import { seedConflict, seedRevision, seedSnapshots } from "./journal-fixtures"
 
 const databaseNames: string[] = []
 
@@ -79,14 +79,14 @@ describe("IndexedDB lossless compaction", () => {
 
     const first = revision("revision-1", 1)
     const second = revision("revision-2", 2)
-    await journal.putRevision(first)
-    await journal.putRevision(second)
+    await seedRevision(journal, first)
+    await seedRevision(journal, second)
     await journal.commitHistoryOperation(structuredClone(first), { cursor: 1, logHash: "hash-1" })
     await journal.commitHistoryOperation(
       { ...structuredClone(second), path: "historical-name.md" },
       { cursor: 2, logHash: "hash-2" },
     )
-    await journal.putConflict({
+    await seedConflict(journal, {
       id: "conflict",
       sourcePath: "note.md",
       conflictPath: "note.conflict.md",

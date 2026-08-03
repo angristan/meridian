@@ -1,5 +1,3 @@
-const textEncoder = new TextEncoder()
-
 export function randomId(byteLength = 16): string {
   const bytes = crypto.getRandomValues(new Uint8Array(byteLength))
   return toBase64Url(bytes)
@@ -42,16 +40,4 @@ export function fromBase64Url(
     bytes[index] = binary.charCodeAt(index)
   }
   return bytes
-}
-
-export function encodeUtf8(value: string): ArrayBuffer {
-  return textEncoder.encode(value).buffer
-}
-
-export function decodeUtf8(bytes: ArrayBuffer): string {
-  return new TextDecoder("utf-8", { fatal: true }).decode(bytes)
-}
-
-export function cloneBuffer(bytes: ArrayBuffer): ArrayBuffer {
-  return bytes.slice(0)
 }

@@ -419,7 +419,7 @@ function configurePairingRetry(setting: Setting, host: MeridianUiHost, refresh: 
       .onClick(async () => {
         button.setDisabled(true)
         try {
-          await host.completePendingPairing()
+          await host.pairing.completePending()
           refresh()
           new Notice("Device pairing completed")
         } catch (error) {

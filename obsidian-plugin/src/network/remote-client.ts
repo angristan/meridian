@@ -360,93 +360,48 @@ export class MeridianRemoteClient implements RemotePort {
   }
 
   async joinPairing(pairingId: string, payload: unknown): Promise<PairingResult> {
-    return pairingResult(
-      await this.jsonRequest(`/v1/pairings/${encodeURIComponent(pairingId)}/join`, {
-        method: "POST",
-        body: payload,
-        authenticated: false,
-      }),
-    )
+    return this.pairingResultRequest(pairingId, "join", payload, { authenticated: false })
   }
 
   async approvePairing(pairingId: string, payload: unknown): Promise<PairingResult> {
-    return pairingResult(
-      await this.jsonRequest(`/v1/pairings/${encodeURIComponent(pairingId)}/approve`, {
-        method: "POST",
-        body: payload,
-        authenticated: true,
-      }),
-    )
+    return this.pairingResultRequest(pairingId, "approve", payload, { authenticated: true })
   }
 
   async releasePairing(pairingId: string, payload: unknown): Promise<PairingResult> {
-    return pairingResult(
-      await this.jsonRequest(`/v1/pairings/${encodeURIComponent(pairingId)}/release`, {
-        method: "POST",
-        body: payload,
-        authenticated: true,
-      }),
-    )
+    return this.pairingResultRequest(pairingId, "release", payload, { authenticated: true })
   }
 
   async getPairingResult(pairingId: string, capability: string): Promise<PairingResult> {
-    return pairingResult(
-      await this.jsonRequest(`/v1/pairings/${encodeURIComponent(pairingId)}/result`, {
-        method: "POST",
-        body: { capability },
-        authenticated: false,
-      }),
-    )
+    return this.pairingResultRequest(pairingId, "result", { capability }, { authenticated: false })
   }
 
   async confirmPairingOwner(pairingId: string): Promise<PairingResult> {
-    return pairingResult(
-      await this.jsonRequest(`/v1/pairings/${encodeURIComponent(pairingId)}/confirm-owner`, {
-        method: "POST",
-        body: {},
-        authenticated: true,
-      }),
-    )
+    return this.pairingResultRequest(pairingId, "confirm-owner", {}, { authenticated: true })
   }
 
   async confirmPairingCandidate(pairingId: string, payload: unknown): Promise<PairingResult> {
-    return pairingResult(
-      await this.jsonRequest(`/v1/pairings/${encodeURIComponent(pairingId)}/confirm-candidate`, {
-        method: "POST",
-        body: payload,
-        authenticated: false,
-      }),
-    )
+    return this.pairingResultRequest(pairingId, "confirm-candidate", payload, {
+      authenticated: false,
+    })
   }
 
   async completePairing(pairingId: string, payload: unknown): Promise<PairingResult> {
-    return pairingResult(
-      await this.jsonRequest(`/v1/pairings/${encodeURIComponent(pairingId)}/complete`, {
-        method: "POST",
-        body: payload,
-        authenticated: false,
-      }),
-    )
+    return this.pairingResultRequest(pairingId, "complete", payload, { authenticated: false })
   }
 
   async cancelPairing(pairingId: string, capability: string): Promise<PairingResult> {
-    return pairingResult(
-      await this.jsonRequest(`/v1/pairings/${encodeURIComponent(pairingId)}/cancel`, {
-        method: "POST",
-        body: { capability },
+    return this.pairingResultRequest(
+      pairingId,
+      "cancel",
+      { capability },
+      {
         authenticated: false,
-      }),
+      },
     )
   }
 
   async rejectPairing(pairingId: string): Promise<PairingResult> {
-    return pairingResult(
-      await this.jsonRequest(`/v1/pairings/${encodeURIComponent(pairingId)}/reject`, {
-        method: "POST",
-        body: {},
-        authenticated: true,
-      }),
-    )
+    return this.pairingResultRequest(pairingId, "reject", {}, { authenticated: true })
   }
 
   connectNotifications(
@@ -461,6 +416,30 @@ export class MeridianRemoteClient implements RemotePort {
       after,
       onCursor,
       onState,
+    )
+  }
+
+  private async pairingResultRequest(
+    pairingId: string,
+    action:
+      | "join"
+      | "approve"
+      | "release"
+      | "result"
+      | "confirm-owner"
+      | "confirm-candidate"
+      | "complete"
+      | "cancel"
+      | "reject",
+    body: unknown,
+    options: { authenticated: boolean },
+  ): Promise<PairingResult> {
+    return pairingResult(
+      await this.jsonRequest(`/v1/pairings/${encodeURIComponent(pairingId)}/${action}`, {
+        method: "POST",
+        body,
+        authenticated: options.authenticated,
+      }),
     )
   }
 

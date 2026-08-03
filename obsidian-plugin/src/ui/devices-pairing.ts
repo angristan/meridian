@@ -61,7 +61,7 @@ export class DevicesModal extends Modal {
           .onClick(async () => {
             button.setDisabled(true)
             try {
-              const invitation = await this.host.createPairingLink()
+              const invitation = await this.host.pairing.createLink()
               new PairingLinkModal(this.host, invitation).open()
               this.close()
             } catch (error) {
@@ -168,7 +168,7 @@ class PairingLinkModal extends Modal {
   override onClose(): void {
     if (!this.confirmationStarted) {
       this.polling.abort()
-      if (!this.terminal) void this.host.rejectPairing(this.invitation.pairingId).catch(() => {})
+      if (!this.terminal) void this.host.pairing.reject(this.invitation.pairingId).catch(() => {})
     }
     this.contentEl.empty()
   }
@@ -182,7 +182,7 @@ class PairingLinkModal extends Modal {
   private async waitForCandidate(setting: Setting, button: ButtonComponent): Promise<void> {
     try {
       const status = await pollUntil({
-        read: () => this.host.getPairingStatus(this.invitation.pairingId),
+        read: () => this.host.pairing.status(this.invitation.pairingId),
         isDone: (value) => value.status !== "pending",
         expiresAt: this.invitation.expiresAt,
         signal: this.polling.signal,
@@ -193,7 +193,7 @@ class PairingLinkModal extends Modal {
       this.hideInvitation()
       if (status.status === "canceled") {
         this.terminal = true
-        this.host.completePairingOwner(this.invitation.pairingId)
+        this.host.pairing.completeOwner(this.invitation.pairingId)
         setting.setName("Pairing canceled").setDesc("No device was authorized.")
         button.buttonEl.hide()
         this.addNewCodeRetry(setting)
@@ -218,7 +218,7 @@ class PairingLinkModal extends Modal {
   private async startVerification(setting: Setting, button: ButtonComponent): Promise<void> {
     button.setDisabled(true)
     try {
-      const phrase = await this.host.approvePairing(this.invitation.pairingId)
+      const phrase = await this.host.pairing.approve(this.invitation.pairingId)
       setting
         .setName("3 of 3 · Compare verification phrases")
         .setDesc("The same phrase must be visible on the new device. Repeated words are normal.")
@@ -241,7 +241,7 @@ class PairingLinkModal extends Modal {
               setting
                 .setName("Verification confirmed")
                 .setDesc("Waiting for the new device confirmation before releasing encrypted keys.")
-              await this.host.confirmPairingOwner(this.invitation.pairingId)
+              await this.host.pairing.confirmOwner(this.invitation.pairingId)
               setting.setDesc("Encrypted keys released. Waiting for the new device to finish.")
               await this.waitForCompletion(setting)
             } catch (error) {
@@ -263,7 +263,7 @@ class PairingLinkModal extends Modal {
           .onClick(async () => {
             reject.setDisabled(true)
             try {
-              await this.host.rejectPairing(this.invitation.pairingId)
+              await this.host.pairing.reject(this.invitation.pairingId)
               this.terminal = true
               new Notice("Pairing canceled. No device was authorized.")
               this.close()
@@ -281,19 +281,19 @@ class PairingLinkModal extends Modal {
 
   private async waitForCompletion(setting: Setting): Promise<void> {
     const status = await pollUntil({
-      read: () => this.host.getPairingStatus(this.invitation.pairingId),
+      read: () => this.host.pairing.status(this.invitation.pairingId),
       isDone: (value) => value.status === "completed" || value.status === "canceled",
       expiresAt: Math.max(this.invitation.expiresAt, Date.now() + 5 * 60_000),
       signal: this.polling.signal,
     })
     if (status.status === "canceled") {
       this.terminal = true
-      this.host.completePairingOwner(this.invitation.pairingId)
+      this.host.pairing.completeOwner(this.invitation.pairingId)
       setting.setName("Pairing canceled").setDesc("No device was authorized.")
       this.addNewCodeRetry(setting)
       return
     }
-    this.host.completePairingOwner(this.invitation.pairingId)
+    this.host.pairing.completeOwner(this.invitation.pairingId)
     this.terminal = true
     new Notice("Device paired. Meridian is syncing on both devices.")
     this.close()
@@ -307,7 +307,7 @@ class PairingLinkModal extends Modal {
         .onClick(async () => {
           retry.setDisabled(true)
           try {
-            const invitation = await this.host.createPairingLink()
+            const invitation = await this.host.pairing.createLink()
             this.terminal = true
             this.close()
             new PairingLinkModal(this.host, invitation).open()
@@ -355,7 +355,7 @@ export class PairingJoinModal extends Modal {
         .onClick(async () => {
           button.setDisabled(true)
           try {
-            await this.host.joinPairing(
+            await this.host.pairing.join(
               this.endpoint,
               this.pairingId,
               this.capability,
@@ -378,7 +378,7 @@ export class PairingJoinModal extends Modal {
   override onClose(): void {
     this.polling.abort()
     if (!this.terminal && !this.completionStarted) {
-      void this.host.cancelPairing(this.endpoint, this.pairingId, this.capability).catch(() => {})
+      void this.host.pairing.cancel(this.endpoint, this.pairingId, this.capability).catch(() => {})
     }
     this.contentEl.empty()
   }
@@ -386,7 +386,7 @@ export class PairingJoinModal extends Modal {
   private async waitForVerification(setting: Setting): Promise<void> {
     try {
       const status = await pollUntil({
-        read: () => this.host.getPairingProgress(this.endpoint, this.pairingId, this.capability),
+        read: () => this.host.pairing.progress(this.endpoint, this.pairingId, this.capability),
         isDone: (value) =>
           value.status === "verifying" ||
           value.status === "confirmed" ||
@@ -403,15 +403,15 @@ export class PairingJoinModal extends Modal {
       })
       if (status.status === "canceled") {
         this.terminal = true
-        await this.host
-          .cancelPairing(this.endpoint, this.pairingId, this.capability)
+        await this.host.pairing
+          .cancel(this.endpoint, this.pairingId, this.capability)
           .catch(() => {})
         setting
           .setName("Pairing canceled")
           .setDesc("No keys were shared and no device was authorized. Scan a new code to retry.")
         return
       }
-      const phrase = await this.host.preparePairingVerification(
+      const phrase = await this.host.pairing.prepareVerification(
         this.endpoint,
         this.pairingId,
         this.capability,
@@ -446,7 +446,7 @@ export class PairingJoinModal extends Modal {
             setting
               .setName("Finishing securely")
               .setDesc("Waiting for both confirmations, then decrypting the vault keys locally.")
-            await this.host.finishPairing(this.endpoint, this.pairingId, this.capability)
+            await this.host.pairing.finish(this.endpoint, this.pairingId, this.capability)
             this.terminal = true
             new Notice("Device paired. Meridian is synchronizing this vault.")
             this.close()
@@ -469,7 +469,7 @@ export class PairingJoinModal extends Modal {
         .onClick(async () => {
           reject.setDisabled(true)
           try {
-            await this.host.cancelPairing(this.endpoint, this.pairingId, this.capability)
+            await this.host.pairing.cancel(this.endpoint, this.pairingId, this.capability)
             this.terminal = true
             new Notice("Pairing canceled. No vault keys were released.")
             this.close()

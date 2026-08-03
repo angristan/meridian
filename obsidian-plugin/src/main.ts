@@ -10,8 +10,6 @@ import {
   type LocalCompactionResult,
   type LocalRevision,
   type MeridianSettings,
-  type PairingInvitation,
-  type PairingStatus,
   type RemoteDevice,
   type RevisionComparison,
   type RevisionPreview,
@@ -49,7 +47,7 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
   private controller: SyncController | null = null
   private readonly cryptoPort = packageCrypto
   private readonly secrets = new MeridianSecretStorage(this.app.secretStorage)
-  private readonly pairing = new PairingCoordinator(
+  readonly pairing = new PairingCoordinator(
     () => this.controller,
     () => this.settings,
     (settings) => {
@@ -170,7 +168,7 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
 
     this.app.workspace.onLayoutReady(() => {
       if (this.settings.pendingPairingCompletion) {
-        void this.completePendingPairing().catch((error) =>
+        void this.pairing.completePending().catch((error) =>
           this.updateStatus({
             phase: "error",
             message: "Pairing completion needs attention",
@@ -509,68 +507,6 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
       }
       throw error
     }
-  }
-
-  createPairingLink(): Promise<PairingInvitation> {
-    return this.pairing.createLink()
-  }
-
-  getPairingStatus(pairingId: string): Promise<PairingStatus> {
-    return this.pairing.status(pairingId)
-  }
-
-  getPairingProgress(
-    endpoint: string,
-    pairingId: string,
-    capability: string,
-  ): Promise<PairingStatus> {
-    return this.pairing.progress(endpoint, pairingId, capability)
-  }
-
-  approvePairing(pairingId: string): Promise<string> {
-    return this.pairing.approve(pairingId)
-  }
-
-  confirmPairingOwner(pairingId: string): Promise<void> {
-    return this.pairing.confirmOwner(pairingId)
-  }
-
-  completePairingOwner(pairingId: string): void {
-    this.pairing.completeOwner(pairingId)
-  }
-
-  rejectPairing(pairingId: string): Promise<void> {
-    return this.pairing.reject(pairingId)
-  }
-
-  joinPairing(
-    endpoint: string,
-    pairingId: string,
-    capability: string,
-    vaultId: string,
-    expiresAt: number,
-  ): Promise<void> {
-    return this.pairing.join(endpoint, pairingId, capability, vaultId, expiresAt)
-  }
-
-  preparePairingVerification(
-    endpoint: string,
-    pairingId: string,
-    capability: string,
-  ): Promise<string> {
-    return this.pairing.prepareVerification(endpoint, pairingId, capability)
-  }
-
-  finishPairing(endpoint: string, pairingId: string, capability: string): Promise<void> {
-    return this.pairing.finish(endpoint, pairingId, capability)
-  }
-
-  completePendingPairing(): Promise<void> {
-    return this.pairing.completePending()
-  }
-
-  cancelPairing(endpoint: string, pairingId: string, capability: string): Promise<void> {
-    return this.pairing.cancel(endpoint, pairingId, capability)
   }
 
   async openPath(path: string): Promise<void> {

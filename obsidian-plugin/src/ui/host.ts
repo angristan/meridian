@@ -7,8 +7,6 @@ import type {
   LocalCompactionResult,
   LocalRevision,
   MeridianSettings,
-  PairingInvitation,
-  PairingStatus,
   RemoteDevice,
   RevisionComparison,
   RevisionPreview,
@@ -18,10 +16,12 @@ import type {
   SyncDiagnostic,
   SyncStatus,
 } from "../model"
+import type { PairingUiCapability } from "../plugin/pairing-coordinator"
 
 export interface MeridianUiHost {
   app: App
   settings: MeridianSettings
+  pairing: PairingUiCapability
   saveSettings(): Promise<void>
   openSettings(): void
   syncNow(): Promise<void>
@@ -52,30 +52,4 @@ export interface MeridianUiHost {
   getDevices(): Promise<RemoteDevice[]>
   revokeDevice(device: RemoteDevice): Promise<void>
   removeCurrentDevice(): Promise<void>
-  createPairingLink(): Promise<PairingInvitation>
-  getPairingStatus(pairingId: string): Promise<PairingStatus>
-  getPairingProgress(
-    endpoint: string,
-    pairingId: string,
-    capability: string,
-  ): Promise<PairingStatus>
-  approvePairing(pairingId: string): Promise<string>
-  confirmPairingOwner(pairingId: string): Promise<void>
-  completePairingOwner(pairingId: string): void
-  rejectPairing(pairingId: string): Promise<void>
-  joinPairing(
-    endpoint: string,
-    pairingId: string,
-    capability: string,
-    vaultId: string,
-    expiresAt: number,
-  ): Promise<void>
-  preparePairingVerification(
-    endpoint: string,
-    pairingId: string,
-    capability: string,
-  ): Promise<string>
-  finishPairing(endpoint: string, pairingId: string, capability: string): Promise<void>
-  completePendingPairing(): Promise<void>
-  cancelPairing(endpoint: string, pairingId: string, capability: string): Promise<void>
 }

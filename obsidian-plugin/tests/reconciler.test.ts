@@ -5,7 +5,7 @@ import type { ReconciliationCommit } from "../src/storage/contracts"
 import { MemoryJournal } from "../src/storage/memory-journal"
 import { FINGERPRINT_AUDIT_INTERVAL_MS, Reconciler } from "../src/sync/reconciler"
 import { ALL_CATEGORIES, FakeVault } from "./fakes"
-import { seedSnapshots } from "./journal-fixtures"
+import { seedRevision, seedSnapshots } from "./journal-fixtures"
 
 describe("Reconciler", () => {
   it("queues initial content without storing plaintext in the journal", async () => {
@@ -107,7 +107,7 @@ describe("Reconciler", () => {
     const identity = randomId()
     const vault = new FakeVault({ "note.md": "existing content" })
     const journal = new MemoryJournal()
-    await journal.putRevision({
+    await seedRevision(journal, {
       revisionId: "existing-revision",
       fileId: identity,
       path: "note.md",
@@ -142,7 +142,7 @@ describe("Reconciler", () => {
         kind: "vault",
       },
     ])
-    await journal.putRevision({
+    await seedRevision(journal, {
       revisionId: "base-revision",
       fileId: identity,
       path: "note.md",
@@ -154,7 +154,7 @@ describe("Reconciler", () => {
       isConflict: false,
       operation: null,
     })
-    await journal.putRevision({
+    await seedRevision(journal, {
       revisionId: "head-b",
       fileId: identity,
       path: "note.md",
@@ -166,7 +166,7 @@ describe("Reconciler", () => {
       isConflict: false,
       operation: null,
     })
-    await journal.putRevision({
+    await seedRevision(journal, {
       revisionId: "head-a",
       fileId: identity,
       path: "note.md",

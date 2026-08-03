@@ -29,6 +29,7 @@ import {
   traceEvent,
 } from "./fault-campaign"
 import { ALL_CATEGORIES, FakeCrypto, FakeRemote, FakeVault, TEST_DEVICE } from "./fakes"
+import { seedLegacyIndexedDbRevision } from "./journal-fixtures"
 
 class BlockingVault extends FakeVault {
   private gate: { entered: () => void; wait: Promise<void> } | null = null
@@ -119,10 +120,10 @@ class PostCommitCrashJournal extends IndexedDbJournal {
   private crashed = false
 
   constructor(
-    name: string,
+    private readonly legacyDatabaseName: string,
     private readonly boundary: PostCommitCrashBoundary,
   ) {
-    super(name)
+    super(legacyDatabaseName)
   }
 
   override async finishPushedRevision(commit: PushedRevisionCommit): Promise<void> {
@@ -136,7 +137,7 @@ class PostCommitCrashJournal extends IndexedDbJournal {
     if (commit.snapshot) await super.putSnapshot(commit.snapshot)
     for (const path of commit.removeSnapshotPaths) await super.removeSnapshot(path)
     if (this.boundary === "snapshot") this.crash()
-    await super.putRevision(commit.revision)
+    await seedLegacyIndexedDbRevision(this.legacyDatabaseName, commit.revision)
     this.crash()
   }
 

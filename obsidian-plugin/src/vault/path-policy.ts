@@ -1,7 +1,5 @@
 import type { ConfigCategory, SelectiveSyncSettings } from "../model"
 
-export const CONFIG_ALLOWLIST_VERSION = 1
-
 const CORE_PLUGIN_SETTING_FILES = new Set([
   "audio-recorder.json",
   "backlink.json",

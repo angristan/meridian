@@ -179,10 +179,6 @@ export class MemoryJournal implements JournalPort {
     this.revocations.set(revocation.deviceId, structuredClone(revocation))
   }
 
-  async putRevision(revision: LocalRevision): Promise<void> {
-    this.revisions.set(revision.revisionId, structuredClone(revision))
-  }
-
   async finishPushedRevision(commit: PushedRevisionCommit): Promise<void> {
     if (commit.snapshot) {
       this.snapshots.set(commit.snapshot.path, structuredClone(commit.snapshot))
@@ -244,10 +240,6 @@ export class MemoryJournal implements JournalPort {
     const byId = new Map(this.historyRevisions)
     for (const [revisionId, revision] of this.revisions) byId.set(revisionId, revision)
     return sortRevisions([...byId.values()]).map((revision) => structuredClone(revision))
-  }
-
-  async putConflict(conflict: ConflictRecord): Promise<void> {
-    this.conflicts.set(conflict.id, structuredClone(conflict))
   }
 
   async listConflicts(unresolvedOnly = false): Promise<ConflictRecord[]> {
