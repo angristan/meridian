@@ -54,7 +54,7 @@ The sync API uses Meridian device authentication rather than Cloudflare Access. 
 
 ## Upgrades
 
-- Keep Worker endpoints and Durable Object RPC forward/backward compatible during deployment skew.
+- Ship the Hono RPC caller and `VaultDurableObject` class in the same Worker version. If gradual deployment is introduced, keep their RPC methods forward/backward compatible or add explicit version affinity.
 - Deploy Durable Object migrations separately from unrelated high-risk changes.
 - A Worker rollback does not roll back Durable Object SQLite or R2 data.
 - Never remove or rename a Durable Object class without a reviewed migration and recovery plan.

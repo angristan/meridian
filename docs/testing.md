@@ -32,7 +32,7 @@ The recommended unpublished-plugin path is BRAT:
 7. Compare the phrase automatically shown on both devices and tap **Phrases match** on each. Repeated phrase items are valid.
 8. Confirm that the QR disappears after the request, both modals close after the signed completion acknowledgement, the iPhone starts syncing, and the named iPhone appears in the Mac device registry. Candidate packages and pairing IDs never need manual transfer.
 
-Until the repository and a release are public, the build produces `obsidian-plugin/dist/meridian.zip` for manual inspection, but BRAT is the reliable mobile installation channel. Publishing a repository or release is an external write and is not performed by the local build.
+The build also produces `obsidian-plugin/dist/meridian.zip` for manual inspection, but BRAT remains the reliable mobile installation channel.
 
 ## Required scenarios
 
@@ -76,6 +76,8 @@ These tests use promise barriers and explicit injected failures instead of timin
 On failure, Meridian writes `.fault-traces/plugin-seed-<seed>-steps-<steps>.json`. The ordered trace contains stable actions, fault points, checkpoints, and invariant results. Rerun the printed command, then keep the minimized schedule as a fixed regression test.
 
 A committed revision must always keep its blob, repair must never erase a planned deletion, and an exact response-loss retry must preserve one cursor and hash while draining pending work.
+
+Worker boundary tests also call the Durable Object RPC methods directly. They prove that normal internal `fetch()` paths return 404, RPC errors retain their public status/code/message, malformed or oversized JSON is rejected by Hono, and blob cleanup races still interleave safely through RPC.
 
 ### Responsiveness and index recovery
 

@@ -1,6 +1,6 @@
 # Meridian Worker
 
-The Worker is the untrusted encrypted sync relay for one vault. Hono owns the public HTTP boundary. `VaultDurableObject` owns claim state, device authorization, ordered metadata, and cursor notifications. R2 stores immutable ciphertext only.
+The Worker is the untrusted encrypted sync relay for one vault. Hono owns public routing, bounded Effect Schema decoding, and HTTP responses. Normal calls use typed `VaultDurableObject` RPC methods; its `fetch()` handler is reserved for the hibernating WebSocket upgrade. The Durable Object owns SQL authentication, claim state, device authorization, ordered metadata, and cursor notifications. R2 stores immutable ciphertext only.
 
 ## Authentication
 

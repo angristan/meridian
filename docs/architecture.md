@@ -25,9 +25,9 @@ Dependencies point toward these packages. They never import Worker, Cloudflare, 
 
 ## Worker
 
-`worker/src/index.ts` is the Hono composition root. Modules under `worker/src/http/` own boundary decoding, Durable Object proxying, R2 streaming, setup routes, and WebSocket upgrades.
+`worker/src/index.ts` is the Hono composition root. Modules under `worker/src/http/` own public routes, bounded Effect Schema decoding, HTTP responses, setup-token checks, R2 streaming, and WebSocket upgrades. Normal vault calls cross one typed Durable Object RPC boundary. The only internal `fetch()` call is the WebSocket upgrade because it requires `Request` and `Response` upgrade semantics.
 
-`VaultDurableObject` remains the single coordination boundary for a deployment. Its modules are split by domain:
+`VaultDurableObject` remains the single coordination boundary for a deployment. Its RPC methods receive decoded values and explicit session tokens, then return serializable success or error envelopes. SQL authentication and revocation checks remain authoritative inside the object. Its modules are split by domain:
 
 - `vault/setup.ts`, `sessions.ts`, and `recovery.ts`: identity lifecycle;
 - `vault/pairing.ts`: device registry and pairing;
@@ -37,7 +37,7 @@ Dependencies point toward these packages. They never import Worker, Cloudflare, 
 - `vault/migrations.ts`: ordered SQLite schema migrations;
 - `vault/signing.ts`: Worker adapters around shared protocol signing bytes.
 
-The Durable Object owns authoritative transactions. Extracted modules receive explicit SQLite and transaction capabilities; they do not introduce independent state or locks.
+The Durable Object owns authoritative transactions. Extracted modules receive decoded domain values plus explicit SQLite and transaction capabilities; they do not parse HTTP, introduce independent state, or add locks. Hono converts RPC results back to the existing public status codes and JSON error contract.
 
 ## Obsidian plugin
 

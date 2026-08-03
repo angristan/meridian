@@ -23,7 +23,8 @@ Meridian does not provide continuous iOS background execution, collaborative liv
 | Key lifecycle and cryptographic workflows | `packages/crypto` |
 | Simulator reference model and text merge | `packages/sync-engine` |
 | Independent convergence model | `packages/test-simulator` |
-| Ordered metadata and authorization | one Vault Durable Object |
+| Public HTTP routing and Schema decoding | Hono Worker |
+| Ordered metadata, authorization, and typed RPC | one Vault Durable Object |
 | Immutable encrypted chunks | private R2 bucket |
 | Vault mutation and local durability | Obsidian plugin `SyncController` and journal |
 | Timers, debounce, and reconnect deadlines | plugin scheduler |
@@ -38,6 +39,7 @@ The Worker and plugin import shared packages. Shared packages never import Cloud
 - Immutable legacy history remains readable and verifiable.
 - Unsupported, partial, downgraded, or ambiguous protocol states fail closed.
 - HTTP signing bytes and checkpoint format normalization have one shared implementation.
+- Hono owns normal HTTP decoding and formatting. The Durable Object owns typed RPC, SQL authentication, and transactions; its `fetch()` handles only WebSocket upgrade.
 - Pairing authorization requires signed proofs and matching human verification phrases.
 - Plaintext, keys, paths, and sensitive identifiers must not enter production diagnostics.
 
