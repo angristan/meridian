@@ -23,17 +23,9 @@ interface FingerprintRequest {
   bytes: ArrayBuffer
 }
 
-interface PlanIndexRequest {
-  id: number
-  kind: "plan-index"
-  input: IndexPlanningInput
-}
+type SyncWorkerRequest = FingerprintRequest
 
-type SyncWorkerRequest = FingerprintRequest | PlanIndexRequest
-
-type SyncWorkerSuccess =
-  | { id: number; kind: "fingerprint"; fingerprint: string }
-  | { id: number; kind: "plan-index"; plan: IndexPlan }
+type SyncWorkerSuccess = { id: number; kind: "fingerprint"; fingerprint: string }
 
 type SyncWorkerResponse = SyncWorkerSuccess | { id: number; kind: "error"; error: string }
 
@@ -111,15 +103,7 @@ export class BackgroundSyncCompute implements SyncComputePort {
   planIndex(input: IndexPlanningInput, shouldStop?: () => boolean): Promise<IndexPlan> {
     if (this.closed) return Promise.reject(new Error("Background sync service is closed"))
     if (shouldStop?.()) return Promise.reject(new Error("Background sync work canceled"))
-    const handle = this.workerHandle()
-    if (!handle) return this.planFallback(input, shouldStop)
-    return this.request({ id: this.nextRequestId(), kind: "plan-index", input }, [], (response) => {
-      if (shouldStop?.()) throw new Error("Background sync work canceled")
-      if (response.kind !== "plan-index") {
-        throw new Error("Background sync worker returned the wrong response")
-      }
-      return response.plan
-    })
+    return this.planFallback(input, shouldStop)
   }
 
   close(): void {
@@ -309,66 +293,10 @@ function isSyncWorkerResponse(value: unknown): value is SyncWorkerResponse {
   const response = value as Record<string, unknown>
   if (typeof response.id !== "number" || !Number.isSafeInteger(response.id)) return false
   if (response.kind === "error") return typeof response.error === "string"
-  if (response.kind === "fingerprint") return typeof response.fingerprint === "string"
-  if (response.kind !== "plan-index" || !isIndexPlan(response.plan)) return false
-  return true
-}
-
-function isIndexPlan(value: unknown): value is IndexPlan {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return false
-  const plan = value as Record<string, unknown>
-  return (
-    Array.isArray(plan.removedPaths) &&
-    plan.removedPaths.every((path) => typeof path === "string") &&
-    Array.isArray(plan.renameSources) &&
-    plan.renameSources.every(
-      (rename) =>
-        typeof rename === "object" &&
-        rename !== null &&
-        !Array.isArray(rename) &&
-        typeof (rename as Record<string, unknown>).path === "string" &&
-        typeof (rename as Record<string, unknown>).previousPath === "string",
-    )
-  )
+  return response.kind === "fingerprint" && typeof response.fingerprint === "string"
 }
 
 export const SYNC_WORKER_SOURCE = `
-const planIndex = (input) => {
-  const pathByCollisionKey = new Map();
-  for (const path of input.collisionPaths) {
-    const collisionKey = path.toLocaleLowerCase("en-US");
-    const existing = pathByCollisionKey.get(collisionKey);
-    if (existing !== undefined && existing !== path) {
-      throw new Error(\`Case or Unicode path collision: \${existing} and \${path}\`);
-    }
-    pathByCollisionKey.set(collisionKey, path);
-  }
-  const currentPaths = new Set(input.current.map((snapshot) => snapshot.path));
-  const previousPaths = new Set(input.previous.map((snapshot) => snapshot.path));
-  const removed = input.previous.filter((snapshot) => !currentPaths.has(snapshot.path));
-  const removedByFingerprint = new Map();
-  for (const snapshot of removed) {
-    const group = removedByFingerprint.get(snapshot.fingerprint) ?? [];
-    group.push(snapshot);
-    removedByFingerprint.set(snapshot.fingerprint, group);
-  }
-  const consumedRemovals = new Set();
-  const renameSources = [];
-  for (const snapshot of input.current) {
-    if (previousPaths.has(snapshot.path)) continue;
-    const matches = (removedByFingerprint.get(snapshot.fingerprint) ?? [])
-      .filter((candidate) => !consumedRemovals.has(candidate.path));
-    if (matches.length !== 1) continue;
-    const previousPath = matches[0].path;
-    consumedRemovals.add(previousPath);
-    renameSources.push({ path: snapshot.path, previousPath });
-  }
-  return {
-    removedPaths: removed.map((snapshot) => snapshot.path),
-    renameSources,
-  };
-};
-
 self.onmessage = async (event) => {
   const value = event.data;
   if (!value || !Number.isSafeInteger(value.id)) return;
@@ -382,10 +310,6 @@ self.onmessage = async (event) => {
         .replaceAll("/", "_")
         .replaceAll("=", "");
       self.postMessage({ id: value.id, kind: "fingerprint", fingerprint });
-      return;
-    }
-    if (value.kind === "plan-index") {
-      self.postMessage({ id: value.id, kind: "plan-index", plan: planIndex(value.input) });
       return;
     }
     throw new Error("Unknown background sync request");

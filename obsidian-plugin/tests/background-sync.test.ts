@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from "vitest"
 import {
   BackgroundSyncCompute,
-  type IndexPlanningInput,
   planIndexCooperatively,
   SYNC_WORKER_SOURCE,
   type SyncWorkerLike,
@@ -17,26 +16,18 @@ class FakeSyncWorker implements SyncWorkerLike {
   onmessage: ((event: MessageEvent<unknown>) => void) | null = null
   onerror: ((event: ErrorEvent) => void) | null = null
   transfers: Transferable[] = []
+  postCount = 0
   terminated = false
 
   postMessage(
-    message:
-      | { id: number; kind: "fingerprint"; bytes: ArrayBuffer }
-      | { id: number; kind: "plan-index"; input: IndexPlanningInput },
+    message: { id: number; kind: "fingerprint"; bytes: ArrayBuffer },
     transfer: Transferable[],
   ): void {
+    this.postCount += 1
     this.transfers = transfer
-    if (message.kind === "fingerprint") {
-      void fingerprint(message.bytes).then((value) => {
-        this.onmessage?.({
-          data: { id: message.id, kind: "fingerprint", fingerprint: value },
-        } as MessageEvent<unknown>)
-      })
-      return
-    }
-    void planIndexCooperatively(message.input).then((plan) => {
+    void fingerprint(message.bytes).then((value) => {
       this.onmessage?.({
-        data: { id: message.id, kind: "plan-index", plan },
+        data: { id: message.id, kind: "fingerprint", fingerprint: value },
       } as MessageEvent<unknown>)
     })
   }
@@ -56,13 +47,14 @@ describe("background sync compute", () => {
 
     await expect(compute.fingerprint(bytes)).resolves.toBe(expected)
     expect(worker.transfers).toEqual([bytes])
+    expect(worker.postCount).toBe(1)
 
     compute.close()
     expect(worker.terminated).toBe(true)
     expect(dispose).toHaveBeenCalledOnce()
   })
 
-  it("plans collision checks removals and renames in a Worker", async () => {
+  it("plans collision checks removals and renames cooperatively", async () => {
     const worker = new FakeSyncWorker()
     const compute = new BackgroundSyncCompute(() => ({ worker, dispose: vi.fn() }))
 
@@ -80,6 +72,7 @@ describe("background sync compute", () => {
       renameSources: [{ path: "new.md", previousPath: "old.md" }],
     })
     expect(worker.transfers).toEqual([])
+    expect(worker.postCount).toBe(0)
     compute.close()
   })
 
@@ -96,26 +89,13 @@ describe("background sync compute", () => {
     ) => void
     initializeWorker(scope)
 
+    const bytes = new TextEncoder().encode("worker digest").buffer
+    const expected = await fingerprint(bytes.slice(0))
     await scope.onmessage?.({
-      data: {
-        id: 1,
-        kind: "plan-index",
-        input: {
-          current: [{ path: "new.md", fingerprint: "same" }],
-          previous: [{ path: "old.md", fingerprint: "same" }],
-          collisionPaths: ["new.md"],
-        },
-      },
+      data: { id: 1, kind: "fingerprint", bytes },
     } as MessageEvent<unknown>)
 
-    expect(response).toEqual({
-      id: 1,
-      kind: "plan-index",
-      plan: {
-        removedPaths: ["old.md"],
-        renameSources: [{ path: "new.md", previousPath: "old.md" }],
-      },
-    })
+    expect(response).toEqual({ id: 1, kind: "fingerprint", fingerprint: expected })
   })
 
   it("uses cooperative fallbacks when Workers are unavailable", async () => {
