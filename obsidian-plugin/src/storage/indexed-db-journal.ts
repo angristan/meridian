@@ -9,7 +9,12 @@ import type {
   LocalRevision,
   TrustedCheckpoint,
 } from "../model"
-import type { JournalPort, PushedRevisionCommit, ReconciliationCommit } from "./contracts"
+import type {
+  AppliedOperationCommit,
+  JournalPort,
+  PushedRevisionCommit,
+  ReconciliationCommit,
+} from "./contracts"
 import { requestResult, transactionDone } from "./idb-helpers"
 import { DATABASE_VERSION, upgradeJournalSchema } from "./migration"
 import { type MetadataRecord, sortRevisions } from "./types"
@@ -272,6 +277,29 @@ export class IndexedDbJournal implements JournalPort {
 
     const snapshotIndex = this.requireSnapshotIndex()
     if (snapshot) snapshotIndex.set(snapshot.path, snapshot)
+    for (const path of removeSnapshotPaths) snapshotIndex.delete(path)
+  }
+
+  async commitAppliedOperation(commit: AppliedOperationCommit): Promise<void> {
+    const putSnapshots = commit.putSnapshots.map(cachedSnapshot)
+    const removeSnapshotPaths = [...commit.removeSnapshotPaths]
+    const database = this.requireDatabase()
+    const transaction = database.transaction(
+      ["entries", "files", "revisions", "conflicts"],
+      "readwrite",
+    )
+    const files = transaction.objectStore("files")
+    const entries = transaction.objectStore("entries")
+    const conflicts = transaction.objectStore("conflicts")
+    for (const entry of commit.entries) entries.put(entry)
+    for (const snapshot of putSnapshots) files.put(snapshot)
+    for (const path of removeSnapshotPaths) files.delete(path)
+    for (const conflict of commit.conflicts) conflicts.put(conflict)
+    transaction.objectStore("revisions").put(commit.revision)
+    await transactionDone(transaction)
+
+    const snapshotIndex = this.requireSnapshotIndex()
+    for (const snapshot of putSnapshots) snapshotIndex.set(snapshot.path, snapshot)
     for (const path of removeSnapshotPaths) snapshotIndex.delete(path)
   }
 

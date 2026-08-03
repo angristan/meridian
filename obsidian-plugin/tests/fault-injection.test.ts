@@ -16,7 +16,7 @@ import {
   type IndexPlanningInput,
   type SyncComputePort,
 } from "../src/platform/background-sync"
-import type { PushedRevisionCommit } from "../src/storage/contracts"
+import type { AppliedOperationCommit, PushedRevisionCommit } from "../src/storage/contracts"
 import { IndexedDbJournal } from "../src/storage/indexed-db-journal"
 import { MemoryJournal } from "../src/storage/memory-journal"
 import { SyncController } from "../src/sync/controller"
@@ -157,6 +157,17 @@ class PostCommitCrashJournal extends IndexedDbJournal {
   private crash(): never {
     this.crashed = true
     throw new Error(`Injected crash after ${this.boundary}`)
+  }
+}
+
+class PostApplyCrashJournal extends IndexedDbJournal {
+  private crashed = false
+
+  override async commitAppliedOperation(commit: AppliedOperationCommit): Promise<void> {
+    await super.commitAppliedOperation(commit)
+    if (this.crashed) return
+    this.crashed = true
+    throw new Error("Injected crash after applied operation")
   }
 }
 
@@ -400,6 +411,66 @@ describe("deterministic local fault injection", () => {
       await deleteDatabase(databaseName)
     },
   )
+
+  it("restarts after applied state commits before its checkpoint", async () => {
+    const databaseName = `meridian-post-apply-${crypto.randomUUID()}`
+    const vault = new FakeVault()
+    const remote = new FakeRemote()
+    remote.addRemoteRevision(
+      {
+        operationId: "remote-operation",
+        revisionId: "remote-revision",
+        fileId: "remote-file",
+        action: "upsert",
+        path: "remote.md",
+        previousPath: null,
+        parents: [],
+        authorDeviceId: "remote-device",
+        blobId: "remote-blob",
+        isText: true,
+      },
+      new TextEncoder().encode("remote content").buffer,
+    )
+    const crashingJournal = new PostApplyCrashJournal(databaseName)
+    const first = new SyncController(
+      vault,
+      crashingJournal,
+      remote,
+      new FakeCrypto(),
+      () => ALL_CATEGORIES,
+      () => {},
+    )
+
+    await first.start(TEST_DEVICE)
+
+    expect(first.getStatus().error).toMatch(/Injected crash after applied operation/)
+    expect(await crashingJournal.getCheckpoint()).toBeNull()
+    expect(await crashingJournal.getRevision("remote-revision")).toMatchObject({ cursor: 1 })
+    expect((await crashingJournal.getSnapshots()).get("remote.md")).toMatchObject({
+      fileId: "remote-file",
+    })
+    expect(vault.text("remote.md")).toBe("remote content")
+    await first.quiesce()
+
+    const restartedJournal = new IndexedDbJournal(databaseName)
+    const restarted = new SyncController(
+      vault,
+      restartedJournal,
+      remote,
+      new FakeCrypto(),
+      () => ALL_CATEGORIES,
+      () => {},
+    )
+    await restarted.start(TEST_DEVICE)
+
+    expect(await restartedJournal.getCheckpoint()).toMatchObject({ cursor: 1 })
+    expect(await restartedJournal.listRevisions("remote.md")).toHaveLength(1)
+    expect(await restartedJournal.listPending()).toEqual([])
+    expect(await restartedJournal.listConflicts(true)).toEqual([])
+    expect(vault.text("remote.md")).toBe("remote content")
+    await restarted.quiesce()
+    await deleteDatabase(databaseName)
+  })
 
   it("does not conflict with a descendant of an interrupted committed revision", async () => {
     const databaseName = `meridian-committed-ancestor-${crypto.randomUUID()}`

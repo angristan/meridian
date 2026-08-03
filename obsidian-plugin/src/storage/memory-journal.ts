@@ -9,7 +9,12 @@ import type {
   LocalRevision,
   TrustedCheckpoint,
 } from "../model"
-import type { JournalPort, PushedRevisionCommit, ReconciliationCommit } from "./contracts"
+import type {
+  AppliedOperationCommit,
+  JournalPort,
+  PushedRevisionCommit,
+  ReconciliationCommit,
+} from "./contracts"
 import { sortRevisions } from "./types"
 
 export class MemoryJournal implements JournalPort {
@@ -185,6 +190,18 @@ export class MemoryJournal implements JournalPort {
     for (const path of commit.removeSnapshotPaths) this.snapshots.delete(path)
     this.revisions.set(commit.revision.revisionId, structuredClone(commit.revision))
     this.entries.set(commit.entry.id, structuredClone(commit.entry))
+  }
+
+  async commitAppliedOperation(commit: AppliedOperationCommit): Promise<void> {
+    for (const entry of commit.entries) this.entries.set(entry.id, structuredClone(entry))
+    for (const snapshot of commit.putSnapshots) {
+      this.snapshots.set(snapshot.path, structuredClone(snapshot))
+    }
+    for (const path of commit.removeSnapshotPaths) this.snapshots.delete(path)
+    for (const conflict of commit.conflicts) {
+      this.conflicts.set(conflict.id, structuredClone(conflict))
+    }
+    this.revisions.set(commit.revision.revisionId, structuredClone(commit.revision))
   }
 
   async getRevision(revisionId: string): Promise<LocalRevision | null> {

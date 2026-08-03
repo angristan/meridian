@@ -25,6 +25,14 @@ export interface PushedRevisionCommit {
   removeSnapshotPaths: string[]
 }
 
+export interface AppliedOperationCommit {
+  revision: LocalRevision
+  entries: JournalEntry[]
+  putSnapshots: FileSnapshot[]
+  removeSnapshotPaths: string[]
+  conflicts: ConflictRecord[]
+}
+
 export interface JournalPort {
   open(): Promise<void>
   close(): void
@@ -52,6 +60,7 @@ export interface JournalPort {
   putDeviceRevocation(revocation: DeviceRevocationRecord): Promise<void>
   putRevision(revision: LocalRevision): Promise<void>
   finishPushedRevision(commit: PushedRevisionCommit): Promise<void>
+  commitAppliedOperation(commit: AppliedOperationCommit): Promise<void>
   getRevision(revisionId: string): Promise<LocalRevision | null>
   listRevisions(path?: string): Promise<LocalRevision[]>
   listFileRevisions(fileId: string): Promise<LocalRevision[]>

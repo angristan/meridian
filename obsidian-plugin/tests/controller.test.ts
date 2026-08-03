@@ -19,6 +19,7 @@ import type {
 } from "../src/platform/background-sync"
 import { planIndexCooperatively } from "../src/platform/background-sync"
 import { fingerprint, randomId } from "../src/platform/bytes"
+import type { AppliedOperationCommit } from "../src/storage/contracts"
 import { MemoryJournal } from "../src/storage/memory-journal"
 import { SyncController } from "../src/sync/controller"
 import { ALL_CATEGORIES, FakeCrypto, FakeRemote, FakeVault, TEST_DEVICE } from "./fakes"
@@ -2395,6 +2396,11 @@ describe("SyncController", () => {
       override async putEntry(entry: JournalEntry): Promise<void> {
         this.lastEntry = structuredClone(entry)
         await super.putEntry(entry)
+      }
+
+      override async commitAppliedOperation(commit: AppliedOperationCommit): Promise<void> {
+        this.lastEntry = structuredClone(commit.entries.at(-1) ?? this.lastEntry)
+        await super.commitAppliedOperation(commit)
       }
     }
 

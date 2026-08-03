@@ -5,6 +5,7 @@ import type {
   CryptoPort,
   DecryptedRevision,
   DeviceKeyMaterial,
+  FileSnapshot,
   JournalEntry,
   LocalRevision,
   RemoteOperation,
@@ -14,7 +15,7 @@ import type {
   VaultPort,
 } from "../model"
 import { equalBytes, fingerprint, randomId } from "../platform/bytes"
-import type { JournalPort } from "../storage/contracts"
+import type { AppliedOperationCommit, JournalPort } from "../storage/contracts"
 import {
   configCategoryForPath,
   conflictPath,
@@ -145,23 +146,33 @@ export class OperationApplier {
     }
     if (pending) {
       if (pending.action === "delete" && effectiveRevision.action === "delete") {
-        await this.journal.putEntry({
-          ...pending,
-          state: "complete",
-          error: null,
-          preparedRevision: null,
+        await this.recordRevision(effectiveRevision, operation, false, {
+          entries: [
+            {
+              ...pending,
+              state: "complete",
+              error: null,
+              preparedRevision: null,
+            },
+          ],
+          removeSnapshotPaths: [pending.path],
         })
-        await this.journal.removeSnapshot(pending.path)
-        await this.recordRevision(effectiveRevision, operation, false)
         return
       }
-      if (await this.tryAcceptEquivalentPending(effectiveRevision, pending)) {
-        await this.recordRevision(effectiveRevision, operation, false)
+      const acceptedPending = await this.acceptEquivalentPending(effectiveRevision, pending)
+      if (acceptedPending !== undefined) {
+        await this.recordRevision(effectiveRevision, operation, false, {
+          entries: acceptedPending ? [acceptedPending] : [],
+        })
         return
       }
       if (await this.tryMergeText(device, effectiveRevision, operation, pending)) return
-      await this.materializeConflict(effectiveRevision)
-      await this.recordRevision(effectiveRevision, operation, true)
+      await this.recordRevision(
+        effectiveRevision,
+        operation,
+        true,
+        await this.materializeConflict(effectiveRevision),
+      )
       return
     }
 
@@ -174,16 +185,27 @@ export class OperationApplier {
       ) &&
       (await this.vault.exists(effectiveRevision.path))
     ) {
-      if (!identitySnapshot && (await this.tryAdoptEquivalentContent(effectiveRevision))) {
-        await this.recordRevision(effectiveRevision, operation, false)
+      const adoptedSnapshot = identitySnapshot
+        ? null
+        : await this.equivalentContentSnapshot(effectiveRevision)
+      if (adoptedSnapshot) {
+        await this.recordRevision(effectiveRevision, operation, false, {
+          putSnapshots: [adoptedSnapshot],
+        })
         return
       }
-      await this.materializeConflict(effectiveRevision)
-      await this.recordRevision(effectiveRevision, operation, true)
+      await this.recordRevision(
+        effectiveRevision,
+        operation,
+        true,
+        await this.materializeConflict(effectiveRevision),
+      )
       return
     }
 
     let applied = false
+    let appliedSnapshot: FileSnapshot | null = null
+    const removedSnapshotPaths: string[] = []
     if (effectiveRevision.action === "delete") {
       applied = await this.vault.replaceIfUnchanged(
         effectiveRevision.path,
@@ -191,7 +213,7 @@ export class OperationApplier {
         null,
         effectiveRevision.isText,
       )
-      if (applied) await this.journal.removeSnapshot(effectiveRevision.path)
+      if (applied) removedSnapshotPaths.push(effectiveRevision.path)
     } else {
       if (!effectiveRevision.bytes) throw new Error("Content revision is missing decrypted bytes")
       const previousPath = effectiveRevision.previousPath
@@ -216,16 +238,14 @@ export class OperationApplier {
         )
       }
       if (applied) {
-        await this.journal.putSnapshot(
-          await snapshotFor(
-            effectiveRevision.path,
-            effectiveRevision.fileId,
-            effectiveRevision.bytes,
-            this.vault.configDir,
-          ),
+        appliedSnapshot = await snapshotFor(
+          effectiveRevision.path,
+          effectiveRevision.fileId,
+          effectiveRevision.bytes,
+          this.vault.configDir,
         )
         if (previousPath && previousPath !== effectiveRevision.path) {
-          await this.journal.removeSnapshot(previousPath)
+          removedSnapshotPaths.push(previousPath)
         }
       }
     }
@@ -235,24 +255,34 @@ export class OperationApplier {
         await this.applyFileRevision(device, revision, operation, retriesRemaining - 1)
         return
       }
-      if (
-        identitySnapshot?.path === effectiveRevision.path &&
-        (await this.tryAdoptEquivalentContent(effectiveRevision))
-      ) {
-        await this.recordRevision(effectiveRevision, operation, false)
+      const adoptedSnapshot =
+        identitySnapshot?.path === effectiveRevision.path
+          ? await this.equivalentContentSnapshot(effectiveRevision)
+          : null
+      if (adoptedSnapshot) {
+        await this.recordRevision(effectiveRevision, operation, false, {
+          putSnapshots: [adoptedSnapshot],
+        })
         return
       }
-      await this.materializeConflict(effectiveRevision)
-      await this.recordRevision(effectiveRevision, operation, true)
+      await this.recordRevision(
+        effectiveRevision,
+        operation,
+        true,
+        await this.materializeConflict(effectiveRevision),
+      )
       return
     }
-    await this.recordRevision(effectiveRevision, operation, false)
+    await this.recordRevision(effectiveRevision, operation, false, {
+      putSnapshots: appliedSnapshot ? [appliedSnapshot] : [],
+      removeSnapshotPaths: removedSnapshotPaths,
+    })
   }
 
-  private async tryAcceptEquivalentPending(
+  private async acceptEquivalentPending(
     revision: DecryptedRevision,
     pending: JournalEntry,
-  ): Promise<boolean> {
+  ): Promise<JournalEntry | null | undefined> {
     if (
       revision.action !== "upsert" ||
       !revision.bytes ||
@@ -260,32 +290,30 @@ export class OperationApplier {
       pending.fileId !== revision.fileId ||
       pending.path !== revision.path
     ) {
-      return false
+      return undefined
     }
     const current = await this.readCurrentFile(revision.path)
-    if (!current || !(await equalBytes(current, revision.bytes))) return false
-    if (pending.preparedRevision) return true
+    if (!current || !(await equalBytes(current, revision.bytes))) return undefined
+    if (pending.preparedRevision) return null
 
     const parents = [...new Set([...pending.parentRevisionIds, revision.revisionId])].sort()
-    await this.journal.putEntry({
+    return {
       ...pending,
       baseRevisionId: parents.length === 1 ? revision.revisionId : null,
       parentRevisionIds: parents,
       state: "queued",
       error: null,
       preparedRevision: null,
-    })
-    return true
+    }
   }
 
-  private async tryAdoptEquivalentContent(revision: DecryptedRevision): Promise<boolean> {
-    if (revision.action !== "upsert" || !revision.bytes) return false
+  private async equivalentContentSnapshot(
+    revision: DecryptedRevision,
+  ): Promise<FileSnapshot | null> {
+    if (revision.action !== "upsert" || !revision.bytes) return null
     const current = await this.readCurrentFile(revision.path)
-    if (!current || !(await equalBytes(current, revision.bytes))) return false
-    await this.journal.putSnapshot(
-      await snapshotFor(revision.path, revision.fileId, current, this.vault.configDir),
-    )
-    return true
+    if (!current || !(await equalBytes(current, revision.bytes))) return null
+    return snapshotFor(revision.path, revision.fileId, current, this.vault.configDir)
   }
 
   private async readCurrentFile(path: string): Promise<ArrayBuffer | null> {
@@ -420,13 +448,18 @@ export class OperationApplier {
     return true
   }
 
-  private async materializeConflict(revision: DecryptedRevision): Promise<void> {
+  private async materializeConflict(
+    revision: DecryptedRevision,
+  ): Promise<Omit<AppliedOperationCommit, "revision">> {
     const target = conflictPath(
       revision.path,
       revision.authorDeviceId,
       revision.revisionId,
       this.vault.configDir,
     )
+    const entries: JournalEntry[] = []
+    const putSnapshots: FileSnapshot[] = []
+    const removeSnapshotPaths: string[] = []
     if (revision.action === "delete") {
       if (await this.vault.exists(revision.path)) {
         const localBytes = await this.vault.read(revision.path)
@@ -438,10 +471,10 @@ export class OperationApplier {
           revision.isText,
         )
         if (removed) {
-          await this.journal.removeSnapshot(revision.path)
+          removeSnapshotPaths.push(revision.path)
           for (const pending of await this.journal.listPending()) {
             if (pending.path !== revision.path) continue
-            await this.journal.putEntry({
+            entries.push({
               ...pending,
               state: "complete",
               error: null,
@@ -453,11 +486,9 @@ export class OperationApplier {
     } else {
       if (!revision.bytes) throw new Error("Conflict revision is missing decrypted bytes")
       await this.vault.write(target, revision.bytes)
-      await this.journal.putSnapshot(
-        await snapshotFor(target, randomId(), revision.bytes, this.vault.configDir),
-      )
+      putSnapshots.push(await snapshotFor(target, randomId(), revision.bytes, this.vault.configDir))
     }
-    await this.journal.putConflict({
+    const conflict: AppliedOperationCommit["conflicts"][number] = {
       id: randomId(),
       sourcePath: revision.path,
       conflictPath: target,
@@ -470,27 +501,35 @@ export class OperationApplier {
           ? "text"
           : "binary",
       resolvedAt: null,
-    })
+    }
+    return { entries, putSnapshots, removeSnapshotPaths, conflicts: [conflict] }
   }
 
   private async recordRevision(
     revision: DecryptedRevision,
     operation: RemoteOperation,
     isConflict: boolean,
+    effects: Partial<Omit<AppliedOperationCommit, "revision">> = {},
   ): Promise<void> {
-    await this.journal.putRevision({
-      revisionId: revision.revisionId,
-      fileId: revision.fileId,
-      path: revision.path,
-      action: revision.action,
-      previousPath: revision.previousPath,
-      parents: revision.parents,
-      deviceId: revision.authorDeviceId,
-      createdAt: revision.createdAt,
-      cursor: operation.cursor,
-      tombstone: revision.action === "delete",
-      isConflict,
-      operation,
+    await this.journal.commitAppliedOperation({
+      revision: {
+        revisionId: revision.revisionId,
+        fileId: revision.fileId,
+        path: revision.path,
+        action: revision.action,
+        previousPath: revision.previousPath,
+        parents: revision.parents,
+        deviceId: revision.authorDeviceId,
+        createdAt: revision.createdAt,
+        cursor: operation.cursor,
+        tombstone: revision.action === "delete",
+        isConflict,
+        operation,
+      },
+      entries: effects.entries ?? [],
+      putSnapshots: effects.putSnapshots ?? [],
+      removeSnapshotPaths: effects.removeSnapshotPaths ?? [],
+      conflicts: effects.conflicts ?? [],
     })
   }
 
@@ -531,16 +570,19 @@ export class OperationApplier {
       if (!(await this.vault.replaceIfUnchanged(pending.path, localBytes, mergedBytes, true))) {
         return false
       }
-      await this.journal.putEntry({
-        ...pending,
-        fingerprint: await fingerprint(mergedBytes),
-        baseRevisionId: remoteRevision.revisionId,
-        parentRevisionIds: [remoteRevision.revisionId],
-        state: "queued",
-        error: null,
-        preparedRevision: null,
+      await this.recordRevision(remoteRevision, operation, false, {
+        entries: [
+          {
+            ...pending,
+            fingerprint: await fingerprint(mergedBytes),
+            baseRevisionId: remoteRevision.revisionId,
+            parentRevisionIds: [remoteRevision.revisionId],
+            state: "queued",
+            error: null,
+            preparedRevision: null,
+          },
+        ],
       })
-      await this.recordRevision(remoteRevision, operation, false)
       return true
     } catch {
       // Missing retained base data or an unavailable old blob makes an automatic merge unsafe.
