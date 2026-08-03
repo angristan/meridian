@@ -22,7 +22,11 @@ import {
   pathsCollide,
 } from "../vault/path-policy"
 import { queuedEntry } from "./queued-entry"
-import { assertRevisionAncestry, sameRevisionIdentity } from "./revision-ancestry"
+import {
+  assertRevisionAncestry,
+  sameRemoteLogEntry,
+  sameRevisionIdentity,
+} from "./revision-ancestry"
 import { revisionHeads } from "./revision-heads"
 import type { RevisionLoader } from "./revision-loader"
 import { snapshotFor } from "./snapshots"
@@ -361,10 +365,14 @@ export class OperationApplier {
       deviceId: revision.authorDeviceId,
       cursor: operation.cursor,
       tombstone: revision.action === "delete",
+      operation,
     }
     const existing = await this.journal.getRevision(revision.revisionId)
     if (existing) {
-      if (!sameRevisionIdentity(existing, identity)) {
+      if (
+        !sameRevisionIdentity(existing, identity) &&
+        !sameRemoteLogEntry(existing.operation, operation)
+      ) {
         throw new Error("Remote history reused a revision ID with different content")
       }
       await this.settleKnownPendingEffects(revision)
@@ -372,7 +380,11 @@ export class OperationApplier {
     }
 
     const retained = await this.journal.getRetainedRevision(revision.revisionId)
-    if (retained && !sameRevisionIdentity(retained, identity)) {
+    if (
+      retained &&
+      !sameRevisionIdentity(retained, identity) &&
+      !sameRemoteLogEntry(retained.operation, operation)
+    ) {
       throw new Error("Remote history reused a revision ID with different content")
     }
     await assertRevisionAncestry(this.journal, revision, operation.cursor)

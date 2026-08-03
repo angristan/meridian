@@ -109,7 +109,9 @@ describe("IndexedDB lossless compaction", () => {
       "revision-2",
       "revision-1",
     ])
-    expect(await journal.getRetainedRevision("revision-2")).toMatchObject({ path: "note.md" })
+    expect(await journal.getRetainedRevision("revision-2")).toMatchObject({
+      path: "historical-name.md",
+    })
     expect(await journal.listConflicts(true)).toHaveLength(1)
     await expect(journal.compactLocalStorage()).resolves.toEqual({
       completedEntries: 0,

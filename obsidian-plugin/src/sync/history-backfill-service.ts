@@ -8,7 +8,11 @@ import type {
 } from "../model"
 import type { JournalPort } from "../storage/contracts"
 import { checkpointFormats, initialCheckpoint } from "./checkpoints"
-import { assertRevisionAncestry, sameRevisionIdentity } from "./revision-ancestry"
+import {
+  assertRevisionAncestry,
+  sameRemoteLogEntry,
+  sameRevisionIdentity,
+} from "./revision-ancestry"
 import {
   acceptVerifiedLogPage,
   advanceVerifiedLogCursor,
@@ -118,7 +122,8 @@ export class HistoryBackfillService {
       operation,
     }
     const existing = await this.journal.getRetainedRevision(revision.revisionId)
-    if (existing && !sameRevisionIdentity(existing, revision)) {
+    const sameRevision = existing ? sameRevisionIdentity(existing, revision) : false
+    if (existing && !sameRevision && !sameRemoteLogEntry(existing.operation, operation)) {
       throw new Error("Remote history reused a revision ID with different content")
     }
     await assertRevisionAncestry(
@@ -127,7 +132,17 @@ export class HistoryBackfillService {
       operation.cursor,
       () => new Error("Remote revision history is incomplete"),
     )
-    return existing ? null : revision
+    // Keep the earliest verified occurrence so descendants always resolve an older parent.
+    if (
+      sameRevision &&
+      existing &&
+      existing.cursor !== null &&
+      existing.cursor <= operation.cursor
+    ) {
+      return null
+    }
+    // Replace stale derived metadata only when replay proves the same immutable log entry.
+    return revision
   }
 }
 

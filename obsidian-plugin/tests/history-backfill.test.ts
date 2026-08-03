@@ -228,6 +228,204 @@ describe("HistoryBackfillService", () => {
     })
   })
 
+  it("accepts an exact signed revision retried under another wrapper ID", async () => {
+    const remote = new FakeRemote()
+    for (const operationId of ["first-operation", "retry-operation"]) {
+      remote.addRemoteRevision(
+        {
+          operationId,
+          revisionId: "retried-revision",
+          fileId: "file-id",
+          action: "upsert",
+          path: "note.md",
+          previousPath: null,
+          parents: [],
+          authorDeviceId: TEST_DEVICE.deviceId,
+          epochId: "epoch-id",
+          envelope: "same-canonical-signed-envelope",
+          blobId: "blob-id",
+          isText: true,
+        },
+        new TextEncoder().encode("same content").buffer,
+      )
+    }
+    const journal = new MemoryJournal()
+    await journal.setCheckpoint({ cursor: 2, logHash: "hash-2" })
+
+    await new HistoryBackfillService(journal, remote, new FakeCrypto()).backfill(TEST_DEVICE)
+
+    expect(await journal.getHistoryCheckpoint()).toMatchObject({ cursor: 2 })
+    expect(await journal.getRetainedRevision("retried-revision")).toMatchObject({
+      cursor: 1,
+      fileId: "file-id",
+    })
+  })
+
+  it("retains an exact retry's earliest cursor for intervening descendants", async () => {
+    const remote = new FakeRemote()
+    const revision = {
+      revisionId: "retried-revision",
+      fileId: "file-id",
+      action: "upsert" as const,
+      path: "note.md",
+      previousPath: null,
+      parents: [],
+      authorDeviceId: TEST_DEVICE.deviceId,
+      epochId: "epoch-id",
+      envelope: "same-canonical-signed-envelope",
+      blobId: "blob-id",
+      isText: true,
+    }
+    remote.addRemoteRevision(
+      { ...revision, operationId: "first-operation" },
+      new TextEncoder().encode("base").buffer,
+    )
+    remote.addRemoteRevision(
+      {
+        ...revision,
+        operationId: "child-operation",
+        revisionId: "child-revision",
+        parents: ["retried-revision"],
+        envelope: "child-canonical-signed-envelope",
+      },
+      new TextEncoder().encode("child").buffer,
+    )
+    remote.addRemoteRevision(
+      { ...revision, operationId: "retry-operation" },
+      new TextEncoder().encode("base").buffer,
+    )
+    const retriedOperation = remote.operations[2]
+    if (!retriedOperation) throw new Error("Missing retried test operation")
+    const journal = new MemoryJournal()
+    await journal.commitAppliedOperation({
+      revision: {
+        revisionId: revision.revisionId,
+        fileId: revision.fileId,
+        path: revision.path,
+        parents: [],
+        deviceId: revision.authorDeviceId,
+        createdAt: 1,
+        cursor: 3,
+        tombstone: false,
+        isConflict: false,
+        operation: structuredClone(retriedOperation),
+      },
+      entries: [],
+      putSnapshots: [],
+      removeSnapshotPaths: [],
+      conflicts: [],
+    })
+    await journal.setCheckpoint({ cursor: 3, logHash: "hash-3" })
+
+    await new HistoryBackfillService(journal, remote, new FakeCrypto()).backfill(TEST_DEVICE)
+
+    expect(await journal.getHistoryCheckpoint()).toMatchObject({ cursor: 3 })
+    expect(await journal.getRetainedRevision("retried-revision")).toMatchObject({ cursor: 1 })
+    expect(await journal.getRetainedRevision("child-revision")).toMatchObject({
+      cursor: 2,
+      parents: ["retried-revision"],
+    })
+  })
+
+  it("rejects different signed content at a reused local cursor", async () => {
+    const remote = new FakeRemote()
+    remote.addRemoteRevision(
+      {
+        operationId: "operation-id",
+        revisionId: "revision-id",
+        fileId: "file-id",
+        action: "upsert",
+        path: "note.md",
+        previousPath: null,
+        parents: [],
+        authorDeviceId: TEST_DEVICE.deviceId,
+        blobId: "verified-blob",
+        isText: true,
+      },
+      new TextEncoder().encode("content").buffer,
+    )
+    const operation = remote.operations[0]
+    if (!operation) throw new Error("Missing test operation")
+    const journal = new MemoryJournal()
+    await journal.commitAppliedOperation({
+      revision: {
+        revisionId: "revision-id",
+        fileId: "file-id",
+        path: "note.md",
+        parents: [],
+        deviceId: TEST_DEVICE.deviceId,
+        createdAt: 1,
+        cursor: 1,
+        tombstone: false,
+        isConflict: false,
+        operation: {
+          ...structuredClone(operation),
+          logHash: "different-hash",
+          envelope: { ...(operation.envelope as object), blobId: "different-signed-content" },
+        },
+      },
+      entries: [],
+      putSnapshots: [],
+      removeSnapshotPaths: [],
+      conflicts: [],
+    })
+    await journal.setCheckpoint({ cursor: 1, logHash: "hash-1" })
+
+    await expect(
+      new HistoryBackfillService(journal, remote, new FakeCrypto()).backfill(TEST_DEVICE),
+    ).rejects.toThrow("Remote history reused a revision ID")
+    expect(await journal.getHistoryCheckpoint()).toBeNull()
+  })
+
+  it("replaces stale local metadata for the same immutable log entry", async () => {
+    const remote = new FakeRemote()
+    remote.addRemoteRevision(
+      {
+        operationId: "operation-id",
+        revisionId: "revision-id",
+        fileId: "verified-file",
+        action: "upsert",
+        path: "note.md",
+        previousPath: null,
+        parents: [],
+        authorDeviceId: TEST_DEVICE.deviceId,
+        blobId: "blob-id",
+        isText: true,
+      },
+      new TextEncoder().encode("content").buffer,
+    )
+    const operation = remote.operations[0]
+    if (!operation) throw new Error("Missing test operation")
+    const journal = new MemoryJournal()
+    await journal.commitAppliedOperation({
+      revision: {
+        revisionId: "revision-id",
+        fileId: "stale-file",
+        path: "stale.md",
+        parents: [],
+        deviceId: TEST_DEVICE.deviceId,
+        createdAt: 1,
+        cursor: 1,
+        tombstone: false,
+        isConflict: false,
+        operation: structuredClone(operation),
+      },
+      entries: [],
+      putSnapshots: [],
+      removeSnapshotPaths: [],
+      conflicts: [],
+    })
+    await journal.setCheckpoint({ cursor: 1, logHash: "hash-1" })
+
+    await new HistoryBackfillService(journal, remote, new FakeCrypto()).backfill(TEST_DEVICE)
+
+    expect(await journal.getRetainedRevision("revision-id")).toMatchObject({
+      fileId: "verified-file",
+      cursor: 1,
+    })
+    expect(await journal.getRevision("revision-id")).toMatchObject({ fileId: "stale-file" })
+  })
+
   it("carries epoch state through one history traversal", async () => {
     class EpochTrackingCrypto extends FakeCrypto {
       inspectedEpochSequences: number[] = []

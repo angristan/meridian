@@ -259,6 +259,42 @@ describe.each(implementations)("$0 journal contract", (_name, createHarness) => 
     })
   })
 
+  it("prefers verified history metadata without mutating the live revision", async () => {
+    await withJournal(createHarness, async (journal) => {
+      const liveRevision = {
+        revisionId: "revision",
+        fileId: "stale-file",
+        path: "stale.md",
+        parents: [],
+        deviceId: "device",
+        createdAt: 1,
+        cursor: 1,
+        tombstone: false,
+        isConflict: false,
+        operation: null,
+      }
+      const verifiedRevision = {
+        ...liveRevision,
+        fileId: "verified-file",
+        path: "verified.md",
+      }
+      await journal.commitAppliedOperation({
+        revision: liveRevision,
+        entries: [],
+        putSnapshots: [],
+        removeSnapshotPaths: [],
+        conflicts: [],
+      })
+      await journal.commitHistoryOperation(verifiedRevision, { cursor: 1, logHash: "hash-1" })
+
+      expect(await journal.getRevision("revision")).toEqual(liveRevision)
+      expect(await journal.getRetainedRevision("revision")).toEqual(verifiedRevision)
+      expect(await journal.listRetainedRevisions()).toEqual([verifiedRevision])
+      expect(await journal.listRetainedFileRevisions("verified-file")).toEqual([verifiedRevision])
+      expect(await journal.listRetainedFileRevisions("stale-file")).toEqual([])
+    })
+  })
+
   it("keeps cursor and checkpoint updates together", async () => {
     await withJournal(createHarness, async (journal) => {
       const checkpoint = {

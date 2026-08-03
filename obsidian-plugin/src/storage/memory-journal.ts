@@ -243,7 +243,7 @@ export class MemoryJournal implements JournalPort {
   }
 
   async getRetainedRevision(revisionId: string): Promise<LocalRevision | null> {
-    const revision = this.revisions.get(revisionId) ?? this.historyRevisions.get(revisionId)
+    const revision = this.historyRevisions.get(revisionId) ?? this.revisions.get(revisionId)
     return revision ? structuredClone(revision) : null
   }
 
@@ -256,8 +256,8 @@ export class MemoryJournal implements JournalPort {
   }
 
   private retainedRevisions(): LocalRevision[] {
-    const byId = new Map(this.historyRevisions)
-    for (const [revisionId, revision] of this.revisions) byId.set(revisionId, revision)
+    const byId = new Map(this.revisions)
+    for (const [revisionId, revision] of this.historyRevisions) byId.set(revisionId, revision)
     return sortRevisions([...byId.values()]).map((revision) => structuredClone(revision))
   }
 

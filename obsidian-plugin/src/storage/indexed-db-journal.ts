@@ -393,16 +393,16 @@ export class IndexedDbJournal implements JournalPort {
     const database = this.requireDatabase()
     const transaction = database.transaction(["revisions", "history-revisions"], "readonly")
     const done = transactionDone(transaction)
-    const current = await requestResult<LocalRevision | undefined>(
-      transaction.objectStore("revisions").get(revisionId),
+    const history = await requestResult<LocalRevision | undefined>(
+      transaction.objectStore("history-revisions").get(revisionId),
     )
-    const history = current
+    const current = history
       ? undefined
       : await requestResult<LocalRevision | undefined>(
-          transaction.objectStore("history-revisions").get(revisionId),
+          transaction.objectStore("revisions").get(revisionId),
         )
     await done
-    return current ?? history ?? null
+    return history ?? current ?? null
   }
 
   async listRetainedRevisions(): Promise<LocalRevision[]> {
@@ -424,9 +424,24 @@ export class IndexedDbJournal implements JournalPort {
       )
     }
     const [history, current] = await Promise.all([read("history-revisions"), read("revisions")])
+    const shadowedCurrentIds = new Set<string>()
+    if (fileId !== undefined) {
+      const historyStore = transaction.objectStore("history-revisions")
+      await Promise.all(
+        current.map(async (revision) => {
+          if (await requestResult(historyStore.get(revision.revisionId))) {
+            shadowedCurrentIds.add(revision.revisionId)
+          }
+        }),
+      )
+    }
     await done
-    const byId = new Map(history.map((revision) => [revision.revisionId, revision]))
-    for (const revision of current) byId.set(revision.revisionId, revision)
+    const byId = new Map(
+      current
+        .filter((revision) => !shadowedCurrentIds.has(revision.revisionId))
+        .map((revision) => [revision.revisionId, revision]),
+    )
+    for (const revision of history) byId.set(revision.revisionId, revision)
     return sortRevisions([...byId.values()])
   }
 

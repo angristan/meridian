@@ -205,6 +205,8 @@ export interface FakeEnvelope {
   previousPath: string | null
   parents: string[]
   authorDeviceId: string
+  epochId?: string
+  envelope?: string
   blobId: string | null
   isText: boolean
   createdAt?: number

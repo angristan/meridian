@@ -1,4 +1,4 @@
-import type { LocalRevision } from "../model"
+import type { LocalRevision, RemoteOperation } from "../model"
 import type { JournalPort } from "../storage/contracts"
 
 export class MissingRevisionAncestryError extends Error {
@@ -63,17 +63,61 @@ interface RevisionIdentity {
   deviceId: string
   cursor: number | null
   tombstone: boolean
+  operation: RemoteOperation | null
 }
 
 export function sameRevisionIdentity(left: RevisionIdentity, right: RevisionIdentity): boolean {
   return (
     left.revisionId === right.revisionId &&
-    left.cursor === right.cursor &&
+    sameSignedFileRevision(left.operation, right.operation) &&
     left.fileId === right.fileId &&
     left.deviceId === right.deviceId &&
     left.tombstone === right.tombstone &&
     sameIds(left.parents, right.parents)
   )
+}
+
+export function sameRemoteLogEntry(
+  left: RemoteOperation | null,
+  right: RemoteOperation | null,
+): boolean {
+  return (
+    left !== null &&
+    right !== null &&
+    left.cursor === right.cursor &&
+    left.logHash === right.logHash
+  )
+}
+
+function sameSignedFileRevision(
+  left: RemoteOperation | null,
+  right: RemoteOperation | null,
+): boolean {
+  if (!left || !right) return false
+  const leftEnvelope = record(left.envelope)
+  const rightEnvelope = record(right.envelope)
+  if (!leftEnvelope || !rightEnvelope) return false
+  const leftSignedEnvelope = stringField(leftEnvelope, "envelope")
+  const rightSignedEnvelope = stringField(rightEnvelope, "envelope")
+  if (leftSignedEnvelope === null || rightSignedEnvelope === null) {
+    return JSON.stringify(left.envelope) === JSON.stringify(right.envelope)
+  }
+  return (
+    leftSignedEnvelope === rightSignedEnvelope &&
+    stringField(leftEnvelope, "authorDeviceId") === stringField(rightEnvelope, "authorDeviceId") &&
+    stringField(leftEnvelope, "epochId") === stringField(rightEnvelope, "epochId") &&
+    stringField(leftEnvelope, "type") === stringField(rightEnvelope, "type")
+  )
+}
+
+function record(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null
+}
+
+function stringField(value: Record<string, unknown>, key: string): string | null {
+  return typeof value[key] === "string" ? value[key] : null
 }
 
 function sameIds(left: readonly string[], right: readonly string[]): boolean {
