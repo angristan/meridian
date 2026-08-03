@@ -1,3 +1,10 @@
+## [1.12.3](https://github.com/angristan/meridian/compare/1.12.2...1.12.3) (2026-08-03)
+
+
+### Bug Fixes
+
+* repair verified revision identity metadata ([229bb70](https://github.com/angristan/meridian/commit/229bb701de3c83f404894eb372d906836ec860c0))
+
 ## [1.12.2](https://github.com/angristan/meridian/compare/1.12.1...1.12.2) (2026-08-03)
 
 
