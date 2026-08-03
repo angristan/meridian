@@ -227,12 +227,12 @@ export class MemoryJournal implements JournalPort {
     return this.historyCheckpoint ? structuredClone(this.historyCheckpoint) : null
   }
 
-  async setHistoryCheckpoint(checkpoint: TrustedCheckpoint): Promise<void> {
+  async commitHistoryOperation(
+    revision: LocalRevision | null,
+    checkpoint: TrustedCheckpoint,
+  ): Promise<void> {
+    if (revision) this.historyRevisions.set(revision.revisionId, structuredClone(revision))
     this.historyCheckpoint = structuredClone(checkpoint)
-  }
-
-  async putHistoryRevision(revision: LocalRevision): Promise<void> {
-    this.historyRevisions.set(revision.revisionId, structuredClone(revision))
   }
 
   async getHistoryRevision(revisionId: string): Promise<LocalRevision | null> {

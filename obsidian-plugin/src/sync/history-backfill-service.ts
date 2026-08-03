@@ -64,17 +64,15 @@ export class HistoryBackfillService {
           throw new Error("History conflicts with the signed device checkpoint")
         }
         const inspected = await this.inspectOperation(device, operation, checkpoint)
-        if (inspected.revision) {
-          await this.journal.putHistoryRevision(inspected.revision)
-          added += 1
-        }
-        checkpoint = {
+        const nextCheckpoint: TrustedCheckpoint = {
           cursor: operation.cursor,
           logHash: operation.logHash,
           initialLogFormat: checkpoint.initialLogFormat ?? "legacy-http-v1",
           logFormat: inspected.nextLogFormat ?? checkpoint.logFormat ?? "legacy-http-v1",
         }
-        await this.journal.setHistoryCheckpoint(checkpoint)
+        await this.journal.commitHistoryOperation(inspected.revision, nextCheckpoint)
+        if (inspected.revision) added += 1
+        checkpoint = nextCheckpoint
       }
     }
     return { added, throughCursor: checkpoint.cursor }

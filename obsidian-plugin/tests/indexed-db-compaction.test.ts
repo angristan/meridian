@@ -81,8 +81,11 @@ describe("IndexedDB lossless compaction", () => {
     const second = revision("revision-2", 2)
     await journal.putRevision(first)
     await journal.putRevision(second)
-    await journal.putHistoryRevision(structuredClone(first))
-    await journal.putHistoryRevision({ ...structuredClone(second), path: "historical-name.md" })
+    await journal.commitHistoryOperation(structuredClone(first), { cursor: 1, logHash: "hash-1" })
+    await journal.commitHistoryOperation(
+      { ...structuredClone(second), path: "historical-name.md" },
+      { cursor: 2, logHash: "hash-2" },
+    )
     await journal.putConflict({
       id: "conflict",
       sourcePath: "note.md",

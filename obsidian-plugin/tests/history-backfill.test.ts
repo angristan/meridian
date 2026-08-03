@@ -1,4 +1,6 @@
+import "fake-indexeddb/auto"
 import { describe, expect, it } from "vitest"
+import { IndexedDbJournal } from "../src/storage/indexed-db-journal"
 import { MemoryJournal } from "../src/storage/memory-journal"
 import { HistoryBackfillService } from "../src/sync/history-backfill-service"
 import { FakeCrypto, FakeRemote, TEST_DEVICE } from "./fakes"
@@ -96,6 +98,47 @@ describe("HistoryBackfillService", () => {
     expect(await journal.listHistoryRevisions()).toHaveLength(2)
   })
 
+  it("resumes after history state commits before the caller continues", async () => {
+    class CrashAfterHistoryCommitJournal extends IndexedDbJournal {
+      private crashed = false
+
+      override async commitHistoryOperation(
+        ...args: Parameters<IndexedDbJournal["commitHistoryOperation"]>
+      ): Promise<void> {
+        await super.commitHistoryOperation(...args)
+        if (this.crashed) return
+        this.crashed = true
+        throw new Error("Injected crash after history commit")
+      }
+    }
+
+    const databaseName = `history-backfill-${crypto.randomUUID()}`
+    const remote = new FakeRemote()
+    addHistory(remote)
+    const journal = new CrashAfterHistoryCommitJournal(databaseName)
+    await journal.open()
+    const service = new HistoryBackfillService(journal, remote, new FakeCrypto())
+
+    await expect(service.backfill(TEST_DEVICE)).rejects.toThrow(
+      "Injected crash after history commit",
+    )
+    expect(await journal.getHistoryCheckpoint()).toMatchObject({ cursor: 1, logHash: "hash-1" })
+    expect(await journal.listHistoryRevisions()).toHaveLength(1)
+    journal.close()
+
+    const restartedJournal = new IndexedDbJournal(databaseName)
+    await restartedJournal.open()
+    const restarted = new HistoryBackfillService(restartedJournal, remote, new FakeCrypto())
+    await expect(restarted.backfill(TEST_DEVICE)).resolves.toEqual({ added: 1, throughCursor: 2 })
+    expect(await restartedJournal.getHistoryCheckpoint()).toMatchObject({
+      cursor: 2,
+      logHash: "hash-2",
+    })
+    expect(await restartedJournal.listHistoryRevisions()).toHaveLength(2)
+    restartedJournal.close()
+    await deleteDatabase(databaseName)
+  })
+
   it("refuses legacy trust and signed checkpoint forks", async () => {
     const remote = new FakeRemote()
     addHistory(remote)
@@ -114,3 +157,12 @@ describe("HistoryBackfillService", () => {
     expect(await journal.listHistoryRevisions()).toEqual([])
   })
 })
+
+function deleteDatabase(name: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.deleteDatabase(name)
+    request.onsuccess = () => resolve()
+    request.onerror = () => reject(request.error ?? new Error("Unable to delete test journal"))
+    request.onblocked = () => reject(new Error("Test journal deletion is blocked"))
+  })
+}
