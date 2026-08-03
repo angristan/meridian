@@ -135,6 +135,9 @@ export class OperationApplier {
         (entry) => entry.path === effectiveRevision.path || entry.fileId === revision.fileId,
       ) ?? null
     let expectedBytes: ArrayBuffer | null = null
+    if (pending && (await this.completeCommittedAncestorPending(pending, revision))) {
+      pending = null
+    }
     if (!pending && identitySnapshot) {
       const inspected = await this.inspectTrackedFile(identitySnapshot)
       pending = inspected.pending
@@ -343,6 +346,7 @@ export class OperationApplier {
       if (!sameRevision(existing, revision, operation.cursor)) {
         throw new Error(`Revision ID ${revision.revisionId} was reused with different content`)
       }
+      await this.settleKnownPendingEffects(revision)
       return true
     }
 
@@ -381,6 +385,39 @@ export class OperationApplier {
     }
     for (const parentId of revision.parents) visit(parentId)
     return false
+  }
+
+  private async settleKnownPendingEffects(revision: DecryptedRevision): Promise<void> {
+    const pending = (await this.journal.listPending()).find(
+      (entry) => entry.id === revision.operationId && entry.revisionId === revision.revisionId,
+    )
+    if (!pending) return
+    if (revision.action === "delete") {
+      await this.journal.removeSnapshot(revision.path)
+    } else {
+      if (!revision.bytes) throw new Error("Committed content revision is missing decrypted bytes")
+      await this.journal.putSnapshot(
+        await snapshotFor(revision.path, revision.fileId, revision.bytes, this.vault.configDir),
+      )
+    }
+    if (revision.previousPath) await this.journal.removeSnapshot(revision.previousPath)
+  }
+
+  private async completeCommittedAncestorPending(
+    pending: JournalEntry,
+    incoming: DecryptedRevision,
+  ): Promise<boolean> {
+    if (!incoming.parents.includes(pending.revisionId)) return false
+    const committed = await this.journal.getRevision(pending.revisionId)
+    const envelope = committed?.operation ? record(committed.operation.envelope) : null
+    if (envelope?.operationId !== pending.id) return false
+    await this.journal.putEntry({
+      ...pending,
+      state: "complete",
+      error: null,
+      preparedRevision: null,
+    })
+    return true
   }
 
   private async materializeConflict(revision: DecryptedRevision): Promise<void> {

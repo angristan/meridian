@@ -170,6 +170,16 @@ export class PushEngine {
     await this.journal.updateEntry(entry.id, "committing")
     onProgress({ stage: "committing" })
     const committed = await this.remote.commit(encrypted.envelope, entry.id)
+    if (bytes) {
+      await this.journal.putSnapshot(
+        await snapshotFor(entry.path, entry.fileId, bytes, this.vault.configDir),
+      )
+    } else {
+      await this.journal.removeSnapshot(entry.path)
+    }
+    if (entry.previousPath) await this.journal.removeSnapshot(entry.previousPath)
+    // Pull replay treats an existing revision as proof that its local index effects are durable.
+    // Keep this marker after every snapshot update so a checkpoint cannot skip partial settlement.
     await this.journal.putRevision({
       revisionId: entry.revisionId,
       fileId: entry.fileId,
@@ -184,14 +194,6 @@ export class PushEngine {
       isConflict: false,
       operation: { ...committed, envelope: encrypted.envelope },
     })
-    if (bytes) {
-      await this.journal.putSnapshot(
-        await snapshotFor(entry.path, entry.fileId, bytes, this.vault.configDir),
-      )
-    } else {
-      await this.journal.removeSnapshot(entry.path)
-    }
-    if (entry.previousPath) await this.journal.removeSnapshot(entry.previousPath)
     await this.journal.putEntry({
       ...entry,
       state: "complete",

@@ -3,8 +3,13 @@ import { describe, expect, it } from "vitest"
 import type {
   ConfigCategory,
   EncryptedBlob,
+  FileSnapshot,
+  JournalEntry,
+  JournalState,
+  LocalRevision,
   ScannedFileSnapshot,
   SelectiveSyncSettings,
+  TrustedCheckpoint,
   VaultScanOptions,
 } from "../src/model"
 import { fingerprint as fingerprintBytes } from "../src/platform/bytes"
@@ -101,6 +106,93 @@ class ObservedIndexedDbJournal extends IndexedDbJournal {
   }
 }
 
+type PostCommitCrashBoundary = "revision" | "snapshot" | "completion" | "checkpoint"
+
+class PostCommitCrashJournal extends IndexedDbJournal {
+  private crashed = false
+
+  constructor(
+    name: string,
+    private readonly boundary: PostCommitCrashBoundary,
+  ) {
+    super(name)
+  }
+
+  override async putRevision(revision: LocalRevision): Promise<void> {
+    await super.putRevision(revision)
+    if (this.boundary === "revision") this.crash()
+  }
+
+  override async putSnapshot(snapshot: FileSnapshot): Promise<void> {
+    await super.putSnapshot(snapshot)
+    if (this.boundary === "snapshot") this.crash()
+  }
+
+  override async putEntry(entry: JournalEntry): Promise<void> {
+    await super.putEntry(entry)
+    if (this.boundary === "completion" && entry.state === "complete") this.crash()
+  }
+
+  override async updateEntry(
+    id: string,
+    state: JournalState,
+    error?: string | null,
+  ): Promise<void> {
+    if (this.crashed) this.crash()
+    await super.updateEntry(id, state, error)
+  }
+
+  override async setCheckpoint(checkpoint: TrustedCheckpoint): Promise<void> {
+    await super.setCheckpoint(checkpoint)
+    if (this.boundary === "checkpoint") this.crash()
+  }
+
+  private crash(): never {
+    this.crashed = true
+    throw new Error(`Injected crash after ${this.boundary}`)
+  }
+}
+
+class IdempotentCommitRemote extends FakeRemote {
+  readonly attempts: { envelope: unknown; idempotencyKey: string }[] = []
+  readonly blobAttempts: EncryptedBlob[] = []
+  private readonly receipts = new Map<
+    string,
+    { envelope: unknown; receipt: { cursor: number; logHash: string } }
+  >()
+  private responseLossPending: boolean
+
+  constructor(loseFirstResponse = false) {
+    super()
+    this.responseLossPending = loseFirstResponse
+  }
+
+  override async putBlob(blob: EncryptedBlob): Promise<void> {
+    this.blobAttempts.push(structuredClone(blob))
+    await super.putBlob(blob)
+  }
+
+  override async commit(
+    envelope: unknown,
+    idempotencyKey = "",
+  ): Promise<{ cursor: number; logHash: string }> {
+    const clonedEnvelope = structuredClone(envelope)
+    this.attempts.push({ envelope: clonedEnvelope, idempotencyKey })
+    const existing = this.receipts.get(idempotencyKey)
+    if (existing) {
+      expect(clonedEnvelope).toEqual(existing.envelope)
+      return existing.receipt
+    }
+    const receipt = await super.commit(envelope)
+    this.receipts.set(idempotencyKey, { envelope: clonedEnvelope, receipt })
+    if (this.responseLossPending) {
+      this.responseLossPending = false
+      throw new Error("Injected response loss after commit")
+    }
+    return receipt
+  }
+}
+
 async function deleteDatabase(name: string): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const request = indexedDB.deleteDatabase(name)
@@ -142,30 +234,9 @@ describe("deterministic local fault injection", () => {
   })
 
   it("drains an exact committed retry after restart", async () => {
-    class LostCommitResponseRemote extends FakeRemote {
-      readonly attempts: { envelope: unknown; idempotencyKey: string }[] = []
-      readonly blobAttempts: EncryptedBlob[] = []
-      private committed: { cursor: number; logHash: string } | null = null
-
-      override async putBlob(blob: EncryptedBlob): Promise<void> {
-        this.blobAttempts.push(structuredClone(blob))
-        await super.putBlob(blob)
-      }
-
-      override async commit(
-        envelope: unknown,
-        idempotencyKey = "",
-      ): Promise<{ cursor: number; logHash: string }> {
-        this.attempts.push({ envelope: structuredClone(envelope), idempotencyKey })
-        if (this.committed) return this.committed
-        this.committed = await super.commit(envelope)
-        throw new Error("Injected response loss after commit")
-      }
-    }
-
     const databaseName = `meridian-response-loss-${crypto.randomUUID()}`
     const vault = new FakeVault({ "note.md": "durable content" })
-    const remote = new LostCommitResponseRemote()
+    const remote = new IdempotentCommitRemote(true)
     const firstJournal = new IndexedDbJournal(databaseName)
     const first = new SyncController(
       vault,
@@ -219,6 +290,247 @@ describe("deterministic local fault injection", () => {
     expect(await reopened.getCheckpoint()).toMatchObject({ cursor: 1, logHash: "hash-1" })
     expect(await reopened.listRevisions("note.md")).toHaveLength(1)
     reopened.close()
+    await deleteDatabase(databaseName)
+  })
+
+  it.each<PostCommitCrashBoundary>(["revision", "snapshot", "completion", "checkpoint"])(
+    "recovers after a crash following local %s persistence",
+    async (boundary) => {
+      const databaseName = `meridian-post-commit-${boundary}-${crypto.randomUUID()}`
+      const vault = new FakeVault({ "note.md": "baseline content" })
+      const remote = new IdempotentCommitRemote()
+      const baselineJournal = new IndexedDbJournal(databaseName)
+      const baseline = new SyncController(
+        vault,
+        baselineJournal,
+        remote,
+        new FakeCrypto(),
+        () => ALL_CATEGORIES,
+        () => {},
+      )
+      await baseline.start(TEST_DEVICE)
+      expect(await baselineJournal.getCheckpoint()).toMatchObject({ cursor: 1 })
+      await baseline.quiesce()
+
+      const updatedBytes = new TextEncoder().encode("checkpoint-last content").buffer
+      const updatedFingerprint = await fingerprintBytes(updatedBytes)
+      vault.files.set("note.md", updatedBytes)
+      const crashingJournal = new PostCommitCrashJournal(databaseName, boundary)
+      const first = new SyncController(
+        vault,
+        crashingJournal,
+        remote,
+        new FakeCrypto(),
+        () => ALL_CATEGORIES,
+        () => {},
+      )
+
+      await first.start(TEST_DEVICE)
+      expect(first.getStatus().error).toMatch(new RegExp(`Injected crash after ${boundary}`))
+      expect(remote.operations).toHaveLength(2)
+      expect(remote.attempts).toHaveLength(2)
+      expect(await crashingJournal.listRevisions("note.md")).toHaveLength(
+        boundary === "snapshot" ? 1 : 2,
+      )
+      expect((await crashingJournal.getSnapshots()).get("note.md")).toMatchObject({
+        path: "note.md",
+        fingerprint: updatedFingerprint,
+      })
+      expect(await crashingJournal.getCheckpoint()).toMatchObject(
+        boundary === "checkpoint"
+          ? { cursor: 2, logHash: "hash-2" }
+          : { cursor: 1, logHash: "hash-1" },
+      )
+      const pendingBeforeRestart = await crashingJournal.listPending()
+      if (boundary === "revision" || boundary === "snapshot") {
+        expect(pendingBeforeRestart).toHaveLength(1)
+        expect(pendingBeforeRestart[0]).toMatchObject({ state: "committing" })
+      } else {
+        expect(pendingBeforeRestart).toEqual([])
+      }
+      await first.quiesce()
+
+      const restartedJournal = new IndexedDbJournal(databaseName)
+      const restarted = new SyncController(
+        vault,
+        restartedJournal,
+        remote,
+        new FakeCrypto(),
+        () => ALL_CATEGORIES,
+        () => {},
+      )
+      await restarted.start(TEST_DEVICE)
+
+      const expectedAttempts = boundary === "revision" || boundary === "snapshot" ? 3 : 2
+      expect(remote.attempts).toHaveLength(expectedAttempts)
+      if (expectedAttempts === 3) expect(remote.attempts[2]).toEqual(remote.attempts[1])
+      expect(remote.operations).toHaveLength(2)
+      expect(remote.blobs.size).toBe(2)
+      expect(await restartedJournal.listPending()).toEqual([])
+      expect(await restartedJournal.listConflicts(true)).toEqual([])
+      expect(await restartedJournal.listRevisions("note.md")).toHaveLength(2)
+      expect(await restartedJournal.getCheckpoint()).toMatchObject({
+        cursor: 2,
+        logHash: "hash-2",
+      })
+      expect((await restartedJournal.getSnapshots()).get("note.md")).toMatchObject({
+        path: "note.md",
+        fingerprint: updatedFingerprint,
+      })
+      await restarted.quiesce()
+
+      const reopened = new IndexedDbJournal(databaseName)
+      await reopened.open()
+      expect(await reopened.listPending()).toEqual([])
+      expect(await reopened.listRevisions("note.md")).toHaveLength(2)
+      expect(await reopened.getCheckpoint()).toMatchObject({ cursor: 2, logHash: "hash-2" })
+      reopened.close()
+      await deleteDatabase(databaseName)
+    },
+  )
+
+  it("does not conflict with a descendant of an interrupted committed revision", async () => {
+    const databaseName = `meridian-committed-ancestor-${crypto.randomUUID()}`
+    const vault = new FakeVault({ "note.md": "baseline content" })
+    const remote = new IdempotentCommitRemote()
+    const baselineJournal = new IndexedDbJournal(databaseName)
+    const baseline = new SyncController(
+      vault,
+      baselineJournal,
+      remote,
+      new FakeCrypto(),
+      () => ALL_CATEGORIES,
+      () => {},
+    )
+    await baseline.start(TEST_DEVICE)
+    await baseline.quiesce()
+
+    vault.files.set("note.md", new TextEncoder().encode("committed local update").buffer)
+    const revisionCrashJournal = new PostCommitCrashJournal(databaseName, "revision")
+    const revisionCrash = new SyncController(
+      vault,
+      revisionCrashJournal,
+      remote,
+      new FakeCrypto(),
+      () => ALL_CATEGORIES,
+      () => {},
+    )
+    await revisionCrash.start(TEST_DEVICE)
+    expect(revisionCrash.getStatus().error).toMatch(/Injected crash after revision/)
+    const committedLocal = (await revisionCrashJournal.listRevisions("note.md")).find(
+      (revision) => revision.cursor === 2,
+    )
+    expect(committedLocal).toMatchObject({ cursor: 2 })
+    await revisionCrash.quiesce()
+
+    remote.addRemoteRevision(
+      {
+        operationId: "remote-descendant-operation",
+        revisionId: "remote-descendant-revision",
+        fileId: committedLocal?.fileId ?? "missing-file-id",
+        action: "upsert",
+        path: "note.md",
+        previousPath: null,
+        parents: [committedLocal?.revisionId ?? "missing-revision-id"],
+        authorDeviceId: "device-remote",
+        blobId: "remote-descendant-blob",
+        isText: true,
+      },
+      new TextEncoder().encode("remote descendant").buffer,
+    )
+
+    const recoveredJournal = new IndexedDbJournal(databaseName)
+    const recovered = new SyncController(
+      vault,
+      recoveredJournal,
+      remote,
+      new FakeCrypto(),
+      () => ALL_CATEGORIES,
+      () => {},
+    )
+    await recovered.start(TEST_DEVICE)
+
+    expect(vault.text("note.md")).toBe("remote descendant")
+    expect(remote.operations).toHaveLength(3)
+    expect(remote.attempts).toHaveLength(2)
+    expect(await recoveredJournal.listPending()).toEqual([])
+    expect(await recoveredJournal.listConflicts(true)).toEqual([])
+    expect(await recoveredJournal.listRevisions("note.md")).toHaveLength(3)
+    expect(await recoveredJournal.getCheckpoint()).toMatchObject({ cursor: 3, logHash: "hash-3" })
+    await recovered.quiesce()
+    await deleteDatabase(databaseName)
+  })
+
+  it("does not checkpoint a committed delete before snapshot removal", async () => {
+    const databaseName = `meridian-delete-checkpoint-${crypto.randomUUID()}`
+    const vault = new FakeVault({ "note.md": "delete after baseline" })
+    const remote = new IdempotentCommitRemote()
+    const baselineJournal = new IndexedDbJournal(databaseName)
+    const baseline = new SyncController(
+      vault,
+      baselineJournal,
+      remote,
+      new FakeCrypto(),
+      () => ALL_CATEGORIES,
+      () => {},
+    )
+    await baseline.start(TEST_DEVICE)
+    expect(await baselineJournal.getCheckpoint()).toMatchObject({ cursor: 1 })
+    const baselineSnapshot = (await baselineJournal.getSnapshots()).get("note.md")
+    expect(baselineSnapshot).toBeDefined()
+    await baseline.quiesce()
+
+    vault.files.delete("note.md")
+    const revisionCrashJournal = new PostCommitCrashJournal(databaseName, "revision")
+    const revisionCrash = new SyncController(
+      vault,
+      revisionCrashJournal,
+      remote,
+      new FakeCrypto(),
+      () => ALL_CATEGORIES,
+      () => {},
+    )
+    await revisionCrash.start(TEST_DEVICE)
+    expect(revisionCrash.getStatus().error).toMatch(/Injected crash after revision/)
+    expect(await revisionCrashJournal.getCheckpoint()).toMatchObject({ cursor: 1 })
+    // Older revision-first releases could stop with the committed marker but this stale snapshot.
+    if (!baselineSnapshot) throw new Error("Baseline snapshot is missing")
+    await revisionCrashJournal.putSnapshot(baselineSnapshot)
+    expect((await revisionCrashJournal.getSnapshots()).has("note.md")).toBe(true)
+    await revisionCrash.quiesce()
+
+    const checkpointCrashJournal = new PostCommitCrashJournal(databaseName, "checkpoint")
+    const checkpointCrash = new SyncController(
+      vault,
+      checkpointCrashJournal,
+      remote,
+      new FakeCrypto(),
+      () => ALL_CATEGORIES,
+      () => {},
+    )
+    await checkpointCrash.start(TEST_DEVICE)
+    expect(checkpointCrash.getStatus().error).toMatch(/Injected crash after checkpoint/)
+    expect(await checkpointCrashJournal.getCheckpoint()).toMatchObject({ cursor: 2 })
+    expect((await checkpointCrashJournal.getSnapshots()).has("note.md")).toBe(false)
+    await checkpointCrash.quiesce()
+
+    const recoveredJournal = new IndexedDbJournal(databaseName)
+    const recovered = new SyncController(
+      vault,
+      recoveredJournal,
+      remote,
+      new FakeCrypto(),
+      () => ALL_CATEGORIES,
+      () => {},
+    )
+    await recovered.start(TEST_DEVICE)
+    expect(remote.operations).toHaveLength(2)
+    expect(await recoveredJournal.listPending()).toEqual([])
+    expect(await recoveredJournal.listConflicts(true)).toEqual([])
+    expect(await recoveredJournal.listRevisions("note.md")).toHaveLength(2)
+    expect(await recoveredJournal.getCheckpoint()).toMatchObject({ cursor: 2, logHash: "hash-2" })
+    expect((await recoveredJournal.getSnapshots()).has("note.md")).toBe(false)
+    await recovered.quiesce()
     await deleteDatabase(databaseName)
   })
 

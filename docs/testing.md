@@ -120,6 +120,8 @@ Automated responsiveness tests use generous wall-clock ceilings to detect pathol
 - Fail R2 deletion after fencing; the fence must clear and an exact cleanup retry must succeed.
 - Stop after successful R2 deletion but before SQL cleanup; the next upload must atomically recover the stranded fence.
 - Fail the operation transaction after blob confirmation; no operation may appear, the blob must remain reserved, and an exact retry must commit once.
+- After the server commits, stop after local snapshot persistence, revision persistence, pending-entry completion, and checkpoint persistence. Reopen the same IndexedDB database at each boundary; one copy of each revision must remain, pending work must drain, and the checkpoint must never pass missing local state.
+- Interrupt a committed local revision, then append its remote descendant before restart; the descendant must apply without a false conflict or a stale retry overwriting its snapshot.
 - Fill IndexedDB and inject quota errors at entry, revision, conflict, and checkpoint writes; transactions abort, prepared work remains exact, and the cursor never passes unavailable local state.
 - Crash between local compaction batches; reopening and rerunning removes only completed entries and exact duplicate history rows. Pending work, dirty tokens, DAG parents, tombstones, conflicts, checkpoints, revocations, and old-epoch history remain usable.
 - Test missing `navigator.storage` APIs on mobile, warning at 80%, critical pressure at 90%, and user-gesture persistent-storage requests.
