@@ -1,3 +1,10 @@
+## [1.12.4](https://github.com/angristan/meridian/compare/1.12.3...1.12.4) (2026-08-03)
+
+
+### Bug Fixes
+
+* rebuild stale verified history indexes ([1e3503e](https://github.com/angristan/meridian/commit/1e3503e067d68faeb92b0f012ae4aa49e99c9064))
+
 ## [1.12.3](https://github.com/angristan/meridian/compare/1.12.2...1.12.3) (2026-08-03)
 
 
