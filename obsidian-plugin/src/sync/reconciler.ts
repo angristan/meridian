@@ -247,7 +247,7 @@ export class Reconciler {
   private async revisionAncestry(
     fileId: string,
   ): Promise<{ baseRevisionId: string | null; parentRevisionIds: string[] }> {
-    const heads = revisionHeads(await this.journal.listFileRevisions(fileId))
+    const heads = revisionHeads(await this.journal.listRetainedFileRevisions(fileId))
     return {
       baseRevisionId: heads.length === 1 ? (heads[0]?.revisionId ?? null) : null,
       parentRevisionIds: heads.map((revision) => revision.revisionId),

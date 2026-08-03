@@ -275,6 +275,7 @@ describe.each(implementations)("$0 journal contract", (_name, createHarness) => 
 
       expect(await journal.getHistoryCheckpoint()).toBeNull()
       expect(await journal.listRetainedRevisions()).toEqual([])
+      expect(await journal.getHistoryIndexVersion()).not.toBe(1)
       expect(await journal.getCheckpoint()).toMatchObject({ cursor: 9, logHash: "live-hash" })
       expect(await journal.listPending()).toEqual([pending])
       expect((await journal.getSnapshots()).get("live.md")).toEqual(snapshot)
@@ -284,10 +285,15 @@ describe.each(implementations)("$0 journal contract", (_name, createHarness) => 
       await journal.prepareHistoryBackfill(1)
       expect(await journal.getHistoryCheckpoint()).toMatchObject({ cursor: 1 })
       expect(await journal.listRetainedRevisions()).toEqual([revision])
+      await journal.completeHistoryBackfill(1)
+      expect(await journal.getHistoryIndexVersion()).toBe(1)
 
       await journal.prepareHistoryBackfill(2)
       expect(await journal.getHistoryCheckpoint()).toBeNull()
       expect(await journal.listRetainedRevisions()).toEqual([])
+      expect(await journal.getHistoryIndexVersion()).toBe(1)
+      await journal.completeHistoryBackfill(2)
+      expect(await journal.getHistoryIndexVersion()).toBe(2)
     })
   })
 

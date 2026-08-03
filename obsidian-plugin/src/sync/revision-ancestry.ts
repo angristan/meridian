@@ -1,104 +1,11 @@
-import { LogFormat, type LogFormat as LogFormatName } from "@meridian/protocol"
 import type { LocalRevision, RemoteOperation } from "../model"
 import type { JournalPort } from "../storage/contracts"
-import { revisionHeads } from "./revision-heads"
 
 export class MissingRevisionAncestryError extends Error {
   constructor() {
     super("Local revision history is incomplete")
     this.name = "MissingRevisionAncestryError"
   }
-}
-
-interface RevisionParentContext {
-  revisionId: string
-  action: "upsert" | "delete" | "restore"
-  fileId: string
-  path: string
-  parents: readonly string[]
-  authorDeviceId: string
-}
-
-// An early writer could select a same-path parent from stale local identity metadata for deletes.
-// Reconstruct only that legacy shape from older verified heads of the tombstone's own file.
-export async function repairLegacyTombstoneParents(
-  journal: JournalPort,
-  revision: RevisionParentContext,
-  operation: RemoteOperation,
-  logFormat: LogFormatName,
-): Promise<string[]> {
-  if (
-    logFormat !== LogFormat.LegacyHttpV1 ||
-    revision.action !== "delete" ||
-    revision.parents.length !== 1
-  ) {
-    return [...revision.parents]
-  }
-
-  const existing = await journal.getRetainedRevision(revision.revisionId)
-  const sameExistingRevision =
-    existing?.fileId === revision.fileId && sameSignedFileRevision(existing.operation, operation)
-  const repairCursor =
-    existing && sameExistingRevision && existing.cursor !== null
-      ? Math.min(existing.cursor, operation.cursor)
-      : operation.cursor
-  if (
-    existing &&
-    sameExistingRevision &&
-    (await allParentsBelongToFile(journal, existing, repairCursor))
-  ) {
-    return [...existing.parents]
-  }
-
-  const declaredParent = await journal.getRetainedRevision(revision.parents[0] ?? "")
-  if (
-    !declaredParent ||
-    declaredParent.fileId === revision.fileId ||
-    declaredParent.cursor === null ||
-    declaredParent.cursor >= repairCursor ||
-    declaredParent.path !== revision.path ||
-    declaredParent.tombstone ||
-    declaredParent.deviceId === revision.authorDeviceId
-  ) {
-    return [...revision.parents]
-  }
-
-  const ownHistory = (await journal.listRetainedFileRevisions(revision.fileId)).filter(
-    (candidate) => candidate.cursor !== null && candidate.cursor < repairCursor,
-  )
-  if (ownHistory.length === 0) return [...revision.parents]
-  const ownHeads = revisionHeads(ownHistory)
-  if (
-    ownHeads.length === 0 ||
-    ownHeads.some(
-      (head) =>
-        head.cursor === null ||
-        head.cursor >= repairCursor ||
-        head.path !== revision.path ||
-        head.tombstone,
-    )
-  ) {
-    return [...revision.parents]
-  }
-  return ownHeads.map((head) => head.revisionId)
-}
-
-async function allParentsBelongToFile(
-  journal: JournalPort,
-  revision: Pick<LocalRevision, "fileId" | "parents">,
-  childCursor: number,
-): Promise<boolean> {
-  if (revision.parents.length === 0) return false
-  const parents = await Promise.all(
-    revision.parents.map((parentId) => journal.getRetainedRevision(parentId)),
-  )
-  return parents.every(
-    (parent) =>
-      parent !== null &&
-      parent.fileId === revision.fileId &&
-      parent.cursor !== null &&
-      parent.cursor < childCursor,
-  )
 }
 
 export async function assertRevisionAncestry(
@@ -125,9 +32,7 @@ export async function assertRevisionAncestry(
     if (visiting.has(revisionId)) throw new Error("Stored revision ancestry contains a cycle")
     const candidate = byId.get(revisionId) ?? (await journal.getRetainedRevision(revisionId))
     if (!candidate) throw missingError()
-    if (candidate.fileId !== revision.fileId) {
-      throw new Error("Remote revision parent belongs to another file")
-    }
+    // Parent links form a global causal DAG. File IDs remain ownership and materialization boundaries.
     const assertOlder = () => {
       if (candidate.cursor === null || candidate.cursor >= childCursor) {
         throw new Error("Remote revision parent is not an older committed revision")

@@ -188,6 +188,72 @@ describe("Reconciler", () => {
     ])
   })
 
+  it("parents new work from canonical retained heads after an index upgrade", async () => {
+    const identity = "own-file"
+    const baseBytes = new TextEncoder().encode("base").buffer
+    const vault = new FakeVault({ "note.md": "local edit" })
+    const journal = new MemoryJournal()
+    await seedSnapshots(journal, [
+      {
+        path: "note.md",
+        fileId: identity,
+        fingerprint: await fingerprint(baseBytes),
+        size: baseBytes.byteLength,
+        mtime: 1,
+        kind: "vault",
+      },
+    ])
+    const own = {
+      revisionId: "own-head",
+      fileId: identity,
+      path: "note.md",
+      parents: [],
+      deviceId: "device",
+      createdAt: 1,
+      cursor: 1,
+      tombstone: false,
+      isConflict: false,
+      operation: null,
+    }
+    const syntheticDelete = {
+      revisionId: "delete-head",
+      fileId: identity,
+      path: "note.md",
+      parents: ["own-head"],
+      deviceId: "device",
+      createdAt: 2,
+      cursor: 3,
+      tombstone: true,
+      isConflict: false,
+      operation: null,
+    }
+    await seedRevision(journal, own)
+    await seedRevision(journal, syntheticDelete)
+    await journal.commitHistoryOperation(
+      {
+        ...own,
+        revisionId: "foreign-parent",
+        fileId: "foreign-file",
+        cursor: 2,
+      },
+      { cursor: 2, logHash: "hash-2" },
+    )
+    await journal.commitHistoryOperation(
+      { ...syntheticDelete, parents: ["foreign-parent"] },
+      { cursor: 3, logHash: "hash-3" },
+    )
+
+    await new Reconciler(vault, journal).reconcile(ALL_CATEGORIES)
+
+    expect(await journal.listPending()).toEqual([
+      expect.objectContaining({
+        path: "note.md",
+        baseRevisionId: null,
+        parentRevisionIds: ["delete-head", "own-head"],
+      }),
+    ])
+  })
+
   it("rejects case-insensitive path collisions before queuing changes", async () => {
     const files = { "Notes/Example.md": "one", "notes/example.md": "two" }
     const vault = new FakeVault(files)

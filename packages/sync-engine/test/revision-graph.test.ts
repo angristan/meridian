@@ -132,12 +132,29 @@ describe("RevisionGraph materialization", () => {
     )
   })
 
-  it("rejects id reuse and cross-file ancestry", () => {
+  it("rejects id reuse while retaining cross-file causal edges", () => {
     const graph = new RevisionGraph()
     graph.addRevision(content("a", [], "note.md", "base"))
     expect(() => graph.addRevision(content("a", [], "note.md", "different"))).toThrow(/reused/)
     expect(() =>
       graph.addRevision({ ...content("b", ["a"], "other.md", "value"), fileId: "file-2" }),
-    ).toThrow(/another file/)
+    ).not.toThrow()
+    expect(graph.get("b")).toMatchObject({ fileId: "file-2", parents: ["a"] })
+  })
+
+  it("never traverses through another file to find a merge base", () => {
+    const graph = new RevisionGraph()
+    graph.addRevision({ ...content("base", [], "note.md", "base"), fileId: "file-2" })
+    graph.addRevision(content("external", ["base"], "external.md", "external"))
+    graph.addRevision({
+      ...content("left", ["base"], "note.md", "left"),
+      fileId: "file-2",
+    })
+    graph.addRevision({
+      ...content("right", ["external"], "note.md", "right"),
+      fileId: "file-2",
+    })
+
+    expect(graph.commonAncestor("left", "right")).toBeUndefined()
   })
 })

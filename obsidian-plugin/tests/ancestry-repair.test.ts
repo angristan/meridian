@@ -2,6 +2,7 @@ import "fake-indexeddb/auto"
 import { afterEach, describe, expect, it } from "vitest"
 import type { FakeEnvelope } from "./fakes"
 import { fingerprint } from "../src/platform/bytes"
+import { HISTORY_INDEX_VERSION } from "../src/storage/contracts"
 import { IndexedDbJournal } from "../src/storage/indexed-db-journal"
 import { MemoryJournal } from "../src/storage/memory-journal"
 import { SyncController } from "../src/sync/controller"
@@ -111,6 +112,8 @@ describe("revision ancestry repair", () => {
     const vault = new FakeVault()
     const journal = new IndexedDbJournal(databaseName())
     await journal.open()
+    await journal.prepareHistoryBackfill(HISTORY_INDEX_VERSION)
+    await journal.completeHistoryBackfill(HISTORY_INDEX_VERSION)
     await journal.setCheckpoint({ cursor: 2, logHash: "hash-2" })
     const remote = new FakeRemote()
     remote.addRemoteRevision(

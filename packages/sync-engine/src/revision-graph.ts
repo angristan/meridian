@@ -88,9 +88,16 @@ export class RevisionGraph {
   }
 
   commonAncestor(leftId: RevisionId, rightId: RevisionId): Revision | undefined {
-    const leftDistances = this.#ancestorDistances(leftId)
-    const rightDistances = this.#ancestorDistances(rightId)
-    const candidates = [...leftDistances.keys()].filter((id) => rightDistances.has(id))
+    const leftRevision = this.#revisions.get(leftId)
+    const rightRevision = this.#revisions.get(rightId)
+    if (!leftRevision || !rightRevision || leftRevision.fileId !== rightRevision.fileId) {
+      return undefined
+    }
+    const leftDistances = this.#ancestorDistances(leftId, leftRevision.fileId)
+    const rightDistances = this.#ancestorDistances(rightId, leftRevision.fileId)
+    const candidates = [...leftDistances.keys()].filter(
+      (id) => rightDistances.has(id) && this.#revisions.get(id)?.fileId === leftRevision.fileId,
+    )
     candidates.sort((left, right) => {
       const leftA = leftDistances.get(left) ?? Number.MAX_SAFE_INTEGER
       const leftB = rightDistances.get(left) ?? Number.MAX_SAFE_INTEGER
@@ -106,7 +113,7 @@ export class RevisionGraph {
     return winner === undefined ? undefined : this.get(winner)
   }
 
-  #ancestorDistances(startId: RevisionId): Map<RevisionId, number> {
+  #ancestorDistances(startId: RevisionId, fileId: FileId): Map<RevisionId, number> {
     const distances = new Map<RevisionId, number>()
     const pending: Array<readonly [RevisionId, number]> = [[startId, 0]]
     while (pending.length > 0) {
@@ -117,8 +124,12 @@ export class RevisionGraph {
       if (known !== undefined && known <= distance) continue
       distances.set(id, distance)
       const revision = this.#revisions.get(id)
-      if (revision === undefined) continue
-      for (const parent of revision.parents) pending.push([parent, distance + 1])
+      if (revision === undefined || revision.fileId !== fileId) continue
+      for (const parent of revision.parents) {
+        if (this.#revisions.get(parent)?.fileId === fileId) {
+          pending.push([parent, distance + 1])
+        }
+      }
     }
     return distances
   }
@@ -140,17 +151,8 @@ export class RevisionGraph {
       throw new TypeError(`Revision ${revision.id} parents must be sorted canonically`)
     }
     for (const parent of revision.parents) {
-      const known = this.#revisions.get(parent)
-      if (known !== undefined && known.fileId !== revision.fileId) {
-        throw new TypeError(`Revision ${revision.id} references a parent from another file`)
-      }
       if (this.isAncestor(revision.id, parent)) {
         throw new TypeError(`Revision ${revision.id} would create an ancestry cycle`)
-      }
-    }
-    for (const child of this.#revisions.values()) {
-      if (child.parents.includes(revision.id) && child.fileId !== revision.fileId) {
-        throw new TypeError(`Revision ${revision.id} is a parent of a different file`)
       }
     }
   }

@@ -1,5 +1,6 @@
 import "fake-indexeddb/auto"
 import { describe, expect, it } from "vitest"
+import { HISTORY_INDEX_VERSION } from "../src/storage/contracts"
 import { IndexedDbJournal } from "../src/storage/indexed-db-journal"
 import { MemoryJournal } from "../src/storage/memory-journal"
 import { SyncController } from "../src/sync/controller"
@@ -127,7 +128,7 @@ describe("HistoryBackfillService", () => {
     controller.stop()
   })
 
-  it("repairs the observed legacy cross-file tombstone parent", async () => {
+  it("retains canonical ancestry across separate file identities", async () => {
     const remote = new FakeRemote()
     remote.addRemoteRevision(
       {
@@ -135,83 +136,7 @@ describe("HistoryBackfillService", () => {
         revisionId: "foreign-revision",
         fileId: "foreign-file",
         action: "upsert",
-        path: "note.md",
-        previousPath: null,
-        parents: [],
-        authorDeviceId: "other-device",
-        blobId: "foreign-blob",
-        isText: true,
-      },
-      new TextEncoder().encode("foreign").buffer,
-    )
-    remote.addRemoteRevision(
-      {
-        operationId: "root-operation",
-        revisionId: "own-root",
-        fileId: "own-file",
-        action: "upsert",
-        path: "note.md",
-        previousPath: null,
-        parents: [],
-        authorDeviceId: TEST_DEVICE.deviceId,
-        blobId: "root-blob",
-        isText: true,
-      },
-      new TextEncoder().encode("root").buffer,
-    )
-    remote.addRemoteRevision(
-      {
-        operationId: "head-operation",
-        revisionId: "own-head",
-        fileId: "own-file",
-        action: "upsert",
-        path: "note.md",
-        previousPath: null,
-        parents: ["own-root"],
-        authorDeviceId: TEST_DEVICE.deviceId,
-        blobId: "head-blob",
-        isText: true,
-      },
-      new TextEncoder().encode("head").buffer,
-    )
-    const legacyDelete = {
-      revisionId: "legacy-delete",
-      fileId: "own-file",
-      action: "delete" as const,
-      path: "note.md",
-      previousPath: null,
-      parents: ["foreign-revision"],
-      authorDeviceId: TEST_DEVICE.deviceId,
-      epochId: "epoch-id",
-      envelope: "same-signed-legacy-delete",
-      blobId: null,
-      isText: true,
-    }
-    remote.addRemoteRevision({ ...legacyDelete, operationId: "delete-operation" }, null)
-    remote.addRemoteRevision({ ...legacyDelete, operationId: "delete-retry-operation" }, null)
-    const journal = new MemoryJournal()
-    await journal.setCheckpoint({ cursor: 5, logHash: "hash-5" })
-
-    await new HistoryBackfillService(journal, remote, new FakeCrypto()).backfill(TEST_DEVICE)
-
-    expect(await journal.getHistoryCheckpoint()).toMatchObject({ cursor: 5 })
-    expect(await journal.getRetainedRevision("legacy-delete")).toMatchObject({
-      cursor: 4,
-      fileId: "own-file",
-      parents: ["own-head"],
-      tombstone: true,
-    })
-  })
-
-  it("rejects the same cross-file tombstone in canonical history", async () => {
-    const remote = new FakeRemote()
-    remote.addRemoteRevision(
-      {
-        operationId: "foreign-operation",
-        revisionId: "foreign-revision",
-        fileId: "foreign-file",
-        action: "upsert",
-        path: "note.md",
+        path: "foreign.md",
         previousPath: null,
         parents: [],
         authorDeviceId: "other-device",
@@ -238,18 +163,18 @@ describe("HistoryBackfillService", () => {
     remote.addLogFormatTransition()
     remote.addRemoteRevision(
       {
-        operationId: "delete-operation",
-        revisionId: "canonical-delete",
+        operationId: "child-operation",
+        revisionId: "cross-file-child",
         fileId: "own-file",
-        action: "delete",
+        action: "upsert",
         path: "note.md",
         previousPath: null,
         parents: ["foreign-revision"],
         authorDeviceId: TEST_DEVICE.deviceId,
-        blobId: null,
+        blobId: "child-blob",
         isText: true,
       },
-      null,
+      new TextEncoder().encode("child").buffer,
     )
     const journal = new MemoryJournal()
     await journal.setCheckpoint({
@@ -259,10 +184,19 @@ describe("HistoryBackfillService", () => {
       logFormat: "canonical-cbor-v1",
     })
 
-    await expect(
-      new HistoryBackfillService(journal, remote, new FakeCrypto()).backfill(TEST_DEVICE),
-    ).rejects.toThrow("Remote revision parent belongs to another file")
-    expect(await journal.getHistoryCheckpoint()).toMatchObject({ cursor: 3 })
+    await new HistoryBackfillService(journal, remote, new FakeCrypto()).backfill(TEST_DEVICE)
+
+    expect(await journal.getHistoryCheckpoint()).toMatchObject({ cursor: 4 })
+    expect(await journal.getRetainedRevision("cross-file-child")).toMatchObject({
+      fileId: "own-file",
+      parents: ["foreign-revision"],
+    })
+    expect(
+      (await journal.listRetainedFileRevisions("foreign-file")).map((item) => item.revisionId),
+    ).toEqual(["foreign-revision"])
+    expect(
+      new Set((await journal.listRetainedFileRevisions("own-file")).map((item) => item.revisionId)),
+    ).toEqual(new Set(["own-root", "cross-file-child"]))
   })
 
   it("does not backfill operations beyond the live checkpoint", async () => {
@@ -550,6 +484,8 @@ describe("HistoryBackfillService", () => {
     const operation = remote.operations[0]
     if (!operation) throw new Error("Missing test operation")
     const journal = new MemoryJournal()
+    await journal.prepareHistoryBackfill(1)
+    await journal.completeHistoryBackfill(1)
     await journal.commitAppliedOperation({
       revision: {
         revisionId: "parent-revision",
@@ -713,6 +649,7 @@ describe("HistoryBackfillService", () => {
     )
     expect(await journal.getHistoryCheckpoint()).toMatchObject({ cursor: 1, logHash: "hash-1" })
     expect(await journal.listRetainedRevisions()).toHaveLength(1)
+    expect(await journal.getHistoryIndexVersion()).not.toBe(HISTORY_INDEX_VERSION)
     journal.close()
 
     const restartedJournal = new IndexedDbJournal(databaseName)
@@ -724,6 +661,7 @@ describe("HistoryBackfillService", () => {
       logHash: "hash-2",
     })
     expect(await restartedJournal.listRetainedRevisions()).toHaveLength(2)
+    expect(await restartedJournal.getHistoryIndexVersion()).toBe(HISTORY_INDEX_VERSION)
     restartedJournal.close()
     await deleteDatabase(databaseName)
   })

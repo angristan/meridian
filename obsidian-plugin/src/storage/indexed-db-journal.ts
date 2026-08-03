@@ -358,20 +358,34 @@ export class IndexedDbJournal implements JournalPort {
     return (await this.getMetadata<TrustedCheckpoint>("history-checkpoint")) ?? null
   }
 
+  async getHistoryIndexVersion(): Promise<number | null> {
+    return (await this.getMetadata<number>("history-index-version")) ?? null
+  }
+
   async prepareHistoryBackfill(version: number): Promise<void> {
     const database = this.requireDatabase()
     const transaction = database.transaction(["history-revisions", "meta"], "readwrite")
     const done = transactionDone(transaction)
     const meta = transaction.objectStore("meta")
-    const current = await requestResult<MetadataRecord | undefined>(
-      meta.get("history-index-version"),
-    )
-    if (current?.value !== version) {
+    const [current, building] = await Promise.all([
+      requestResult<MetadataRecord | undefined>(meta.get("history-index-version")),
+      requestResult<MetadataRecord | undefined>(meta.get("history-index-building-version")),
+    ])
+    if (current?.value !== version && building?.value !== version) {
       transaction.objectStore("history-revisions").clear()
       meta.delete("history-checkpoint")
-      meta.put({ key: "history-index-version", value: version } satisfies MetadataRecord)
+      meta.put({ key: "history-index-building-version", value: version } satisfies MetadataRecord)
     }
     await done
+  }
+
+  async completeHistoryBackfill(version: number): Promise<void> {
+    const database = this.requireDatabase()
+    const transaction = database.transaction("meta", "readwrite")
+    const meta = transaction.objectStore("meta")
+    meta.put({ key: "history-index-version", value: version } satisfies MetadataRecord)
+    meta.delete("history-index-building-version")
+    await transactionDone(transaction)
   }
 
   async commitHistoryOperation(

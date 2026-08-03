@@ -9,12 +9,13 @@ import type {
   LocalRevision,
   TrustedCheckpoint,
 } from "../model"
-import type {
-  AppliedOperationCommit,
-  JournalPort,
-  LocalEffectsCommit,
-  PushedRevisionCommit,
-  ReconciliationCommit,
+import {
+  HISTORY_INDEX_VERSION,
+  type AppliedOperationCommit,
+  type JournalPort,
+  type LocalEffectsCommit,
+  type PushedRevisionCommit,
+  type ReconciliationCommit,
 } from "./contracts"
 import { sortRevisions } from "./types"
 
@@ -31,7 +32,8 @@ export class MemoryJournal implements JournalPort {
   private readonly revisions = new Map<string, LocalRevision>()
   private readonly historyRevisions = new Map<string, LocalRevision>()
   private historyCheckpoint: TrustedCheckpoint | null = null
-  private historyIndexVersion: number | null = null
+  private historyIndexVersion: number | null = HISTORY_INDEX_VERSION
+  private buildingHistoryIndexVersion: number | null = null
   private readonly conflicts = new Map<string, ConflictRecord>()
 
   async open(): Promise<void> {}
@@ -229,11 +231,20 @@ export class MemoryJournal implements JournalPort {
     return this.historyCheckpoint ? structuredClone(this.historyCheckpoint) : null
   }
 
+  async getHistoryIndexVersion(): Promise<number | null> {
+    return this.historyIndexVersion
+  }
+
   async prepareHistoryBackfill(version: number): Promise<void> {
-    if (this.historyIndexVersion === version) return
+    if (this.historyIndexVersion === version || this.buildingHistoryIndexVersion === version) return
     this.historyRevisions.clear()
     this.historyCheckpoint = null
+    this.buildingHistoryIndexVersion = version
+  }
+
+  async completeHistoryBackfill(version: number): Promise<void> {
     this.historyIndexVersion = version
+    this.buildingHistoryIndexVersion = null
   }
 
   async commitHistoryOperation(

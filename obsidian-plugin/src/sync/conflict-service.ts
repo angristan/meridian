@@ -120,7 +120,7 @@ export class ConflictService {
     const snapshots = await this.journal.getSnapshots()
     const existing = snapshots.get(conflict.conflictPath)
     const fileId = existing?.fileId ?? randomId()
-    const heads = revisionHeads(await this.journal.listFileRevisions(fileId))
+    const heads = revisionHeads(await this.journal.listRetainedFileRevisions(fileId))
     const entry = queuedEntry({
       action: "upsert",
       fileId,
@@ -181,7 +181,9 @@ export class ConflictService {
       )
       if (!replaced) throw new Error("The original path changed while resolving the conflict")
 
-      const heads = revisionHeads(await this.journal.listFileRevisions(remoteRevision.fileId))
+      const heads = revisionHeads(
+        await this.journal.listRetainedFileRevisions(remoteRevision.fileId),
+      )
       const relatedPending = pending.filter((entry) => entry.fileId === remoteRevision.fileId)
       const parents = uniqueIds([
         ...heads.map((revision) => revision.revisionId),

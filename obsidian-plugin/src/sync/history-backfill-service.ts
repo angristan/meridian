@@ -1,4 +1,3 @@
-import type { LogFormat } from "@meridian/protocol"
 import type {
   CryptoPort,
   DeviceKeyMaterial,
@@ -7,11 +6,10 @@ import type {
   RemoteOperation,
   RemotePort,
 } from "../model"
-import type { JournalPort } from "../storage/contracts"
+import { HISTORY_INDEX_VERSION, type JournalPort } from "../storage/contracts"
 import { checkpointFormats, initialCheckpoint } from "./checkpoints"
 import {
   assertRevisionAncestry,
-  repairLegacyTombstoneParents,
   sameRemoteLogEntry,
   sameRevisionIdentity,
 } from "./revision-ancestry"
@@ -22,8 +20,6 @@ import {
   verifiedLogCursor,
 } from "./verified-log"
 
-const HISTORY_INDEX_VERSION = 1
-
 export class HistoryBackfillService {
   private running: Promise<void> | null = null
 
@@ -32,6 +28,10 @@ export class HistoryBackfillService {
     private readonly remote: RemotePort,
     private readonly crypto: CryptoPort,
   ) {}
+
+  async isCurrent(): Promise<boolean> {
+    return (await this.journal.getHistoryIndexVersion()) === HISTORY_INDEX_VERSION
+  }
 
   backfill(device: DeviceKeyMaterial): Promise<void> {
     if (this.running) return this.running
@@ -95,37 +95,31 @@ export class HistoryBackfillService {
             log.checkpoint,
           )
         } else {
-          revision = await this.inspectFileOperation(
-            currentDevice,
-            operation,
-            type,
-            formats.logFormat,
-          )
+          revision = await this.inspectFileOperation(currentDevice, operation, type)
         }
         log = nextLog
         await this.journal.commitHistoryOperation(revision, log.checkpoint, revocation)
       }
     }
+    await this.journal.completeHistoryBackfill(HISTORY_INDEX_VERSION)
   }
 
   private async inspectFileOperation(
     device: DeviceKeyMaterial,
     operation: RemoteOperation,
     type: string,
-    logFormat: LogFormat,
   ): Promise<LocalRevision | null> {
     if (type !== "revision" && type !== "restore" && type !== "tombstone") {
       throw new Error("Complete history contains an unknown operation type")
     }
     const metadata = await this.crypto.inspectRevision(device, operation, Number.MAX_SAFE_INTEGER)
-    const parents = await repairLegacyTombstoneParents(this.journal, metadata, operation, logFormat)
     const revision: LocalRevision = {
       revisionId: metadata.revisionId,
       fileId: metadata.fileId,
       path: metadata.path,
       action: metadata.action,
       previousPath: metadata.previousPath,
-      parents,
+      parents: metadata.parents,
       deviceId: metadata.authorDeviceId,
       createdAt: metadata.createdAt,
       cursor: operation.cursor,

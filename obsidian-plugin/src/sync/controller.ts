@@ -443,6 +443,25 @@ export class SyncController {
     await this.historyBackfill.backfill(device)
   }
 
+  private async ensureCurrentHistoryIndex(): Promise<void> {
+    const device = this.requireDevice()
+    if (await this.historyBackfill.isCurrent()) return
+    if (!device.trustedCheckpointAuthorized) {
+      throw new Error("Re-pair this legacy device before updating local revision history")
+    }
+    if (!networkAvailable()) {
+      throw new Error("Connect once to update local revision history before syncing changes")
+    }
+    this.updateStatus({
+      phase: "pulling",
+      message: "Updating local revision history",
+      error: null,
+      progress: null,
+    })
+    await this.authenticate(device)
+    await this.historyBackfill.backfill(device)
+  }
+
   private runMaintenance<T>(operation: () => Promise<T>): Promise<T> {
     if (this.stopRequested) return Promise.reject(new Error("Meridian sync is paused"))
     const predecessor = this.maintenance ?? this.running ?? Promise.resolve()
@@ -487,6 +506,8 @@ export class SyncController {
       this.status.phase === "error"
         ? { message: this.status.message, error: this.status.error }
         : null
+    if (this.stopRequested) return
+    await this.ensureCurrentHistoryIndex()
     if (this.stopRequested) return
     this.updateStatus({
       phase: "scanning",
