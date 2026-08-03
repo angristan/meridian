@@ -1,3 +1,10 @@
+## [1.12.2](https://github.com/angristan/meridian/compare/1.12.1...1.12.2) (2026-08-03)
+
+
+### Bug Fixes
+
+* read legacy file operation IDs ([af37355](https://github.com/angristan/meridian/commit/af373557d5d0344ba0d2ab7f22043ee38b11d9ed))
+
 ## [1.12.1](https://github.com/angristan/meridian/compare/1.12.0...1.12.1) (2026-08-03)
 
 
