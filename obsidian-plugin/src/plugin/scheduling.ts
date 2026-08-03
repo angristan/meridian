@@ -2,6 +2,7 @@ import { type Plugin, TFile } from "obsidian"
 import type { MeridianSettings, SyncStatus } from "../model"
 import type { SyncController } from "../sync/controller"
 import { isSyncablePath } from "../vault/path-policy"
+import { runtimeTuning } from "./runtime-tuning"
 import {
   fallbackPollDueAt,
   fileEventDelayMs,
@@ -197,14 +198,14 @@ export class PluginScheduling {
       const controller = this.controller()
       if (!controller || document.visibilityState !== "visible") return
       const now = this.now()
-      const settings = this.settings()
+      const tuning = runtimeTuning(this.settings())
       const status = controller.getStatus()
-      const scanDueAt = this.lastScanAt + settings.scanIntervalMinutes * 60_000
+      const scanDueAt = this.lastScanAt + tuning.fullScanMs
       const pollDueAt = fallbackPollDueAt({
         lastPollAt: this.lastPollAt,
         lastSyncedAt: status.lastSyncedAt,
         socketConnected: status.socketConnected,
-        disconnectedPollIntervalMs: settings.pollIntervalSeconds * 1_000,
+        disconnectedPollIntervalMs: tuning.disconnectedPollMs,
         consecutiveFailures: this.pollFailures,
       })
       const reconnectDue = !status.socketConnected && now >= this.nextReconnectAt
@@ -249,15 +250,15 @@ export class PluginScheduling {
     }
 
     const now = this.now()
-    const settings = this.settings()
+    const tuning = runtimeTuning(this.settings())
     const status = controller.getStatus()
     const deadlines = [
-      this.lastScanAt + settings.scanIntervalMinutes * 60_000,
+      this.lastScanAt + tuning.fullScanMs,
       fallbackPollDueAt({
         lastPollAt: this.lastPollAt,
         lastSyncedAt: status.lastSyncedAt,
         socketConnected: status.socketConnected,
-        disconnectedPollIntervalMs: settings.pollIntervalSeconds * 1_000,
+        disconnectedPollIntervalMs: tuning.disconnectedPollMs,
         consecutiveFailures: this.pollFailures,
       }),
     ]

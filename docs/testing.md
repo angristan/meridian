@@ -24,7 +24,7 @@ The installer needs a `.obsidian` directory. It writes only to `.obsidian/plugin
 1. Publish a GitHub Release with `main.js`, `manifest.json`, and `styles.css`.
 2. On the iPhone, install **BRAT** from Community Plugins.
 3. Add `angristan/meridian` as a beta plugin. Enable **Meridian**.
-4. On the Mac, create a five-minute QR code in **Meridian status → Devices**.
+4. On the Mac, create a five-minute QR code in **Meridian status → Devices and recovery**.
 5. Scan it on the iPhone.
 6. On the Mac, check the signed name, platform, and short ID.
 7. Compare the automatic phrase on both devices. Repeated items are valid.
@@ -103,12 +103,15 @@ Worker boundary tests call typed Durable Object methods directly. Normal interna
 - [ ] Test an 8 MiB hash with Blob Workers available and unavailable.
 - [ ] Test a cooperative 10,000-file index and 500-operation pull batch.
 - [ ] Allow at most four active chunk transfers. Keep chunk order. Never commit after a failed chunk.
-- [ ] One exact timer combines scan and poll deadlines. Reconnect backoff caps at five minutes. Suspension drains durable file-event writes.
+- [ ] One exact timer combines scan and poll deadlines. New installs use a 45-second disconnected poll, five-minute full scan, and 64 MiB file limit. Faster or larger legacy settings never become slower or less capable. Reconnect backoff caps at five minutes.
 
 Automated tests use generous time limits to find pathological regressions. They check that fallbacks and batch pulls yield to timer heartbeats. They are not hardware performance claims.
 
-## Historical log and recovery state checks
+## History and recovery state checks
 
+- [ ] Open global History with more than 200 revisions. Show every revision. Keep the Sync log bounded to the latest 200 changes.
+- [ ] Open per-file history from the command palette and file menu. Preview, compare, and restore without rewriting old revisions.
+- [ ] Recover deleted files and resolve conflicts from their focused views. Keep both visible from Meridian status.
 - [ ] Replay `legacy revision → signed format transition → canonical revision` from cursor zero.
 - [ ] Resume before and after the transition; select the correct hash format.
 - [ ] Backfill all history across it without rewriting entries.
@@ -151,10 +154,10 @@ Automated tests use generous time limits to find pathological regressions. They 
 
 ## Security lifecycle
 
-- [ ] Pair a second device. Check the automatic phrase on both screens.
+- [ ] Pair a second device from **Devices and recovery**. Check the automatic phrase on both screens.
 - [ ] Block encrypted transfer until both confirmations. Cancellation authorizes nobody. Completion updates both screens. Reject invalid or expired capabilities.
 - [ ] Drop responses after join, owner approval, release, and signed completion. Keep and replay exact SecretStorage data. Closing after phrase confirmation does not cancel. Canceled screens offer a new-code retry. Insert a completed device once.
-- [ ] As owner, revoke an older member by short ID. Its sessions fail at once and its row shows **Revoked**. Other clients apply the signed revocation without revision decryption. Reject later operations from it.
+- [ ] As owner, revoke an older member by short ID. Its sessions fail at once and its row shows **Revoked**. A member never sees an active **Add device** action. Other clients apply the signed revocation without revision decryption.
 - [ ] As member, select **Remove this device**. Warn about queued changes, keep files, self-revoke, forget local keys and config, and allow pairing again.
 - [ ] Reject owner self-removal and member cross-device revocation. Lose a revocation response and restart at every cleanup boundary. Only exact `device_not_found` confirmation finishes cleanup.
 - [ ] Scan setup and pairing links in connected, paused, partly configured, and removal-pending vaults. Stop before key creation or identity change.
@@ -162,9 +165,15 @@ Automated tests use generous time limits to find pathological regressions. They 
 - [ ] Recover in a fresh disposable vault. Revoke all old sessions. New writes use the rotated epoch.
 - [ ] Reject stale cursors, duplicate operations, changed chunk order, and modified ciphertext safely.
 
-## Settings
+## Product settings and troubleshooting
 
-Test each category on every device:
+- [ ] Normal settings show only Connection, Devices and recovery, Obsidian configuration, and Troubleshooting.
+- [ ] No selective-sync, polling, scan-interval, file-limit, encryption-epoch, storage, pruning, recovery, or repair control appears at the top level.
+- [ ] Existing selective-sync rules remain enforced and appear only as a warning in Troubleshooting.
+- [ ] Technical logs and copied reports exclude paths, endpoints, device identifiers, raw errors, secrets, and recovery data.
+- [ ] Sync log entries may show paths but never enter copied support data.
+
+Test each configuration category on every device:
 
 - [ ] Main settings
 - [ ] Appearance

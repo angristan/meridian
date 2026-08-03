@@ -28,12 +28,14 @@ import { createSanitizedDebugReport, SyncDiagnostics } from "./plugin/diagnostic
 import { PairingCoordinator } from "./plugin/pairing-coordinator"
 import { hasConfiguredMeridianIdentity } from "./plugin/pairing-link"
 import { registerProtocolHandlers } from "./plugin/protocol-handlers"
+import { runtimeTuning } from "./plugin/runtime-tuning"
 import { PluginScheduling } from "./plugin/scheduling"
 import { MeridianSecretStorage } from "./plugin/secret-storage"
 import { MeridianSettingsTab } from "./plugin/settings"
 import { normalizeSettings, withoutMeridianIdentity } from "./plugin/settings-state"
 import { IndexedDbJournal } from "./storage/indexed-db-journal"
 import { SyncController } from "./sync/controller"
+import { ActivityModal } from "./ui/activity-modal"
 import { RecoveryConnectModal, RecoveryModal } from "./ui/connection-modals"
 import { DeletedFilesModal } from "./ui/deleted-files-modal"
 import { HistoryModal } from "./ui/history-conflicts"
@@ -137,6 +139,24 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
       checkCallback: (checking) => {
         const available = Boolean(this.settings.endpoint)
         if (available && !checking) new DeletedFilesModal(this).open()
+        return available
+      },
+    })
+    this.addCommand({
+      id: "show-sync-log",
+      name: "Show sync log",
+      checkCallback: (checking) => {
+        const available = Boolean(this.settings.endpoint)
+        if (available && !checking) new ActivityModal(this).open()
+        return available
+      },
+    })
+    this.addCommand({
+      id: "show-all-history",
+      name: "Show revision history",
+      checkCallback: (checking) => {
+        const available = Boolean(this.settings.endpoint)
+        if (available && !checking) new HistoryModal(this).open()
         return available
       },
     })
@@ -445,6 +465,14 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
     return remote.listDevices()
   }
 
+  async renameCurrentDevice(name: string): Promise<void> {
+    const normalized = name.trim().slice(0, 80)
+    if (!normalized) throw new Error("Device name cannot be empty")
+    this.settings.deviceName = normalized
+    await this.saveSettings()
+    await this.controller?.updateDeviceDescriptor()
+  }
+
   async revokeDevice(device: RemoteDevice): Promise<void> {
     if (!this.controller) throw new Error("Meridian is not connected")
     await this.controller.revokeDevice(device)
@@ -634,7 +662,7 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
       const compute = new BackgroundSyncCompute()
       const vault = new ObsidianVaultPort(
         this.app.vault,
-        () => this.settings.maxFileSizeMiB * 1024 * 1024,
+        () => runtimeTuning(this.settings).maxFileBytes,
         compute,
       )
       const journal = new IndexedDbJournal(`meridian-${this.settings.vaultId}`)

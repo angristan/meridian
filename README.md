@@ -67,6 +67,17 @@ On iPhone, install a GitHub Release with [BRAT](https://github.com/TfTHacker/obs
 
 Obsidian plugins cannot run continuously in the iOS background. Meridian syncs when Obsidian opens or resumes. Sync does not depend on WebSockets.
 
+## Use Meridian
+
+Open **Meridian status** from the ribbon or command palette:
+
+- **History** shows complete revision history and can preview, compare, or restore a revision.
+- **Sync log** shows the latest 200 synchronized changes.
+- **Devices and recovery** handles pairing, names, revocation, removal, and recovery.
+- **Troubleshooting** contains technical status, a privacy-safe session log, storage details, and repair tools.
+
+Meridian chooses safe polling, scan, and file-size limits automatically. Configuration sync remains customizable in settings. New installations sync every eligible vault file. Upgrades preserve old exclusion rules as hidden compatibility state to prevent unexpected uploads or deletions.
+
 ## Develop
 
 You need Bun 1.3.9 and an Obsidian test vault. Remote deployment also needs a Cloudflare account. Local Workerd tests do not need one.

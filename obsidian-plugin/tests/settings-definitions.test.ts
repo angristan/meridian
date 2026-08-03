@@ -84,23 +84,13 @@ describe("Obsidian 1.13 setting definitions", () => {
           : [],
     )
 
-    expect(names).toEqual(
-      expect.arrayContaining([
-        "Connection",
-        "Device name",
-        "Excluded folders",
-        "Excluded file extensions",
-        "Themes and CSS snippets",
-        "Polling interval",
-        "Attachment size limit",
-        "Encryption epoch",
-        "Storage usage",
-        "Automatic pruning",
-        "Recover vault ownership",
-        "Rebuild local index",
-      ]),
-    )
-    expect(definitions).toHaveLength(7)
+    expect(names).toEqual([
+      "Connection",
+      "Devices and recovery",
+      "Obsidian configuration",
+      "Troubleshooting",
+    ])
+    expect(definitions).toHaveLength(3)
   })
 
   it("derives legacy rows and controls from the searchable definitions", () => {
@@ -129,17 +119,6 @@ describe("Obsidian 1.13 setting definitions", () => {
 
     const rows = renderedSettings.filter((setting) => !setting.heading)
     expect(rows.map((row) => row.name)).toEqual(visibleItems.map((item) => item.name))
-    const expectedControls = visibleItems
-      .filter((item) => "control" in item && item.control)
-      .map((item) => ({
-        control: "control" in item ? item.control?.type : undefined,
-        name: item.name,
-      }))
-    const controlNames = new Set(expectedControls.map((item) => item.name))
-    expect(
-      rows
-        .filter((row) => controlNames.has(row.name))
-        .map(({ control, name }) => ({ control, name })),
-    ).toEqual(expectedControls)
+    expect(rows.map((row) => row.control)).toEqual(["button", "button", "button", "button"])
   })
 })

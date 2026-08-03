@@ -1,26 +1,64 @@
 import { type ButtonComponent, Modal, Notice, Setting } from "obsidian"
 import type { PairingInvitation, RemoteDevice } from "../model"
 import { isPollingCanceled, pollUntil } from "../platform/polling"
+import { RecoveryConnectModal } from "./connection-modals"
 import { formatTime } from "./format-time"
 import type { MeridianUiHost } from "./host"
 import { renderPairingQr } from "./pairing-qr"
 
 export class DevicesModal extends Modal {
+  private generation = 0
+
   constructor(private readonly host: MeridianUiHost) {
     super(host.app)
   }
 
   override onOpen(): void {
-    this.setTitle("Devices")
+    this.setTitle("Devices and recovery")
     void this.render()
   }
 
-  private async render(): Promise<void> {
+  override onClose(): void {
+    this.generation += 1
     this.contentEl.empty()
-    const devices = await this.host.getDevices()
+  }
+
+  private async render(): Promise<void> {
+    const generation = ++this.generation
+    this.contentEl.empty()
+    const loading = this.contentEl.createDiv({
+      cls: "setting-item-description",
+      text: "Loading devices…",
+    })
+    loading.setAttribute("role", "status")
+
+    let devices: RemoteDevice[] = []
+    let loadError: string | null = null
+    try {
+      devices = await this.host.getDevices()
+    } catch (error) {
+      loadError = errorMessage(error)
+    }
+    if (generation !== this.generation) return
+    this.contentEl.empty()
+
+    this.renderCurrentDeviceName()
+    if (this.host.settings.pendingPairingCompletion) this.renderPairingRetry()
+
+    new Setting(this.contentEl).setName("Authorized devices").setHeading()
+    if (loadError) {
+      const alert = this.contentEl.createDiv({
+        cls: "meridian-callout is-error",
+        text: loadError,
+      })
+      alert.setAttribute("role", "alert")
+    }
+
     const current = devices.find((device) => device.deviceId === this.host.settings.deviceId)
     const canManageDevices = current?.role === "owner" && current.revokedAt === null
-    for (const device of devices) {
+    for (const device of [...devices].sort(
+      (left, right) => Number(left.revokedAt !== null) - Number(right.revokedAt !== null),
+    )) {
       const isCurrent = device.deviceId === this.host.settings.deviceId
       const name = isCurrent ? this.host.settings.deviceName : device.deviceName
       const setting = new Setting(this.contentEl)
@@ -28,7 +66,7 @@ export class DevicesModal extends Modal {
         .setDesc(
           [
             device.platform,
-            `${device.role === "owner" ? "Owner" : "Member"}`,
+            device.role === "owner" ? "Owner" : "Member",
             device.revokedAt ? "Revoked" : "Authorized",
             `ID ${shortDeviceId(device.deviceId)}`,
             formatTime(device.authorizedAt),
@@ -47,29 +85,164 @@ export class DevicesModal extends Modal {
         )
       }
     }
-    this.contentEl.createDiv({
-      cls: "meridian-callout",
-      text: "Pairing uses a short-lived code and a phrase derived from both devices’ cryptographic identities.",
-    })
+
+    if (canManageDevices) {
+      this.contentEl.createDiv({
+        cls: "meridian-callout",
+        text: "Pairing uses a short-lived code and a phrase shown on both devices.",
+      })
+      new Setting(this.contentEl)
+        .setName("Add device")
+        .setDesc("Scan a single-use code with the new device, then compare both screens.")
+        .addButton((button) =>
+          button
+            .setButtonText("Add device")
+            .setCta()
+            .onClick(async () => {
+              button.setDisabled(true)
+              try {
+                const invitation = await this.host.pairing.createLink()
+                new PairingLinkModal(this.host, invitation).open()
+                this.close()
+              } catch (error) {
+                showError(error)
+                button.setDisabled(false)
+              }
+            }),
+        )
+    } else if (current && current.revokedAt === null) {
+      new Setting(this.contentEl)
+        .setName("Add device")
+        .setDesc("Only the owner device can authorize another device.")
+    }
+
+    new Setting(this.contentEl).setName("Recovery").setHeading()
     new Setting(this.contentEl)
-      .setName("Add device")
-      .setDesc("Scan a single-use code with the new device, then compare both screens.")
+      .setName("Recover vault ownership")
+      .setDesc("Use the offline recovery code only after losing every authorized device.")
       .addButton((button) =>
         button
-          .setButtonText("Add device")
+          .setButtonText("Recovery options")
+          .setWarning()
+          .onClick(() => new RecoveryConnectModal(this.host).open()),
+      )
+    this.renderRemoval(current, loadError !== null)
+  }
+
+  private renderCurrentDeviceName(): void {
+    let draft = this.host.settings.deviceName
+    new Setting(this.contentEl)
+      .setName("This device")
+      .setDesc("The name shown to your other Meridian devices.")
+      .addText((text) =>
+        text.setValue(draft).onChange((value) => {
+          draft = value
+        }),
+      )
+      .addButton((button) =>
+        button.setButtonText("Save name").onClick(async () => {
+          button.setDisabled(true)
+          try {
+            await this.host.renameCurrentDevice(draft)
+            new Notice("Device name updated")
+            await this.render()
+          } catch (error) {
+            showError(error)
+            button.setDisabled(false)
+          }
+        }),
+      )
+  }
+
+  private renderPairingRetry(): void {
+    new Setting(this.contentEl)
+      .setName("Finish pairing")
+      .setDesc(
+        "Server authorization still needs confirmation. Retrying keeps this device identity.",
+      )
+      .addButton((button) =>
+        button
+          .setButtonText("Retry pairing")
           .setCta()
           .onClick(async () => {
             button.setDisabled(true)
             try {
-              const invitation = await this.host.pairing.createLink()
-              new PairingLinkModal(this.host, invitation).open()
-              this.close()
+              await this.host.pairing.completePending()
+              new Notice("Device pairing completed")
+              await this.render()
             } catch (error) {
               showError(error)
               button.setDisabled(false)
             }
           }),
       )
+  }
+
+  private renderRemoval(current: RemoteDevice | undefined, loadFailed: boolean): void {
+    const pending = this.host.settings.pendingDeviceRemoval !== null
+    const allowed =
+      pending || loadFailed || !current || current.revokedAt !== null || current.role !== "owner"
+    const description = pending
+      ? "A previous removal attempt is pending. Retry to finish server revocation and local cleanup."
+      : current?.role === "owner" && current.revokedAt === null
+        ? "The owner cannot remove itself. Use recovery after owner loss."
+        : "Revoke this identity and forget its Meridian connection. Vault files stay on this device."
+    new Setting(this.contentEl)
+      .setName("Remove this device")
+      .setDesc(description)
+      .addButton((button) =>
+        button
+          .setButtonText(pending ? "Retry removal" : "Remove")
+          .setWarning()
+          .setDisabled(!allowed)
+          .onClick(() => new RemoveCurrentDeviceModal(this.host, () => this.close()).open()),
+      )
+  }
+}
+
+class RemoveCurrentDeviceModal extends Modal {
+  constructor(
+    private readonly host: MeridianUiHost,
+    private readonly onRemoved: () => void,
+  ) {
+    super(host.app)
+  }
+
+  override onOpen(): void {
+    this.setTitle("Remove this device?")
+    this.contentEl.createDiv({
+      cls: "meridian-callout is-warning",
+      text: "This permanently revokes this device's Meridian identity and ends synchronization. Local vault files are not deleted. Pairing is required to connect again.",
+    })
+    const queued = this.host.getStatus().queued
+    if (queued > 0) {
+      this.contentEl.createDiv({
+        cls: "meridian-callout is-warning",
+        text: `${queued} local change${queued === 1 ? " is" : "s are"} still queued. Sync first unless those changes should stay only on this device.`,
+      })
+    }
+    const actions = new Setting(this.contentEl)
+    actions.addButton((button) => button.setButtonText("Cancel").onClick(() => this.close()))
+    actions.addButton((button) =>
+      button
+        .setButtonText("Remove this device")
+        .setWarning()
+        .onClick(async () => {
+          button.setDisabled(true)
+          try {
+            await this.host.removeCurrentDevice()
+            this.close()
+            this.onRemoved()
+          } catch (error) {
+            showError(error)
+            button.setDisabled(false)
+          }
+        }),
+    )
+  }
+
+  override onClose(): void {
+    this.contentEl.empty()
   }
 }
 

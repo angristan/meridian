@@ -8,10 +8,10 @@ Meridian syncs one Obsidian vault across macOS and iOS through a self-hosted Clo
 
 - End-to-end encryption for notes, attachments, paths, metadata, and selected settings
 - Offline edits and deterministic conflict preservation
-- Immutable revision history with infinite retention
+- Visible immutable revision history with infinite retention and a bounded sync log
 - Pairing, revocation, recovery, and signed key epochs
 - WebSocket hints with authenticated HTTP catch-up
-- Local storage diagnostics and safe compaction
+- Advanced technical status, privacy-safe logs, storage details, and safe compaction
 
 It does not provide continuous iOS background work, live group editing, server-side plaintext work, cross-vault sharing, or backups.
 
@@ -65,8 +65,12 @@ Shared packages never import Cloudflare, Obsidian, browser UI, or runtime adapte
 - Signed device retention acknowledgements are telemetry only. They never allow deletion.
 - Local compaction deletes only completed work and exact duplicate history rows.
 
-### Runtime
+### Product and runtime
 
+- Normal settings show connection, device management, and configuration sync only.
+- Polling, full scans, and mobile-safe file limits use internal automatic policy.
+- New installations sync every eligible vault file. Existing exclusion rules remain enforced as hidden read-only compatibility state.
+- History and the sync log stay visible. Technical status, storage, logs, and repair live under Troubleshooting.
 - `SyncController` owns accepted vault-event writes, sync, serialized maintenance, quiescence, and journal lifetime.
 - The scheduler owns only deadlines, debounce, and reconnect policy.
 - One cancellable owner controls pairing polls. Polling stops on plugin unload.

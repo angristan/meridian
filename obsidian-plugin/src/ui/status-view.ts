@@ -8,8 +8,8 @@ import { DevicesModal } from "./devices-pairing"
 import { formatRelativeTime, formatTime } from "./format-time"
 import { HistoryModal } from "./history-conflicts"
 import type { MeridianUiHost } from "./host"
-import { StorageModal } from "./storage-modal"
 import { presentSyncProgressSlot } from "./sync-progress"
+import { TroubleshootingModal } from "./troubleshooting-modal"
 
 export const STATUS_VIEW_TYPE = "meridian-status"
 
@@ -149,7 +149,7 @@ export class MeridianStatusView extends ItemView {
     const syncButton = actionGrid.createEl("button")
     syncButton.addEventListener("click", () => void this.runSync(syncButton))
 
-    const activityButton = actionGrid.createEl("button", { text: "Activity" })
+    const activityButton = actionGrid.createEl("button", { text: "Sync log" })
     activityButton.addEventListener("click", () => new ActivityModal(this.host).open())
 
     const historyButton = actionGrid.createEl("button", { text: "History" })
@@ -166,10 +166,12 @@ export class MeridianStatusView extends ItemView {
       new ConflictsModal(this.host, () => void this.refreshConflictCount()).open()
     })
 
-    const storageButton = actionGrid.createEl("button", { text: "Storage" })
-    storageButton.addEventListener("click", () => new StorageModal(this.host).open())
+    const troubleshootingButton = actionGrid.createEl("button", { text: "Troubleshooting" })
+    troubleshootingButton.addEventListener("click", () =>
+      new TroubleshootingModal(this.host).open(),
+    )
 
-    const devicesButton = actionGrid.createEl("button", { text: "Devices" })
+    const devicesButton = actionGrid.createEl("button", { text: "Devices and recovery" })
     devicesButton.addEventListener("click", () => new DevicesModal(this.host).open())
     const settingsButton = actionGrid.createEl("button", { text: "Settings" })
     settingsButton.addEventListener("click", () => this.host.openSettings())

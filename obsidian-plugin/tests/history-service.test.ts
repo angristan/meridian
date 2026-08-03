@@ -18,6 +18,30 @@ function service(
 }
 
 describe("HistoryService", () => {
+  it("keeps full revision history beyond the bounded sync log", async () => {
+    const journal = new MemoryJournal()
+    for (let cursor = 1; cursor <= 205; cursor += 1) {
+      await seedRevision(journal, {
+        revisionId: `revision-${cursor}`,
+        fileId: "file-id",
+        path: "note.md",
+        action: "upsert",
+        previousPath: null,
+        parents: cursor === 1 ? [] : [`revision-${cursor - 1}`],
+        deviceId: TEST_DEVICE.deviceId,
+        createdAt: cursor,
+        cursor,
+        tombstone: false,
+        isConflict: false,
+        operation: null,
+      })
+    }
+    const history = service(new FakeVault(), journal)
+
+    await expect(history.history()).resolves.toHaveLength(205)
+    await expect(history.activity(TEST_DEVICE.deviceId, 200)).resolves.toHaveLength(200)
+  })
+
   it("follows stable file identity across renames", async () => {
     const vault = new FakeVault({ "Archive/note.md": "current" })
     const journal = new MemoryJournal()

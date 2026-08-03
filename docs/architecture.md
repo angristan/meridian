@@ -65,7 +65,7 @@ SyncController
 - `src/crypto/` owns device, pairing, revision, and Worker wire workflows.
 - `src/network/` owns the portable client, response parsing, one-shot WebSockets, and transports.
 - `src/storage/` owns contracts, IndexedDB, memory tests, migrations, and helpers.
-- `src/ui/` owns status, settings, recovery, history, conflicts, devices, and pairing views.
+- `src/ui/` owns status, settings, history, the sync log, devices, recovery, conflicts, and advanced troubleshooting.
 
 A stateless typed object provides `CryptoPort`. The scheduler owns reconnect timing. Consumers import owner modules directly.
 
@@ -116,7 +116,9 @@ Pull replay repairs matching prepared state before checkpoint advance. A lost se
 
 Vault events are grouped by normalized path in the IndexedDB `dirty-paths` store. Routine event and notification sync checks only those paths. Journal entries, snapshots, and consumed event tokens commit together. An event replaced during reconciliation stays queued.
 
-Startup, resume, manual sync, settings changes, repair, and periodic sync still scan the full vault. This recovers missed events, direct file changes, and plugin downtime. Exclusions stay local to each device.
+Startup, resume, manual sync, settings changes, repair, and periodic sync still scan every eligible vault file. This recovers missed events, direct file changes, and plugin downtime.
+
+New installations have no selective-sync controls. Existing exclusion rules remain enforced as hidden read-only compatibility state. Removing them without replaying skipped remote heads could upload excluded data or infer false deletions.
 
 ```text
 vault events --> durable dirty paths --> targeted hash ----.
@@ -138,7 +140,9 @@ Pause and unload stop pending Worker work. Dirty event tokens stay recoverable. 
 
 One deadline timer replaces periodic scheduler ticks. Edit bursts wait 1.5 seconds and combine for at most five seconds. Meridian tries to flush a pending batch when the app becomes hidden.
 
-WebSocket reconnects use jittered exponential backoff. Failed HTTP polls use exponential backoff. Both cap at five minutes and resume when the browser is online.
+Meridian chooses timing automatically. New installations poll after 45 seconds without live notifications and run a full scan every five minutes. WebSocket reconnects and failed HTTP polls use exponential backoff capped at five minutes. Existing faster settings remain faster after upgrade.
+
+New installations use a 64 MiB mobile-safe whole-file limit. An upgrade keeps a previously higher limit so an existing remote revision cannot strand the device.
 
 Obsidian plugins do not run continuously in the iOS background. Meridian syncs when Obsidian opens or resumes. HTTP polling remains authoritative.
 

@@ -13,7 +13,7 @@ export class DiagnosticsModal extends Modal {
   }
 
   override onOpen(): void {
-    this.setTitle("Sync diagnostics")
+    this.setTitle("Technical log")
     const actions = new Setting(this.contentEl)
     actions.addSearch((search) =>
       search.setPlaceholder("Search session events").onChange((value) => {
@@ -30,12 +30,12 @@ export class DiagnosticsModal extends Modal {
     actions.addButton((button) =>
       button
         .setButtonText("Copy debug info")
-        .setTooltip("Copies a sanitized report without paths, endpoints, identifiers, or secrets")
+        .setTooltip("Copies a report without paths, endpoints, identifiers, or secrets")
         .onClick(() => void this.copyReport()),
     )
     this.contentEl.createDiv({
       cls: "setting-item-description meridian-section-description",
-      text: "Session errors remain local. Copied debug information excludes paths, endpoints, identifiers, and secrets.",
+      text: "This bounded session log keeps only standard sync states. Paths, endpoints, identifiers, secrets, and raw errors are never stored here.",
     })
     this.list = this.contentEl.createDiv({ cls: "meridian-diagnostic-list" })
     this.renderList()

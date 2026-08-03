@@ -159,6 +159,31 @@ describe("SyncController", () => {
     controller.stop()
   })
 
+  it("publishes a renamed device without reconnecting", async () => {
+    const remote = new FakeRemote()
+    let deviceName = "MacBook"
+    const controller = new SyncController(
+      new FakeVault(),
+      new MemoryJournal(),
+      remote,
+      new FakeCrypto(),
+      () => ALL_CATEGORIES,
+      () => {},
+      () => ({ deviceName, platform: "macOS" }),
+    )
+
+    await controller.start(TEST_DEVICE)
+    expect(remote.deviceDescriptors).toEqual([{ deviceName: "MacBook", platform: "macOS" }])
+
+    deviceName = "Travel Mac"
+    await controller.updateDeviceDescriptor()
+    expect(remote.deviceDescriptors.at(-1)).toEqual({
+      deviceName: "Travel Mac",
+      platform: "macOS",
+    })
+    controller.stop()
+  })
+
   it("uploads local content as raw encrypted blobs before committing", async () => {
     const vault = new FakeVault({ "note.md": "hello" })
     const journal = new MemoryJournal()

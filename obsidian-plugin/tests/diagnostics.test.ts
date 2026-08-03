@@ -8,13 +8,21 @@ describe("sync diagnostics", () => {
     const diagnostics = new SyncDiagnostics(2, () => ++now)
     diagnostics.record({ ...INITIAL_STATUS, phase: "scanning", message: "Checking local changes" })
     diagnostics.record({ ...INITIAL_STATUS, phase: "scanning", message: "Checking local changes" })
-    diagnostics.record({ ...INITIAL_STATUS, phase: "pulling", message: "Downloading changes" })
+    diagnostics.record({
+      ...INITIAL_STATUS,
+      phase: "pulling",
+      message: "Downloading changes",
+      error: "Failed Secret/medical.md for private-device-id",
+    })
     diagnostics.record({ ...INITIAL_STATUS, phase: "idle", message: "Up to date" })
 
-    expect(diagnostics.entries()).toEqual([
+    const entries = diagnostics.entries()
+    expect(entries).toEqual([
       expect.objectContaining({ timestamp: 3, phase: "idle" }),
-      expect.objectContaining({ timestamp: 2, phase: "pulling" }),
+      expect.objectContaining({ timestamp: 2, phase: "pulling", error: "Error recorded" }),
     ])
+    expect(JSON.stringify(entries)).not.toContain("medical.md")
+    expect(JSON.stringify(entries)).not.toContain("private-device-id")
   })
 
   it("copies useful state without endpoints, identifiers, paths, or error details", () => {
@@ -39,7 +47,14 @@ describe("sync diagnostics", () => {
         settings,
       },
       status,
-      [{ timestamp: 1, phase: "error", message: "Sync needs attention", error: status.error }],
+      [
+        {
+          timestamp: 1,
+          phase: "error",
+          message: "Failed Secret/medical.md for private-device-id",
+          error: status.error,
+        },
+      ],
     )
 
     expect(report).toContain('"cursor": 42')
@@ -48,5 +63,6 @@ describe("sync diagnostics", () => {
     expect(report).not.toContain("private-vault-id")
     expect(report).not.toContain("private-device-id")
     expect(report).not.toContain("medical.md")
+    expect(report).not.toContain("Sync needs attention")
   })
 })

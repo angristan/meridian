@@ -176,10 +176,6 @@ export class StorageModal extends Modal {
           .onClick(() => new StoragePruneConfirmationModal(this.host, () => this.render()).open()),
       )
     new Setting(this.contentEl)
-      .setName("Automatic history pruning")
-      .setDesc("Disabled by the keep-history-forever policy.")
-      .addButton((button) => button.setButtonText("Not available").setDisabled(true))
-    new Setting(this.contentEl)
       .setName("Refresh usage")
       .setDesc("R2 usage is calculated on demand and can take longer for large vaults.")
       .addButton((button) => button.setButtonText("Refresh").onClick(() => void this.render()))

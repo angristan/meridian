@@ -21,14 +21,15 @@ export class SyncDiagnostics {
   }
 
   record(status: SyncStatus): void {
-    const key = `${status.phase}\0${status.message}\0${status.error ?? ""}`
+    const hasError = status.error !== null
+    const key = `${status.phase}\0${status.message}\0${hasError}`
     if (key === this.previousKey) return
     this.previousKey = key
     this.values.push({
       timestamp: this.now(),
       phase: status.phase,
       message: status.message,
-      error: status.error,
+      error: hasError ? "Error recorded" : null,
     })
     if (this.values.length > this.maximumEntries) {
       this.values.splice(0, this.values.length - this.maximumEntries)
@@ -69,7 +70,6 @@ export function createSanitizedDebugReport(
       recentTransitions: diagnostics.slice(0, 50).map((entry) => ({
         timestamp: entry.timestamp,
         phase: entry.phase,
-        message: entry.message,
         hasError: entry.error !== null,
       })),
     },

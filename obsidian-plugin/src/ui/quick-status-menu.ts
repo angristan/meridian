@@ -1,9 +1,6 @@
 import { Menu, Notice } from "obsidian"
 import { ActivityModal } from "./activity-modal"
-import { ConflictsModal } from "./conflicts-modal"
-import { DeletedFilesModal } from "./deleted-files-modal"
 import { DevicesModal } from "./devices-pairing"
-import { DiagnosticsModal } from "./diagnostics-modal"
 import { HistoryModal } from "./history-conflicts"
 import type { MeridianUiHost } from "./host"
 import {
@@ -11,7 +8,7 @@ import {
   type QuickStatusAction,
   type QuickStatusActionId,
 } from "./quick-status-presentation"
-import { StorageModal } from "./storage-modal"
+import { TroubleshootingModal } from "./troubleshooting-modal"
 
 export function showQuickStatusMenu(
   host: MeridianUiHost,
@@ -34,8 +31,7 @@ export function showQuickStatusMenuAtElement(
 }
 
 function createQuickStatusMenu(host: MeridianUiHost, openStatus: () => void, menu: Menu): Menu {
-  const activeFile = host.app.workspace.getActiveFile()
-  const presentation = presentQuickStatus(host.settings, host.getStatus(), activeFile !== null)
+  const presentation = presentQuickStatus(host.settings, host.getStatus())
   menu.addItem((item) =>
     item.setTitle(presentation.title).setIcon(presentation.icon).setIsLabel(true),
   )
@@ -52,7 +48,7 @@ function createQuickStatusMenu(host: MeridianUiHost, openStatus: () => void, men
         .setTitle(action.title)
         .setIcon(action.icon)
         .setDisabled(action.disabled)
-        .onClick(() => runAction(host, action.id, activeFile?.path ?? null, openStatus)),
+        .onClick(() => runAction(host, action.id, openStatus)),
     )
   }
   return menu
@@ -61,7 +57,6 @@ function createQuickStatusMenu(host: MeridianUiHost, openStatus: () => void, men
 function runAction(
   host: MeridianUiHost,
   action: QuickStatusActionId,
-  activePath: string | null,
   openStatus: () => void,
 ): void {
   switch (action) {
@@ -74,23 +69,14 @@ function runAction(
     case "resume":
       void runSafely(() => host.resumeConnection())
       return
-    case "activity":
+    case "log":
       new ActivityModal(host).open()
       return
     case "history":
-      if (activePath) new HistoryModal(host, activePath).open()
+      new HistoryModal(host).open()
       return
-    case "deleted":
-      new DeletedFilesModal(host).open()
-      return
-    case "conflicts":
-      new ConflictsModal(host).open()
-      return
-    case "diagnostics":
-      new DiagnosticsModal(host).open()
-      return
-    case "storage":
-      new StorageModal(host).open()
+    case "troubleshooting":
+      new TroubleshootingModal(host).open()
       return
     case "devices":
       new DevicesModal(host).open()

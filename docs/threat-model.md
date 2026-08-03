@@ -214,7 +214,7 @@ A password may only add Argon2id wrapping around high-entropy recovery material.
 
 iOS has no reliable background execution. Suspension can stop requests and sockets. Correctness depends only on durable HTTP state, local journaling, and resume reconciliation. Lost WebSockets, duplicate hints, and long offline periods must not lose data.
 
-Whole-file APIs can use too much memory. Generation 1 sends 4–8 MiB ciphertext chunks, but snapshots may still hold the full source file. The plugin should document a tested attachment limit, bound concurrency, and never mark a cursor applied after interruption or out-of-memory.
+Whole-file APIs can use too much memory. Generation 1 sends 4–8 MiB ciphertext chunks, but snapshots may still hold the full source file. New installations use a 64 MiB whole-file limit and at most four concurrent chunk transfers. Upgrades keep a previously higher limit for compatibility. A client never marks a cursor applied after interruption or out-of-memory.
 
 ## Operational assumptions
 

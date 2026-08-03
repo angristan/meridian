@@ -50,6 +50,7 @@ export interface MeridianUiHost {
   resolveConflict(id: string, action: ConflictResolutionAction): Promise<void>
   openPath(path: string): Promise<void>
   getDevices(): Promise<RemoteDevice[]>
+  renameCurrentDevice(name: string): Promise<void>
   revokeDevice(device: RemoteDevice): Promise<void>
   removeCurrentDevice(): Promise<void>
 }

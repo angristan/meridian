@@ -5,12 +5,9 @@ export type QuickStatusActionId =
   | "sync"
   | "pause"
   | "resume"
-  | "activity"
+  | "log"
   | "history"
-  | "deleted"
-  | "diagnostics"
-  | "storage"
-  | "conflicts"
+  | "troubleshooting"
   | "devices"
   | "status"
   | "settings"
@@ -33,7 +30,6 @@ export interface QuickStatusPresentation {
 export function presentQuickStatus(
   settings: MeridianSettings,
   status: SyncStatus,
-  hasActiveFile: boolean,
 ): QuickStatusPresentation {
   const connection = connectionControlState(settings, status.phase)
   const statusView = statusPresentation(status, connection)
@@ -58,54 +54,31 @@ export function presentQuickStatus(
       section: "sync",
     })
   }
-  actions.push({
-    id: "activity",
-    title: "Synchronized changes",
-    icon: "list-tree",
-    disabled: connection.kind === "unconfigured",
-    section: "inspect",
-  })
-  if (hasActiveFile) {
-    actions.push({
-      id: "history",
-      title: "History for current file",
-      icon: "history",
-      disabled: false,
-      section: "inspect",
-    })
-  }
   actions.push(
     {
-      id: "deleted",
-      title: "Deleted files",
-      icon: "trash-2",
+      id: "log",
+      title: "Sync log",
+      icon: "list-tree",
       disabled: connection.kind === "unconfigured",
       section: "inspect",
     },
     {
-      id: "conflicts",
-      title: "Conflicts",
-      icon: "git-compare-arrows",
+      id: "history",
+      title: "Revision history",
+      icon: "history",
       disabled: connection.kind === "unconfigured",
       section: "inspect",
     },
     {
-      id: "diagnostics",
-      title: "Sync diagnostics",
-      icon: "list-filter",
+      id: "troubleshooting",
+      title: "Troubleshooting",
+      icon: "wrench",
       disabled: false,
-      section: "manage",
-    },
-    {
-      id: "storage",
-      title: "Storage and retention",
-      icon: "database",
-      disabled: connection.kind === "unconfigured",
       section: "manage",
     },
     {
       id: "devices",
-      title: "Devices",
+      title: "Devices and recovery",
       icon: "monitor-smartphone",
       disabled: connection.kind === "unconfigured",
       section: "manage",

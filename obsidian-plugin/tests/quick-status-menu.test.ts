@@ -11,11 +11,12 @@ const configured = {
 
 describe("quick status menu presentation", () => {
   it("offers compact sync and inspection actions without zero-queue noise", () => {
-    const presentation = presentQuickStatus(
-      configured,
-      { ...INITIAL_STATUS, phase: "idle", message: "Up to date", socketConnected: true },
-      true,
-    )
+    const presentation = presentQuickStatus(configured, {
+      ...INITIAL_STATUS,
+      phase: "idle",
+      message: "Up to date",
+      socketConnected: true,
+    })
 
     expect(presentation).toMatchObject({
       title: "Up to date",
@@ -25,12 +26,9 @@ describe("quick status menu presentation", () => {
     expect(presentation.actions.map((action) => action.id)).toEqual([
       "sync",
       "pause",
-      "activity",
+      "log",
       "history",
-      "deleted",
-      "conflicts",
-      "diagnostics",
-      "storage",
+      "troubleshooting",
       "devices",
       "status",
       "settings",
@@ -39,26 +37,24 @@ describe("quick status menu presentation", () => {
   })
 
   it("disables manual sync while work is active", () => {
-    const presentation = presentQuickStatus(
-      configured,
-      { ...INITIAL_STATUS, phase: "pulling", message: "Downloading changes" },
-      false,
-    )
+    const presentation = presentQuickStatus(configured, {
+      ...INITIAL_STATUS,
+      phase: "pulling",
+      message: "Downloading changes",
+    })
 
     expect(presentation.actions.find((action) => action.id === "sync")?.disabled).toBe(true)
-    expect(presentation.actions.some((action) => action.id === "history")).toBe(false)
-    expect(presentation.actions.find((action) => action.id === "activity")?.disabled).toBe(false)
+    expect(presentation.actions.find((action) => action.id === "history")?.disabled).toBe(false)
+    expect(presentation.actions.find((action) => action.id === "log")?.disabled).toBe(false)
   })
 
   it("reduces an unconfigured vault to setup and inspection entry points", () => {
-    const presentation = presentQuickStatus(DEFAULT_SETTINGS, INITIAL_STATUS, false)
+    const presentation = presentQuickStatus(DEFAULT_SETTINGS, INITIAL_STATUS)
 
     expect(presentation.actions.map((action) => [action.id, action.disabled])).toEqual([
-      ["activity", true],
-      ["deleted", true],
-      ["conflicts", true],
-      ["diagnostics", false],
-      ["storage", true],
+      ["log", true],
+      ["history", true],
+      ["troubleshooting", false],
       ["devices", true],
       ["status", false],
       ["settings", false],

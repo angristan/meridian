@@ -23,7 +23,7 @@ export class ActivityModal extends Modal {
   }
 
   override onOpen(): void {
-    this.setTitle("Synchronized changes")
+    this.setTitle("Sync log")
     this.renderShell()
     void this.load()
   }
@@ -38,6 +38,10 @@ export class ActivityModal extends Modal {
 
   private renderShell(): void {
     this.contentEl.empty()
+    this.contentEl.createDiv({
+      cls: "setting-item-description meridian-section-description",
+      text: "The latest 200 synchronized changes. Revision history remains complete and is available from History.",
+    })
     const controls = new Setting(this.contentEl)
     controls.addSearch((search) =>
       search.setPlaceholder("Search paths or devices").onChange((value) => {
@@ -64,7 +68,7 @@ export class ActivityModal extends Modal {
     )
     this.list = this.contentEl.createDiv({ cls: "meridian-activity-list" })
     this.list.setAttribute("aria-live", "polite")
-    this.list.createDiv({ cls: "setting-item-description", text: "Loading synchronized changes…" })
+    this.list.createDiv({ cls: "setting-item-description", text: "Loading sync log…" })
   }
 
   private async load(): Promise<void> {
@@ -81,7 +85,7 @@ export class ActivityModal extends Modal {
     } catch (error) {
       if (generation !== this.generation || !this.list) return
       this.list.empty()
-      const message = error instanceof Error ? error.message : "Unable to load synchronized changes"
+      const message = error instanceof Error ? error.message : "Unable to load the sync log"
       const alert = this.list.createDiv({ cls: "meridian-callout is-error", text: message })
       alert.setAttribute("role", "alert")
     }

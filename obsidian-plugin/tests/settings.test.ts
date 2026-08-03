@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { DEFAULT_SETTINGS } from "../src/model"
-import { getMeridianControlValue, setMeridianControlValue } from "../src/plugin/settings-controls"
+import { setMeridianControlValue } from "../src/plugin/settings-controls"
 import { normalizeSettings, withoutMeridianIdentity } from "../src/plugin/settings-state"
 
 describe("Meridian settings lifecycle", () => {
@@ -55,7 +55,7 @@ describe("Meridian settings lifecycle", () => {
     ).toBeNull()
   })
 
-  it("migrates and bounds normalized selective sync lists", () => {
+  it("preserves and bounds hidden legacy selective sync rules", () => {
     expect(
       normalizeSettings({
         selectiveSync: {
@@ -73,7 +73,7 @@ describe("Meridian settings lifecycle", () => {
     })
   })
 
-  it("binds declarative settings to normalized storage and safe rescans", async () => {
+  it("binds configuration controls to storage and safe rescans", async () => {
     let saves = 0
     let syncs = 0
     const host = {
@@ -86,16 +86,10 @@ describe("Meridian settings lifecycle", () => {
       },
     }
 
-    await setMeridianControlValue(host, "excludedFolders", "Archive\\private\n../unsafe")
-    await setMeridianControlValue(host, "excludedExtensions", ".MOV, tar.gz, bad/path")
-    expect(getMeridianControlValue(host, "excludedFolders")).toBe("Archive/private")
-    expect(getMeridianControlValue(host, "excludedExtensions")).toBe("mov, tar.gz")
-    expect(syncs).toBe(0)
-
     await setMeridianControlValue(host, "config.themes", false)
     expect(host.settings.configCategories.themes).toBe(false)
     expect(syncs).toBe(1)
-    expect(saves).toBe(3)
+    expect(saves).toBe(1)
   })
 
   it("forgets identity while preserving local preferences", () => {

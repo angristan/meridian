@@ -217,6 +217,20 @@ export class SyncController {
     return { ...this.status }
   }
 
+  async updateDeviceDescriptor(): Promise<void> {
+    const device = this.requireDevice()
+    if (!this.authenticated) {
+      await this.authenticate(device)
+      return
+    }
+    try {
+      await this.remote.updateDeviceDescriptor(this.deviceDescriptor())
+    } catch (error) {
+      this.authenticated = false
+      throw error
+    }
+  }
+
   recordVaultChange(path: string): Promise<void> {
     if (!this.device || this.stopRequested) return Promise.resolve()
     const write = this.vaultEventWrites.then(() =>

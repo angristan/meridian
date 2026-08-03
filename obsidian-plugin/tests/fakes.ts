@@ -14,6 +14,7 @@ import type {
   LogFormat,
   PairedDeviceMaterial,
   PairingApprovalMaterial,
+  PairingDeviceDescriptor,
   PairingCapability,
   PairingConfirmationMaterial,
   PairingJoinMaterial,
@@ -470,6 +471,7 @@ export class FakeRemote implements RemotePort {
   readonly operations: RemoteOperation[] = []
   authenticateCount = 0
   getChangesCount = 0
+  readonly deviceDescriptors: PairingDeviceDescriptor[] = []
   readonly retentionAcknowledgements: RetentionAcknowledgement[] = []
   private cursor = 0
   private nextChangesBarrier: { started: () => void; resume: Promise<void> } | null = null
@@ -580,7 +582,9 @@ export class FakeRemote implements RemotePort {
     return []
   }
 
-  async updateDeviceDescriptor(): Promise<void> {}
+  async updateDeviceDescriptor(descriptor: PairingDeviceDescriptor): Promise<void> {
+    this.deviceDescriptors.push(structuredClone(descriptor))
+  }
 
   async revokeDevice(
     _targetDeviceId: string,

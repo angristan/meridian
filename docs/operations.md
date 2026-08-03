@@ -10,7 +10,7 @@
 
 ## Health and logs
 
-`GET /health` shows deployment health and safe protocol metadata only. Authenticated plugin views show device status, cursors, pending work, conflicts, and the latest sanitized failure.
+`GET /health` shows deployment health and safe protocol metadata only. **Troubleshooting** shows technical status, storage details, repair tools, and a bounded privacy-safe session log. **Sync log** shows the latest 200 user-visible changes and may contain paths.
 
 Use Workers Logs and Traces for request classes, latency, binding failures, cursor lag, reconnects, retries, and encrypted byte counts.
 
@@ -28,7 +28,7 @@ Migrated vaults keep immutable legacy-hash entries and their signed transition. 
 
 ## Replace a phone
 
-1. On the owner, select **Devices → Add device** and pair the new phone.
+1. On the owner, open **Devices and recovery → Add device** and pair the new phone.
 2. Confirm that the new phone can pull and push.
 3. Find the old phone by name, platform, short cryptographic ID, and authorization time.
 4. Select **Revoke** and confirm that it shows **Revoked**.
@@ -42,7 +42,7 @@ A configured vault rejects setup and pairing links. This prevents accidental ide
 1. Sync important queued changes.
 2. On the iPhone, select **Remove this device** and confirm the warning.
 3. Meridian signs and confirms a self-revocation. It forgets the local key and connection, but keeps all vault files and journal records.
-4. On the Mac owner, select **Devices → Add device** and scan a new QR code from that iPhone vault.
+4. On the Mac owner, open **Devices and recovery → Add device** and scan a new QR code from that iPhone vault.
 
 If pairing is canceled, select **Retry** on the Mac for a new code. If signed completion is interrupted, Meridian keeps the exact completion in SecretStorage and shows **Retry pairing**. Do not remove plugin data while this action is present.
 
@@ -54,7 +54,7 @@ If pairing is canceled, select **Retry** on the Mac for a new code. If signed co
 
 1. On the owner, find the lost device and select **Revoke**.
 2. Confirm that it shows **Revoked**.
-3. Check **Security and protocol → Encryption epoch**.
+3. Open **Troubleshooting** and check the encryption epoch.
 
 Only the owner can revoke another device. Revocation appends a signed record and blocks that device's sessions and writes at once. The owner cannot revoke itself.
 
@@ -84,7 +84,7 @@ A server that controls the only recovery package can withhold it or show one no 
 ### Mass deletion or corruption
 
 1. Pause sync on another device before opening it.
-2. Inspect and restore files from immutable history.
+2. Open **History**. Inspect, compare, and restore the affected revisions.
 
 Restores make new revisions. They do not rewrite the audit trail.
 
@@ -124,10 +124,10 @@ Acknowledgements are signed status data over the exact cursor, hash, epoch, and 
 
 Cloudflare limits and browser quotas are external hard limits. If IndexedDB is full, the transaction aborts. The cursor stays put. Pending work and vault files remain.
 
-Use **Meridian storage → Compact local sync records**, request persistent browser storage when offered, or free origin storage. Keep an independent backup.
+Open **Troubleshooting → Storage details** to compact local sync records, request persistent browser storage, or inspect remote use. Keep an independent backup.
 
 ## Privacy-safe support data
 
-A future support export may include Meridian, protocol, Obsidian, and platform versions; enabled categories; cursor and queue counts; and sanitized error codes and timings.
+**Troubleshooting → Technical log** keeps only standard sync states and whether an error occurred. Raw errors never enter the log. The copied report includes versions, platform, enabled categories, cursor and queue counts, and safe state transitions.
 
-It must exclude vault names, paths, content, ciphertext, keys, tokens, signatures, public keys, and recovery data.
+It excludes vault names, paths, content, endpoints, device identifiers, ciphertext, keys, tokens, signatures, public keys, and recovery data. The separate user-facing sync log can show paths and must never be copied into a support report.
