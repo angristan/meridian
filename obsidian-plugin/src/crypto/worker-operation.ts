@@ -95,8 +95,11 @@ export function verifyWorkerOperation<T extends ExpectedWorkerOperation>(
   if (!verifyOperation(signedOperation, authorCertificate)) {
     throw new Error(`Canonical ${expected} signature is invalid`)
   }
+  const operationIdMatches = toBase64Url(signedOperation.body.operationId) === wire.operationId
   if (
-    toBase64Url(signedOperation.body.operationId) !== wire.operationId ||
+    // Early file revisions used separate signed IDs in the Worker wrapper and canonical envelope.
+    // Both signatures still bind the complete envelope. Current writers always use one ID.
+    (expected !== "file" && !operationIdMatches) ||
     toBase64Url(signedOperation.body.vaultId) !== device.vaultId ||
     toBase64Url(signedOperation.body.epochId) !== wire.epochId ||
     signedOperation.body.authorDeviceId === "recovery" ||

@@ -12,6 +12,7 @@ import {
   encodeDeviceCertificate,
   encodeOperation,
   operationId,
+  vaultId,
 } from "@meridian/protocol"
 import { describe, expect, it } from "vitest"
 import { packageCrypto } from "../src/crypto/package-crypto"
@@ -161,7 +162,7 @@ describe("shared crypto adapter", () => {
     })
   })
 
-  it("rejects outer tampering and inner mismatches consistently", async () => {
+  it("rejects tampering while reading legacy file operation IDs", async () => {
     const crypto = packageCrypto
     const claim = await crypto.createFirstDevice("setup-session", "claim-challenge")
     const device = await crypto.loadDevice(claim.keyBundle)
@@ -227,16 +228,39 @@ describe("shared crypto adapter", () => {
       /Canonical file signature is invalid/,
     )
 
-    const mismatched = signOperation(
+    const legacyOperationId = signOperation(
       {
         ...signed.body,
         operationId: operationId(fromBase64Url(randomId())),
       },
       bundle.signingPrivateKey,
     )
+    const legacyEnvelope = resignWrapper(toBase64Url(encodeOperation(legacyOperationId)))
+    const remote = { cursor: 1, logHash: randomId(32), envelope: legacyEnvelope }
+    const blobs = new Map(encrypted.blobs.map((blob) => [blob.blobId, blob.bytes]))
+    await expect(
+      crypto.inspectRevision(device, remote, Number.MAX_SAFE_INTEGER),
+    ).resolves.toMatchObject({
+      operationId: original.operationId,
+    })
+    await expect(
+      crypto.decryptRevision(device, remote, Number.MAX_SAFE_INTEGER, async (blobId) => {
+        const blob = blobs.get(blobId)
+        if (!blob) throw new Error("Missing test blob")
+        return blob
+      }),
+    ).resolves.toMatchObject({ operationId: original.operationId })
+
+    const mismatchedVault = signOperation(
+      {
+        ...signed.body,
+        vaultId: vaultId(fromBase64Url(randomId())),
+      },
+      bundle.signingPrivateKey,
+    )
     await verifyBothPaths(
-      resignWrapper(toBase64Url(encodeOperation(mismatched))),
-      /does not match its canonical signature/,
+      resignWrapper(toBase64Url(encodeOperation(mismatchedVault))),
+      /Canonical file signature is invalid/,
     )
   })
 
