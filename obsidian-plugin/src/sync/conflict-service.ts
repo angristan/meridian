@@ -8,7 +8,8 @@ import type {
   VaultPort,
 } from "../model"
 import { equalBytes, fingerprint, randomId } from "../platform/bytes"
-import type { JournalPort } from "../storage/contracts"
+import type { JournalPort, LocalEffectsCommit } from "../storage/contracts"
+import { queuedEntry } from "./queued-entry"
 import { buildLineDiff } from "./revision-diff"
 import { revisionHeads } from "./revision-heads"
 import { snapshotFor } from "./snapshots"
@@ -47,18 +48,30 @@ export class ConflictService {
   async resolve(id: string, action: ConflictResolutionAction): Promise<void> {
     const conflict = await this.requireConflict(id)
     const remoteRevision = await this.requireRemoteRevision(conflict)
+    let effects: LocalEffectsCommit
+    let cleanupBytes: ArrayBuffer | undefined
     switch (action) {
       case "keep-current":
-        await this.removePreservedCopy(conflict)
-        await this.journal.resolveConflict(conflict.id)
-        return
+        effects = emptyEffects()
+        effects.removeSnapshotPaths = await this.removePreservedCopy(conflict)
+        break
       case "keep-both":
-        await this.queuePreservedCopy(conflict)
-        await this.journal.resolveConflict(conflict.id)
-        return
-      case "use-incoming":
-        await this.usePreservedCopy(conflict, remoteRevision)
-        await this.journal.resolveConflict(conflict.id)
+        effects = await this.queuePreservedCopy(conflict)
+        break
+      case "use-incoming": {
+        const incoming = await this.usePreservedCopy(conflict, remoteRevision)
+        effects = incoming.effects
+        cleanupBytes = incoming.preservedBytes
+        break
+      }
+    }
+    effects.resolvedConflicts.push({ id: conflict.id, resolvedAt: Date.now() })
+    await this.journal.commitLocalEffects(effects)
+    if (cleanupBytes !== undefined) {
+      await this.journal.commitLocalEffects({
+        ...emptyEffects(),
+        removeSnapshotPaths: await this.removePreservedCopy(conflict, cleanupBytes),
+      })
     }
   }
 
@@ -91,48 +104,47 @@ export class ConflictService {
       conflict.kind !== "binary",
     )
     if (!removed) return false
-    await this.journal.removeSnapshot(conflict.conflictPath)
-    await this.journal.resolveConflict(conflict.id)
+    await this.journal.commitLocalEffects({
+      entries: [],
+      putSnapshots: [],
+      removeSnapshotPaths: [conflict.conflictPath],
+      resolvedConflicts: [{ id: conflict.id, resolvedAt: Date.now() }],
+    })
     return true
   }
 
-  private async queuePreservedCopy(conflict: ConflictRecord): Promise<void> {
+  private async queuePreservedCopy(conflict: ConflictRecord): Promise<LocalEffectsCommit> {
     const bytes = await this.readRequired(conflict.conflictPath)
     const pending = await this.journal.listPending()
-    if (pending.some((entry) => entry.path === conflict.conflictPath)) return
+    if (pending.some((entry) => entry.path === conflict.conflictPath)) return emptyEffects()
     const snapshots = await this.journal.getSnapshots()
     const existing = snapshots.get(conflict.conflictPath)
     const fileId = existing?.fileId ?? randomId()
     const heads = revisionHeads(await this.journal.listFileRevisions(fileId))
-    const entry: JournalEntry = {
-      id: randomId(),
+    const entry = queuedEntry({
       action: "upsert",
       fileId,
       path: conflict.conflictPath,
       previousPath: null,
-      fingerprint: await fingerprint(bytes),
       baseRevisionId: heads.length === 1 ? (heads[0]?.revisionId ?? null) : null,
       parentRevisionIds: heads.map((revision) => revision.revisionId),
       restoreSourceRevisionId: null,
-      revisionId: randomId(),
       createdAt: nextCreatedAt(pending),
-      attempts: 0,
-      state: "queued",
-      error: null,
-      preparedRevision: null,
-    }
-    await this.journal.putEntry(entry)
-    if (!existing) {
-      await this.journal.putSnapshot(
-        await snapshotFor(conflict.conflictPath, fileId, bytes, this.vault.configDir),
-      )
+    })
+    return {
+      entries: [entry],
+      putSnapshots: existing
+        ? []
+        : [await snapshotFor(conflict.conflictPath, fileId, bytes, this.vault.configDir)],
+      removeSnapshotPaths: [],
+      resolvedConflicts: [],
     }
   }
 
   private async usePreservedCopy(
     conflict: ConflictRecord,
     remoteRevision: LocalRevision,
-  ): Promise<void> {
+  ): Promise<{ effects: LocalEffectsCommit; preservedBytes: ArrayBuffer }> {
     const bytes = await this.readRequired(conflict.conflictPath)
     const desiredFingerprint = await fingerprint(bytes)
     const pending = await this.journal.listPending()
@@ -175,38 +187,42 @@ export class ConflictService {
         ...heads.map((revision) => revision.revisionId),
         ...relatedPending.map((entry) => entry.revisionId),
       ])
-      const entry: JournalEntry = {
-        id: randomId(),
+      const entry = queuedEntry({
         action: remoteRevision.tombstone ? "restore" : "upsert",
         fileId: remoteRevision.fileId,
         path: conflict.sourcePath,
         previousPath: null,
-        fingerprint: desiredFingerprint,
         baseRevisionId: parents.length === 1 ? (parents[0] ?? null) : null,
         parentRevisionIds: parents,
         restoreSourceRevisionId: remoteRevision.revisionId,
-        revisionId: randomId(),
         createdAt: nextCreatedAt(pending),
-        attempts: 0,
-        state: "queued",
-        error: null,
-        preparedRevision: null,
+      })
+      return {
+        effects: {
+          entries: [entry],
+          putSnapshots: [
+            await snapshotFor(
+              conflict.sourcePath,
+              remoteRevision.fileId,
+              bytes,
+              this.vault.configDir,
+            ),
+          ],
+          removeSnapshotPaths: [],
+          resolvedConflicts: [],
+        },
+        preservedBytes: bytes,
       }
-      await this.journal.putEntry(entry)
-      await this.journal.putSnapshot(
-        await snapshotFor(conflict.sourcePath, remoteRevision.fileId, bytes, this.vault.configDir),
-      )
     }
-    await this.removePreservedCopy(conflict, bytes)
+    return { effects: emptyEffects(), preservedBytes: bytes }
   }
 
   private async removePreservedCopy(
     conflict: ConflictRecord,
     expectedBytes?: ArrayBuffer,
-  ): Promise<void> {
+  ): Promise<string[]> {
     if (!(await this.vault.exists(conflict.conflictPath))) {
-      await this.journal.removeSnapshot(conflict.conflictPath)
-      return
+      return [conflict.conflictPath]
     }
     const bytes = expectedBytes ?? (await this.vault.read(conflict.conflictPath))
     const removed = await this.vault.replaceIfUnchanged(
@@ -216,7 +232,7 @@ export class ConflictService {
       conflict.kind !== "binary",
     )
     if (!removed) throw new Error("The preserved copy changed while resolving the conflict")
-    await this.journal.removeSnapshot(conflict.conflictPath)
+    return [conflict.conflictPath]
   }
 
   private async previewPath(path: string, expectedText: boolean): Promise<ConflictFilePreview> {
@@ -300,6 +316,15 @@ function compareConflictFiles(
     }
   }
   return { path, ...buildLineDiff(current.text, preserved.text), unavailableReason: null }
+}
+
+function emptyEffects(): LocalEffectsCommit {
+  return {
+    entries: [],
+    putSnapshots: [],
+    removeSnapshotPaths: [],
+    resolvedConflicts: [],
+  }
 }
 
 function nextCreatedAt(entries: JournalEntry[]): number {

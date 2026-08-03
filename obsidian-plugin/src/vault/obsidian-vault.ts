@@ -1,17 +1,10 @@
 import { normalizePath, TFile, type Vault } from "obsidian"
-import type {
-  ConfigCategory,
-  ScannedFileSnapshot,
-  SelectiveSyncSettings,
-  VaultPort,
-  VaultScanOptions,
-} from "../model"
+import type { ConfigCategory, ScannedFileSnapshot, VaultPort, VaultScanOptions } from "../model"
 import { BackgroundSyncCompute, type SyncComputePort } from "../platform/background-sync"
 import { yieldToEventLoop } from "../platform/scheduling"
 import {
   configCategoryForPath,
   isConfigPath,
-  isSelectedForSync,
   isSyncablePath,
   normalizeVaultPath,
   pathsCollide,
@@ -46,7 +39,6 @@ export class ObsidianVaultPort implements VaultPort {
 
   async listFiles(
     categories: Record<ConfigCategory, boolean>,
-    selection: SelectiveSyncSettings = { excludedFolders: [], excludedExtensions: [] },
     options: VaultScanOptions = {},
   ): Promise<ScannedFileSnapshot[]> {
     const paths = new Set<string>()
@@ -54,10 +46,7 @@ export class ObsidianVaultPort implements VaultPort {
     let discovered = 0
     for (const file of this.vault.getFiles()) {
       if (options.shouldStop?.()) throw new Error("Vault scan canceled")
-      if (
-        isSyncablePath(file.path, this.configDir, categories) &&
-        isSelectedForSync(file.path, this.configDir, selection)
-      ) {
+      if (isSyncablePath(file.path, this.configDir, categories)) {
         const path = normalizeVaultPath(file.path)
         paths.add(path)
         cachedStats.set(path, file.stat)
@@ -67,22 +56,20 @@ export class ObsidianVaultPort implements VaultPort {
     }
     for (const path of await this.listSelectedConfigFiles(categories, options)) paths.add(path)
 
-    return this.scanFilesWithStats([...paths], categories, selection, options, cachedStats)
+    return this.scanFilesWithStats([...paths], categories, options, cachedStats)
   }
 
   async scanFiles(
     paths: readonly string[],
     categories: Record<ConfigCategory, boolean>,
-    selection: SelectiveSyncSettings = { excludedFolders: [], excludedExtensions: [] },
     options: VaultScanOptions = {},
   ): Promise<ScannedFileSnapshot[]> {
-    return this.scanFilesWithStats(paths, categories, selection, options, new Map())
+    return this.scanFilesWithStats(paths, categories, options, new Map())
   }
 
   private async scanFilesWithStats(
     paths: readonly string[],
     categories: Record<ConfigCategory, boolean>,
-    selection: SelectiveSyncSettings,
     options: VaultScanOptions,
     cachedStats: ReadonlyMap<string, { size: number; mtime: number }>,
   ): Promise<ScannedFileSnapshot[]> {
@@ -100,10 +87,7 @@ export class ObsidianVaultPort implements VaultPort {
     }
     for (const candidate of candidates) {
       if (options.shouldStop?.()) throw new Error("Vault scan canceled")
-      if (
-        !isSyncablePath(candidate, this.configDir, categories) ||
-        !isSelectedForSync(candidate, this.configDir, selection)
-      ) {
+      if (!isSyncablePath(candidate, this.configDir, categories)) {
         reportProgress(candidate)
         continue
       }
@@ -189,32 +173,6 @@ export class ObsidianVaultPort implements VaultPort {
     return true
   }
 
-  async rename(from: string, to: string): Promise<void> {
-    const source = normalizePath(normalizeVaultPath(from))
-    const target = normalizePath(normalizeVaultPath(to))
-    if (source === target) return
-
-    const configPath = isConfigPath(source, this.configDir)
-    await this.ensureParent(target, configPath)
-    if (configPath) {
-      if (!(await this.vault.adapter.exists(source))) {
-        if (await this.vault.adapter.exists(target)) return
-        throw new Error(`File no longer exists: ${source}`)
-      }
-      await this.vault.adapter.rename(source, target)
-      return
-    }
-
-    const file = this.vault.getFileByPath(source)
-    if (!file) {
-      if (this.vault.getFileByPath(target)) return
-      throw new Error(`File no longer exists: ${source}`)
-    }
-    const existing = this.vault.getAbstractFileByPath(target)
-    if (existing && existing !== file) throw new Error(`Rename target already exists: ${target}`)
-    await this.vault.rename(file, target)
-  }
-
   async renameIfUnchanged(from: string, to: string, expectedBytes: ArrayBuffer): Promise<boolean> {
     const source = normalizePath(normalizeVaultPath(from))
     const target = normalizePath(normalizeVaultPath(to))
@@ -236,10 +194,6 @@ export class ObsidianVaultPort implements VaultPort {
     if (existing && existing !== file) return false
     await this.vault.rename(file, target)
     return true
-  }
-
-  async remove(path: string): Promise<void> {
-    await this.removePrepared(normalizePath(normalizeVaultPath(path)))
   }
 
   async exists(path: string): Promise<boolean> {

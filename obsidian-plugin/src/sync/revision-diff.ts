@@ -1,6 +1,6 @@
 import type { RevisionDiffLine } from "../model"
 
-export interface LineDiffResult {
+interface LineDiffResult {
   lines: RevisionDiffLine[]
   truncated: boolean
 }

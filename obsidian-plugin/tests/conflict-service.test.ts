@@ -51,25 +51,32 @@ async function setup(remote: LocalRevision, source: string | null, copy: string)
   await seedRevision(journal, revision({ revisionId: "base" }))
   await seedRevision(journal, remote)
   await seedConflict(journal, conflict())
+  const snapshots = []
   if (source !== null) {
     const sourceBytes = new TextEncoder().encode(source).buffer
-    await journal.putSnapshot({
+    snapshots.push({
       path: SOURCE_PATH,
       fileId: "file-id",
       fingerprint: await fingerprint(sourceBytes),
       size: sourceBytes.byteLength,
       mtime: 1,
-      kind: "vault",
+      kind: "vault" as const,
     })
   }
   const copyBytes = new TextEncoder().encode(copy).buffer
-  await journal.putSnapshot({
+  snapshots.push({
     path: COPY_PATH,
     fileId: "copy-file-id",
     fingerprint: await fingerprint(copyBytes),
     size: copyBytes.byteLength,
     mtime: 1,
-    kind: "vault",
+    kind: "vault" as const,
+  })
+  await journal.commitLocalEffects({
+    entries: [],
+    putSnapshots: snapshots,
+    removeSnapshotPaths: [],
+    resolvedConflicts: [],
   })
   return { vault, journal, service: new ConflictService(vault, journal) }
 }
@@ -125,13 +132,11 @@ describe("ConflictService", () => {
       fileId: "file-id",
       path: SOURCE_PATH,
       previousPath: null,
-      fingerprint: "local-fingerprint",
       baseRevisionId: "base",
       parentRevisionIds: ["base"],
       restoreSourceRevisionId: null,
       revisionId: "local-pending",
       createdAt: 3,
-      attempts: 0,
       state: "queued",
       error: null,
       preparedRevision: null,
@@ -163,6 +168,31 @@ describe("ConflictService", () => {
       parentRevisionIds: ["local-pending", "remote"],
       restoreSourceRevisionId: "remote",
     })
+    expect(await journal.listConflicts(true)).toEqual([])
+  })
+
+  it("keeps the incoming copy available when the resolution commit fails", async () => {
+    const remote = revision({ revisionId: "remote", parents: ["base"], createdAt: 2, cursor: 2 })
+    const { vault, journal, service } = await setup(remote, "local", "incoming")
+    const commit = journal.commitLocalEffects.bind(journal)
+    let failResolution = true
+    journal.commitLocalEffects = async (effects) => {
+      if (failResolution && effects.resolvedConflicts.length > 0) {
+        failResolution = false
+        throw new Error("Injected resolution commit failure")
+      }
+      await commit(effects)
+    }
+
+    await expect(service.resolve("conflict-id", "use-incoming")).rejects.toThrow(
+      /Injected resolution commit failure/,
+    )
+    expect(vault.text(SOURCE_PATH)).toBe("incoming")
+    expect(vault.text(COPY_PATH)).toBe("incoming")
+    expect(await journal.listConflicts(true)).toHaveLength(1)
+
+    await service.resolve("conflict-id", "use-incoming")
+    expect(vault.text(COPY_PATH)).toBeNull()
     expect(await journal.listConflicts(true)).toEqual([])
   })
 

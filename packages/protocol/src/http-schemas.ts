@@ -98,6 +98,8 @@ export const PairingCandidateConfirmationSchema = Schema.Struct({
   proof: Schema.String,
 })
 
+export type PairingCandidateConfirmation = typeof PairingCandidateConfirmationSchema.Type
+
 export const PairingCancelSchema = Schema.Struct({ capability: Schema.String })
 
 export const StoredOperationTypeSchema = Schema.Literals([

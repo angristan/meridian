@@ -32,7 +32,12 @@ import { runtimeTuning } from "./plugin/runtime-tuning"
 import { PluginScheduling } from "./plugin/scheduling"
 import { MeridianSecretStorage } from "./plugin/secret-storage"
 import { MeridianSettingsTab } from "./plugin/settings"
-import { normalizeSettings, withoutMeridianIdentity } from "./plugin/settings-state"
+import {
+  assertSelectiveSyncRemoved,
+  normalizeSettings,
+  settingsForStorage,
+  withoutMeridianIdentity,
+} from "./plugin/settings-state"
 import { IndexedDbJournal } from "./storage/indexed-db-journal"
 import { SyncController } from "./sync/controller"
 import { ActivityModal } from "./ui/activity-modal"
@@ -220,7 +225,7 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
   }
 
   async saveSettings(): Promise<void> {
-    await this.saveData(this.settings)
+    await this.saveData(settingsForStorage(this.settings))
     this.scheduling.settingsChanged()
   }
 
@@ -647,6 +652,7 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
       this.updateStatus({ phase: "disconnected", message: "Connect Meridian to begin syncing" })
       return
     }
+    assertSelectiveSyncRemoved(this.settings)
     const previousController = this.controller
     this.controller = null
     await previousController?.quiesce()
@@ -668,18 +674,19 @@ export default class MeridianPlugin extends Plugin implements MeridianUiHost {
       const journal = new IndexedDbJournal(`meridian-${this.settings.vaultId}`)
       const remote = new MeridianRemoteClient(this.settings.endpoint, new ObsidianHttpTransport())
       nextController = new SyncController(
-        vault,
-        journal,
-        remote,
-        this.cryptoPort,
-        () => ({ ...this.settings.configCategories }),
-        (status) => this.updateStatus(status),
-        () => ({
-          deviceName: this.settings.deviceName || defaultDeviceName(),
-          platform: defaultDevicePlatform(),
-        }),
         {
-          selection: () => structuredClone(this.settings.selectiveSync),
+          vault,
+          journal,
+          remote,
+          crypto: this.cryptoPort,
+          categories: () => ({ ...this.settings.configCategories }),
+          onStatus: (status) => this.updateStatus(status),
+          deviceDescriptor: () => ({
+            deviceName: this.settings.deviceName || defaultDeviceName(),
+            platform: defaultDevicePlatform(),
+          }),
+        },
+        {
           compute,
           persistDevice: async (updatedDevice) => {
             if (

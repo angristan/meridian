@@ -464,7 +464,13 @@ describe("Meridian remote client", () => {
       ]),
     )
 
-    const error = await client.completePairing("pairing-id", {}).catch((caught) => caught)
+    const error = await client
+      .completePairing("pairing-id", {
+        capability: "capability",
+        transferHash: "transfer-hash",
+        proof: "proof",
+      })
+      .catch((caught) => caught)
     expect(error).toBeInstanceOf(MeridianHttpError)
     expect(error).toMatchObject({ status: 410, code: "pairing_expired" })
   })

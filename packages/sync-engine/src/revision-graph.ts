@@ -47,10 +47,6 @@ export class RevisionGraph {
     return revision === undefined ? undefined : copyRevision(revision)
   }
 
-  has(revisionId: RevisionId): boolean {
-    return this.#revisions.has(revisionId)
-  }
-
   revisions(fileId?: FileId): readonly Revision[] {
     return [...this.#revisions.values()]
       .filter((revision) => fileId === undefined || revision.fileId === fileId)

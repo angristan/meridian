@@ -1,6 +1,10 @@
 import type {
   LogFormat,
+  PairingApproval,
+  PairingCandidateConfirmation,
   PairingCapabilityResponseSchema,
+  PairingJoin,
+  PairingRelease,
   PairingStateSchema,
   RetentionAcknowledgement,
   StoragePruneResponseSchema,
@@ -14,7 +18,14 @@ export type ConfigCategory =
   | "core-plugins"
   | "core-plugin-settings"
 
-export type { LogFormat, RetentionAcknowledgement }
+export type {
+  LogFormat,
+  PairingApproval,
+  PairingCandidateConfirmation,
+  PairingJoin,
+  PairingRelease,
+  RetentionAcknowledgement,
+}
 export type PairingCapability = typeof PairingCapabilityResponseSchema.Type
 export type PairingState = typeof PairingStateSchema.Type
 export type StoragePruneResult = typeof StoragePruneResponseSchema.Type
@@ -43,7 +54,8 @@ export interface PendingPairingCompletion {
   expiresAt: number
 }
 
-export interface SelectiveSyncSettings {
+/** Device-local rules retained only until the one-time full replay removes selective sync. */
+export interface LegacySelectiveSyncRules {
   excludedFolders: string[]
   excludedExtensions: string[]
 }
@@ -60,7 +72,7 @@ export interface MeridianSettings {
   pollIntervalSeconds: number
   scanIntervalMinutes: number
   maxFileSizeMiB: number
-  selectiveSync: SelectiveSyncSettings
+  legacySelectiveSync: LegacySelectiveSyncRules | null
   configCategories: Record<ConfigCategory, boolean>
 }
 
@@ -76,10 +88,7 @@ export const DEFAULT_SETTINGS: MeridianSettings = {
   pollIntervalSeconds: 45,
   scanIntervalMinutes: 5,
   maxFileSizeMiB: 64,
-  selectiveSync: {
-    excludedFolders: [],
-    excludedExtensions: [],
-  },
+  legacySelectiveSync: null,
   configCategories: {
     main: true,
     appearance: true,
@@ -194,13 +203,11 @@ export interface JournalEntry {
   fileId: string
   path: string
   previousPath: string | null
-  fingerprint: string | null
   baseRevisionId: string | null
   parentRevisionIds: string[]
   restoreSourceRevisionId: string | null
   revisionId: string
   createdAt: number
-  attempts: number
   state: JournalState
   error: string | null
   preparedRevision: PreparedJournalRevision | null
@@ -488,14 +495,14 @@ export interface PairingDeviceDescriptor {
 }
 
 export interface PairingJoinMaterial {
-  payload: unknown
+  payload: PairingJoin
   candidatePackage: string
   pendingSecret: string
 }
 
 export interface PairingApprovalMaterial {
-  payload: unknown
-  releasePayload: unknown
+  payload: PairingApproval
+  releasePayload: PairingRelease
   verificationPhrase: string
   transferHash: string
 }
@@ -679,13 +686,16 @@ export interface RemotePort {
   createPairing(): Promise<PairingCapability>
   getPairingStatus(pairingId: string): Promise<PairingStatus>
   getPairingProgress(pairingId: string, capability: string): Promise<PairingStatus>
-  joinPairing(pairingId: string, payload: unknown): Promise<PairingResult>
-  approvePairing(pairingId: string, payload: unknown): Promise<PairingResult>
-  releasePairing(pairingId: string, payload: unknown): Promise<PairingResult>
+  joinPairing(pairingId: string, payload: PairingJoin): Promise<PairingResult>
+  approvePairing(pairingId: string, payload: PairingApproval): Promise<PairingResult>
+  releasePairing(pairingId: string, payload: PairingRelease): Promise<PairingResult>
   getPairingResult(pairingId: string, capability: string): Promise<PairingResult>
   confirmPairingOwner(pairingId: string): Promise<PairingResult>
-  confirmPairingCandidate(pairingId: string, payload: unknown): Promise<PairingResult>
-  completePairing(pairingId: string, payload: unknown): Promise<PairingResult>
+  confirmPairingCandidate(
+    pairingId: string,
+    payload: PairingCandidateConfirmation,
+  ): Promise<PairingResult>
+  completePairing(pairingId: string, payload: PairingCandidateConfirmation): Promise<PairingResult>
   cancelPairing(pairingId: string, capability: string): Promise<PairingResult>
   rejectPairing(pairingId: string): Promise<PairingResult>
   connectNotifications(
@@ -708,13 +718,11 @@ export interface VaultPort {
   close?(): void
   listFiles(
     categories: Record<ConfigCategory, boolean>,
-    selection?: SelectiveSyncSettings,
     options?: VaultScanOptions,
   ): Promise<ScannedFileSnapshot[]>
   scanFiles(
     paths: readonly string[],
     categories: Record<ConfigCategory, boolean>,
-    selection?: SelectiveSyncSettings,
     options?: VaultScanOptions,
   ): Promise<ScannedFileSnapshot[]>
   read(path: string): Promise<ArrayBuffer>
@@ -725,8 +733,6 @@ export interface VaultPort {
     replacementBytes: ArrayBuffer | null,
     isText: boolean,
   ): Promise<boolean>
-  rename(from: string, to: string): Promise<void>
   renameIfUnchanged(from: string, to: string, expectedBytes: ArrayBuffer): Promise<boolean>
-  remove(path: string): Promise<void>
   exists(path: string): Promise<boolean>
 }

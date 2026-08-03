@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import type { ConfigCategory, ScannedFileSnapshot, SelectiveSyncSettings } from "../src/model"
+import type { ConfigCategory, ScannedFileSnapshot, VaultScanOptions } from "../src/model"
 import { fingerprint, randomId } from "../src/platform/bytes"
 import type { ReconciliationCommit } from "../src/storage/contracts"
 import { MemoryJournal } from "../src/storage/memory-journal"
@@ -83,13 +83,11 @@ describe("Reconciler", () => {
       fileId,
       path: "note.md",
       previousPath: null,
-      fingerprint: "pending-fingerprint",
       baseRevisionId: null,
       parentRevisionIds: [],
       restoreSourceRevisionId: null,
       revisionId: randomId(),
       createdAt: 1,
-      attempts: 0,
       state: "queued",
       error: null,
       preparedRevision: null,
@@ -270,7 +268,7 @@ describe("Reconciler", () => {
     ])
   })
 
-  it("never tombstones files hidden by local selective sync", async () => {
+  it("tombstones every removed syncable vault file", async () => {
     const identity = randomId()
     const bytes = new TextEncoder().encode("private content").buffer
     const vault = new FakeVault({ "Archive/private/note.md": "private content" })
@@ -285,19 +283,10 @@ describe("Reconciler", () => {
         kind: "vault",
       },
     ])
-    const excluded = {
-      excludedFolders: ["Archive/private"],
-      excludedExtensions: [] as string[],
-    }
 
-    await new Reconciler(vault, journal).reconcile(ALL_CATEGORIES, excluded)
     vault.files.delete("Archive/private/note.md")
-    await new Reconciler(vault, journal).reconcile(ALL_CATEGORIES, excluded)
-
-    expect(await journal.listPending()).toEqual([])
-    expect((await journal.getSnapshots()).get("Archive/private/note.md")?.fileId).toBe(identity)
-
     await new Reconciler(vault, journal).reconcile(ALL_CATEGORIES)
+
     expect(await journal.listPending()).toEqual([
       expect.objectContaining({
         action: "delete",
@@ -318,10 +307,10 @@ describe("Reconciler", () => {
       override scanFiles(
         paths: readonly string[],
         categories: Record<ConfigCategory, boolean>,
-        selection?: SelectiveSyncSettings,
+        options?: VaultScanOptions,
       ): Promise<ScannedFileSnapshot[]> {
         this.scannedPaths.push([...paths])
-        return super.scanFiles(paths, categories, selection)
+        return super.scanFiles(paths, categories, options)
       }
     }
 
@@ -391,7 +380,7 @@ describe("Reconciler", () => {
     expect(snapshots.get("new/name.md")?.fileId).toBe("stable-id")
   })
 
-  it("does not tombstone an incrementally observed excluded path", async () => {
+  it("tombstones an incrementally observed removed path", async () => {
     const bytes = new TextEncoder().encode("private").buffer
     const vault = new FakeVault()
     const journal = new MemoryJournal()
@@ -407,13 +396,15 @@ describe("Reconciler", () => {
     ])
     await journal.putDirtyPath({ path: "Archive/private.md", token: "deleted", observedAt: 1 })
 
-    await new Reconciler(vault, journal).reconcileDirty(ALL_CATEGORIES, {
-      excludedFolders: ["Archive"],
-      excludedExtensions: [],
-    })
+    await new Reconciler(vault, journal).reconcileDirty(ALL_CATEGORIES)
 
-    expect(await journal.listPending()).toEqual([])
-    expect((await journal.getSnapshots()).get("Archive/private.md")?.fileId).toBe("private-id")
+    expect(await journal.listPending()).toEqual([
+      expect.objectContaining({
+        action: "delete",
+        path: "Archive/private.md",
+        fileId: "private-id",
+      }),
+    ])
     expect(await journal.listDirtyPaths()).toEqual([])
   })
 
@@ -437,13 +428,11 @@ describe("Reconciler", () => {
       fileId: "stable-id",
       path: "note.md",
       previousPath: null,
-      fingerprint: "older-fingerprint",
       baseRevisionId: null,
       parentRevisionIds: [],
       restoreSourceRevisionId: null,
       revisionId: "pending-revision",
       createdAt: 1,
-      attempts: 0,
       state: "uploading",
       error: null,
       preparedRevision: {

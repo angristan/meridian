@@ -9,6 +9,11 @@ import {
   notificationReconnectDelayMs,
 } from "./scheduling-policy"
 
+type SchedulingController = Pick<
+  SyncController,
+  "getStatus" | "recordVaultChange" | "reconnectNotifications" | "resume" | "sync"
+>
+
 interface SchedulingDependencies {
   now?: () => number
   random?: () => number
@@ -32,7 +37,7 @@ export class PluginScheduling {
 
   constructor(
     private readonly plugin: Plugin,
-    private readonly controller: () => SyncController | null,
+    private readonly controller: () => SchedulingController | null,
     private readonly settings: () => MeridianSettings,
     dependencies: SchedulingDependencies = {},
   ) {

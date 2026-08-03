@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest"
 import { DEFAULT_SETTINGS } from "../src/model"
 import { setMeridianControlValue } from "../src/plugin/settings-controls"
-import { normalizeSettings, withoutMeridianIdentity } from "../src/plugin/settings-state"
+import {
+  assertSelectiveSyncRemoved,
+  normalizeSettings,
+  settingsForStorage,
+  withoutMeridianIdentity,
+} from "../src/plugin/settings-state"
 
 describe("Meridian settings lifecycle", () => {
   it("restores only well-formed pending device removals", () => {
@@ -55,22 +60,23 @@ describe("Meridian settings lifecycle", () => {
     ).toBeNull()
   })
 
-  it("preserves and bounds hidden legacy selective sync rules", () => {
-    expect(
-      normalizeSettings({
-        selectiveSync: {
-          excludedFolders: ["Archive\\private", "Archive/private", "../unsafe", 42],
-          excludedExtensions: [".MOV", "mov", "bad/path", "tar.gz"],
-        },
-      }).selectiveSync,
-    ).toEqual({
+  it("retains old selective-sync rules only until their safe full replay", () => {
+    const settings = normalizeSettings({
+      selectiveSync: {
+        excludedFolders: ["Archive/private", "Archive/private", "", 42],
+        excludedExtensions: ["mov", "mov", "tar.gz"],
+      },
+    })
+    expect(settings.legacySelectiveSync).toEqual({
       excludedFolders: ["Archive/private"],
       excludedExtensions: ["mov", "tar.gz"],
     })
-    expect(normalizeSettings({}).selectiveSync).toEqual({
-      excludedFolders: [],
-      excludedExtensions: [],
+    expect(settingsForStorage(settings)).toMatchObject({
+      selectiveSync: settings.legacySelectiveSync,
     })
+    expect(() => assertSelectiveSyncRemoved(settings)).toThrow(/Meridian 1\.11\.13/)
+    expect(normalizeSettings({ selectiveSync: {} }).legacySelectiveSync).toBeNull()
+    expect(settingsForStorage(normalizeSettings({}))).not.toHaveProperty("selectiveSync")
   })
 
   it("binds configuration controls to storage and safe rescans", async () => {

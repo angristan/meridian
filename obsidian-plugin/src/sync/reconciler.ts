@@ -5,19 +5,19 @@ import type {
   JournalEntry,
   ScannedFileSnapshot,
   ScanSyncProgress,
-  SelectiveSyncSettings,
   VaultPort,
 } from "../model"
 import { BackgroundSyncCompute, type SyncComputePort } from "../platform/background-sync"
 import { randomId } from "../platform/bytes"
 import { yieldToEventLoop } from "../platform/scheduling"
 import type { JournalPort } from "../storage/contracts"
-import { configCategoryForPath, isSelectedForSync } from "../vault/path-policy"
+import { configCategoryForPath } from "../vault/path-policy"
+import { queuedEntry } from "./queued-entry"
 import { revisionHeads } from "./revision-heads"
 
 export const FINGERPRINT_AUDIT_INTERVAL_MS = 24 * 60 * 60 * 1_000
 
-export interface ReconcileResult {
+interface ReconcileResult {
   queued: number
   files: number
 }
@@ -37,7 +37,6 @@ export class Reconciler {
 
   async reconcile(
     categories: Record<ConfigCategory, boolean>,
-    selection: SelectiveSyncSettings = { excludedFolders: [], excludedExtensions: [] },
     options: ReconcileOptions = {},
   ): Promise<ReconcileResult> {
     const [dirtyPaths, previous, lastFingerprintAuditAt] = await Promise.all([
@@ -49,7 +48,7 @@ export class Reconciler {
     const forceFingerprint =
       lastFingerprintAuditAt !== null &&
       now - lastFingerprintAuditAt >= FINGERPRINT_AUDIT_INTERVAL_MS
-    const current = await this.vault.listFiles(categories, selection, {
+    const current = await this.vault.listFiles(categories, {
       ...options,
       fingerprintCache: previous,
       forceFingerprint,
@@ -58,7 +57,6 @@ export class Reconciler {
       current,
       previous,
       categories,
-      selection,
       null,
       dirtyPaths,
       options,
@@ -68,7 +66,6 @@ export class Reconciler {
 
   async reconcileDirty(
     categories: Record<ConfigCategory, boolean>,
-    selection: SelectiveSyncSettings = { excludedFolders: [], excludedExtensions: [] },
     options: ReconcileOptions = {},
   ): Promise<ReconcileResult> {
     const dirtyPaths = await this.journal.listDirtyPaths()
@@ -76,25 +73,16 @@ export class Reconciler {
 
     const scope = new Set(dirtyPaths.map((change) => change.path))
     const [current, previous] = await Promise.all([
-      this.vault.scanFiles([...scope], categories, selection, options),
+      this.vault.scanFiles([...scope], categories, options),
       this.journal.getSnapshots(),
     ])
-    return this.reconcileScanned(
-      current,
-      previous,
-      categories,
-      selection,
-      scope,
-      dirtyPaths,
-      options,
-    )
+    return this.reconcileScanned(current, previous, categories, scope, dirtyPaths, options)
   }
 
   private async reconcileScanned(
     current: ScannedFileSnapshot[],
     previous: ReadonlyMap<string, FileSnapshot>,
     categories: Record<ConfigCategory, boolean>,
-    selection: SelectiveSyncSettings,
     scope: ReadonlySet<string> | null,
     dirtyPaths: DirtyPath[],
     options: ReconcileOptions,
@@ -111,8 +99,7 @@ export class Reconciler {
     const inScope = (path: string) => scope === null || scope.has(path)
     const enabledScopedPrevious = [...previous.values()].filter(
       (snapshot) =>
-        inScope(snapshot.path) &&
-        snapshotEnabled(snapshot, categories, selection, this.vault.configDir),
+        inScope(snapshot.path) && snapshotEnabled(snapshot, categories, this.vault.configDir),
     )
     const unchangedSnapshots =
       scope === null
@@ -140,7 +127,7 @@ export class Reconciler {
             .filter(
               (snapshot) =>
                 !inScope(snapshot.path) &&
-                snapshotEnabled(snapshot, categories, selection, this.vault.configDir),
+                snapshotEnabled(snapshot, categories, this.vault.configDir),
             )
             .map((snapshot) => snapshot.path),
           ...current.map((snapshot) => snapshot.path),
@@ -154,8 +141,7 @@ export class Reconciler {
     const consumedRemovals = new Set(indexPlan.renameSources.map((rename) => rename.previousPath))
     const ignoredPrevious = [...previous.values()].filter(
       (snapshot) =>
-        !inScope(snapshot.path) ||
-        !snapshotEnabled(snapshot, categories, selection, this.vault.configDir),
+        !inScope(snapshot.path) || !snapshotEnabled(snapshot, categories, this.vault.configDir),
     )
     const removed = indexPlan.removedPaths
       .map((path) => previous.get(path))
@@ -200,23 +186,17 @@ export class Reconciler {
       if (consumedRemovals.has(snapshot.path)) continue
       if (pendingPaths.has(snapshot.path)) continue
       const { baseRevisionId, parentRevisionIds } = await this.revisionAncestry(snapshot.fileId)
-      entries.push({
-        id: randomId(),
-        action: "delete",
-        fileId: snapshot.fileId,
-        path: snapshot.path,
-        previousPath: null,
-        fingerprint: null,
-        baseRevisionId,
-        parentRevisionIds,
-        restoreSourceRevisionId: null,
-        revisionId: randomId(),
-        createdAt: Date.now(),
-        attempts: 0,
-        state: "queued",
-        error: null,
-        preparedRevision: null,
-      })
+      entries.push(
+        queuedEntry({
+          action: "delete",
+          fileId: snapshot.fileId,
+          path: snapshot.path,
+          previousPath: null,
+          baseRevisionId,
+          parentRevisionIds,
+          restoreSourceRevisionId: null,
+        }),
+      )
       pendingPaths.add(snapshot.path)
     }
 
@@ -253,23 +233,15 @@ export class Reconciler {
     previousPath: string | null,
   ): Promise<JournalEntry> {
     const { baseRevisionId, parentRevisionIds } = await this.revisionAncestry(snapshot.fileId)
-    return {
-      id: randomId(),
+    return queuedEntry({
       action: "upsert",
       fileId: snapshot.fileId,
       path: snapshot.path,
       previousPath,
-      fingerprint: snapshot.fingerprint,
       baseRevisionId,
       parentRevisionIds,
       restoreSourceRevisionId: null,
-      revisionId: randomId(),
-      createdAt: Date.now(),
-      attempts: 0,
-      state: "queued",
-      error: null,
-      preparedRevision: null,
-    }
+    })
   }
 
   private async revisionAncestry(
@@ -324,10 +296,9 @@ function sameSnapshot(left: FileSnapshot | undefined, right: FileSnapshot): bool
 function snapshotEnabled(
   snapshot: FileSnapshot,
   categories: Record<ConfigCategory, boolean>,
-  selection: SelectiveSyncSettings,
   configDir: string,
 ): boolean {
-  if (snapshot.kind === "vault") return isSelectedForSync(snapshot.path, configDir, selection)
+  if (snapshot.kind === "vault") return true
   const category = configCategoryForPath(snapshot.path, configDir)
   return category !== null && categories[category]
 }

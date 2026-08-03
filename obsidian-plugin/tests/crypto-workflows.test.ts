@@ -112,7 +112,7 @@ describe("shared crypto adapter", () => {
           throw new Error("Tampered operations must be rejected before loading blobs")
         },
       ),
-    ).rejects.toThrow(/file operation signature is invalid/)
+    ).rejects.toThrow(/Worker file signature is invalid/)
 
     let oversizedLoadCalls = 0
     await expect(
@@ -197,7 +197,7 @@ describe("shared crypto adapter", () => {
       { ...original, type: "tombstone" },
       { ...original, subjectDeviceId: randomId() },
     ]) {
-      await verifyBothPaths(tampered, /file operation signature is invalid/)
+      await verifyBothPaths(tampered, /Worker file signature is invalid/)
     }
 
     const signed = decodeOperation(fromBase64Url(original.envelope))
@@ -224,7 +224,7 @@ describe("shared crypto adapter", () => {
           encodeOperation({ ...signed, signature: ed25519Signature(invalidInnerSignature) }),
         ),
       ),
-      /Revision operation signature is invalid/,
+      /Canonical file signature is invalid/,
     )
 
     const mismatched = signOperation(
@@ -236,7 +236,7 @@ describe("shared crypto adapter", () => {
     )
     await verifyBothPaths(
       resignWrapper(toBase64Url(encodeOperation(mismatched))),
-      /does not match its signed revision/,
+      /does not match its canonical signature/,
     )
   })
 

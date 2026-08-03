@@ -12,6 +12,7 @@ import type {
 import type {
   AppliedOperationCommit,
   JournalPort,
+  LocalEffectsCommit,
   PushedRevisionCommit,
   ReconciliationCommit,
 } from "./contracts"
@@ -77,12 +78,24 @@ export class MemoryJournal implements JournalPort {
   async updateEntry(id: string, state: JournalState, error: string | null = null): Promise<void> {
     const entry = this.entries.get(id)
     if (!entry) throw new Error(`Missing journal entry ${id}`)
-    this.entries.set(id, {
-      ...entry,
-      state,
-      error,
-      attempts: state === "failed" ? entry.attempts + 1 : entry.attempts,
-    })
+    this.entries.set(id, { ...entry, state, error })
+  }
+
+  async commitLocalEffects(commit: LocalEffectsCommit): Promise<void> {
+    for (const entry of commit.entries) this.entries.set(entry.id, structuredClone(entry))
+    for (const snapshot of commit.putSnapshots) {
+      this.snapshots.set(snapshot.path, structuredClone(snapshot))
+    }
+    for (const path of commit.removeSnapshotPaths) this.snapshots.delete(path)
+    for (const resolution of commit.resolvedConflicts) {
+      const conflict = this.conflicts.get(resolution.id)
+      if (conflict) {
+        this.conflicts.set(resolution.id, {
+          ...conflict,
+          resolvedAt: resolution.resolvedAt,
+        })
+      }
+    }
   }
 
   async putDirtyPath(change: DirtyPath): Promise<void> {
@@ -115,14 +128,6 @@ export class MemoryJournal implements JournalPort {
 
   async getSnapshots(): Promise<Map<string, FileSnapshot>> {
     return new Map([...this.snapshots].map(([path, snapshot]) => [path, structuredClone(snapshot)]))
-  }
-
-  async putSnapshot(snapshot: FileSnapshot): Promise<void> {
-    this.snapshots.set(snapshot.path, structuredClone(snapshot))
-  }
-
-  async removeSnapshot(path: string): Promise<void> {
-    this.snapshots.delete(path)
   }
 
   async getCursor(): Promise<number> {
@@ -226,8 +231,14 @@ export class MemoryJournal implements JournalPort {
   async commitHistoryOperation(
     revision: LocalRevision | null,
     checkpoint: TrustedCheckpoint,
+    revocation?: DeviceRevocationRecord,
   ): Promise<void> {
+    const existing = revocation ? this.revocations.get(revocation.deviceId) : undefined
+    if (existing && existing.cursor !== revocation?.cursor) {
+      throw new Error("Device has conflicting revocation records")
+    }
     if (revision) this.historyRevisions.set(revision.revisionId, structuredClone(revision))
+    if (revocation) this.revocations.set(revocation.deviceId, structuredClone(revocation))
     this.historyCheckpoint = structuredClone(checkpoint)
   }
 
@@ -247,11 +258,6 @@ export class MemoryJournal implements JournalPort {
       .filter((conflict) => !unresolvedOnly || conflict.resolvedAt === null)
       .sort((left, right) => right.createdAt - left.createdAt)
       .map((conflict) => structuredClone(conflict))
-  }
-
-  async resolveConflict(id: string): Promise<void> {
-    const conflict = this.conflicts.get(id)
-    if (conflict) this.conflicts.set(id, { ...conflict, resolvedAt: Date.now() })
   }
 
   async clearSnapshots(): Promise<void> {

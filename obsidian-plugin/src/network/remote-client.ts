@@ -6,7 +6,11 @@ import {
   DeviceListResponseSchema,
   ErrorResponseSchema,
   OperationReceiptResponseSchema,
+  type PairingApproval,
+  type PairingCandidateConfirmation,
   PairingCapabilityResponseSchema,
+  type PairingJoin,
+  type PairingRelease,
   PairingResultResponseSchema,
   PairingStatusResponseSchema,
   RecoveryChallengeResponseSchema,
@@ -359,15 +363,15 @@ export class MeridianRemoteClient implements RemotePort {
     )
   }
 
-  async joinPairing(pairingId: string, payload: unknown): Promise<PairingResult> {
+  async joinPairing(pairingId: string, payload: PairingJoin): Promise<PairingResult> {
     return this.pairingResultRequest(pairingId, "join", payload, { authenticated: false })
   }
 
-  async approvePairing(pairingId: string, payload: unknown): Promise<PairingResult> {
+  async approvePairing(pairingId: string, payload: PairingApproval): Promise<PairingResult> {
     return this.pairingResultRequest(pairingId, "approve", payload, { authenticated: true })
   }
 
-  async releasePairing(pairingId: string, payload: unknown): Promise<PairingResult> {
+  async releasePairing(pairingId: string, payload: PairingRelease): Promise<PairingResult> {
     return this.pairingResultRequest(pairingId, "release", payload, { authenticated: true })
   }
 
@@ -379,13 +383,19 @@ export class MeridianRemoteClient implements RemotePort {
     return this.pairingResultRequest(pairingId, "confirm-owner", {}, { authenticated: true })
   }
 
-  async confirmPairingCandidate(pairingId: string, payload: unknown): Promise<PairingResult> {
+  async confirmPairingCandidate(
+    pairingId: string,
+    payload: PairingCandidateConfirmation,
+  ): Promise<PairingResult> {
     return this.pairingResultRequest(pairingId, "confirm-candidate", payload, {
       authenticated: false,
     })
   }
 
-  async completePairing(pairingId: string, payload: unknown): Promise<PairingResult> {
+  async completePairing(
+    pairingId: string,
+    payload: PairingCandidateConfirmation,
+  ): Promise<PairingResult> {
     return this.pairingResultRequest(pairingId, "complete", payload, { authenticated: false })
   }
 

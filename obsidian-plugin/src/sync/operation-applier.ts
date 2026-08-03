@@ -10,7 +10,6 @@ import type {
   LocalRevision,
   RemoteOperation,
   RemotePort,
-  SelectiveSyncSettings,
   TrustedCheckpoint,
   VaultPort,
 } from "../model"
@@ -20,10 +19,10 @@ import {
   configCategoryForPath,
   conflictPath,
   isConfigPath,
-  isSelectedForSync,
   isSyncablePath,
   pathsCollide,
 } from "../vault/path-policy"
+import { queuedEntry } from "./queued-entry"
 import { revisionHeads } from "./revision-heads"
 import type { RevisionLoader } from "./revision-loader"
 import { snapshotFor } from "./snapshots"
@@ -36,10 +35,6 @@ export class OperationApplier {
     private readonly crypto: CryptoPort,
     private readonly revisions: RevisionLoader,
     private readonly categories: () => Record<ConfigCategory, boolean>,
-    private readonly selection: () => SelectiveSyncSettings = () => ({
-      excludedFolders: [],
-      excludedExtensions: [],
-    }),
   ) {}
 
   async apply(
@@ -85,10 +80,6 @@ export class OperationApplier {
       throw new Error("Remote operation targets an excluded configuration path")
     }
     if (category && !this.categories()[category]) {
-      await this.recordRevision(revision, operation, false)
-      return device
-    }
-    if (!isSelectedForSync(revision.path, this.vault.configDir, this.selection())) {
       await this.recordRevision(revision, operation, false)
       return device
     }
@@ -344,23 +335,15 @@ export class OperationApplier {
     }
 
     const heads = revisionHeads(await this.journal.listFileRevisions(snapshot.fileId))
-    const entry: JournalEntry = {
-      id: randomId(),
+    const entry = queuedEntry({
       action: bytes ? "upsert" : "delete",
       fileId: snapshot.fileId,
       path: snapshot.path,
       previousPath: null,
-      fingerprint: bytes ? await fingerprint(bytes) : null,
       baseRevisionId: heads.length === 1 ? (heads[0]?.revisionId ?? null) : null,
       parentRevisionIds: heads.map((head) => head.revisionId),
       restoreSourceRevisionId: null,
-      revisionId: randomId(),
-      createdAt: Date.now(),
-      attempts: 0,
-      state: "queued",
-      error: null,
-      preparedRevision: null,
-    }
+    })
     await this.journal.putEntry(entry)
     return { pending: entry, bytes }
   }
@@ -420,15 +403,28 @@ export class OperationApplier {
       (entry) => entry.id === revision.operationId && entry.revisionId === revision.revisionId,
     )
     if (!pending) return
-    if (revision.action === "delete") {
-      await this.journal.removeSnapshot(revision.path)
-    } else {
-      if (!revision.bytes) throw new Error("Committed content revision is missing decrypted bytes")
-      await this.journal.putSnapshot(
-        await snapshotFor(revision.path, revision.fileId, revision.bytes, this.vault.configDir),
-      )
+    if (revision.action !== "delete" && !revision.bytes) {
+      throw new Error("Committed content revision is missing decrypted bytes")
     }
-    if (revision.previousPath) await this.journal.removeSnapshot(revision.previousPath)
+    await this.journal.commitLocalEffects({
+      entries: [],
+      putSnapshots:
+        revision.action === "delete"
+          ? []
+          : [
+              await snapshotFor(
+                revision.path,
+                revision.fileId,
+                revision.bytes as ArrayBuffer,
+                this.vault.configDir,
+              ),
+            ],
+      removeSnapshotPaths: [
+        ...(revision.action === "delete" ? [revision.path] : []),
+        ...(revision.previousPath ? [revision.previousPath] : []),
+      ],
+      resolvedConflicts: [],
+    })
   }
 
   private async completeCommittedAncestorPending(
@@ -574,7 +570,6 @@ export class OperationApplier {
         entries: [
           {
             ...pending,
-            fingerprint: await fingerprint(mergedBytes),
             baseRevisionId: remoteRevision.revisionId,
             parentRevisionIds: [remoteRevision.revisionId],
             state: "queued",

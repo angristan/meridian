@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest"
+import type { LocalEffectsCommit } from "../src/storage/contracts"
 import { MemoryJournal } from "../src/storage/memory-journal"
 import { HistoryService } from "../src/sync/history-service"
 import { RevisionLoader } from "../src/sync/revision-loader"
@@ -235,6 +236,64 @@ describe("HistoryService", () => {
       },
     ])
     await expect(history.deletedFiles()).resolves.toEqual([])
+  })
+
+  it("publishes restore entry and snapshot after one promise barrier", async () => {
+    let entered = () => {}
+    let release = () => {}
+    const reached = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    const wait = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    class BarrierJournal extends MemoryJournal {
+      override async commitLocalEffects(commit: LocalEffectsCommit): Promise<void> {
+        entered()
+        await wait
+        await super.commitLocalEffects(commit)
+      }
+    }
+    const vault = new FakeVault()
+    const journal = new BarrierJournal()
+    const remote = new FakeRemote()
+    remote.blobs.set("source-blob", new TextEncoder().encode("restored").buffer)
+    await seedRevision(journal, {
+      revisionId: "source",
+      fileId: "file",
+      path: "restored.md",
+      parents: [],
+      deviceId: TEST_DEVICE.deviceId,
+      createdAt: 1,
+      cursor: 1,
+      tombstone: false,
+      isConflict: false,
+      operation: {
+        cursor: 1,
+        logHash: "hash-1",
+        envelope: {
+          operationId: "source-operation",
+          revisionId: "source",
+          fileId: "file",
+          action: "upsert",
+          path: "restored.md",
+          previousPath: null,
+          parents: [],
+          authorDeviceId: TEST_DEVICE.deviceId,
+          blobId: "source-blob",
+          isText: true,
+        },
+      },
+    })
+
+    const restoring = service(vault, journal, remote).restore(TEST_DEVICE, "source")
+    await reached
+    expect(await journal.listPending()).toEqual([])
+    expect((await journal.getSnapshots()).has("restored.md")).toBe(false)
+    release()
+    await restoring
+    expect(await journal.listPending()).toHaveLength(1)
+    expect((await journal.getSnapshots()).get("restored.md")?.fileId).toBe("file")
   })
 
   it("never restores over an untracked occupied path", async () => {

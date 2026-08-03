@@ -1,129 +1,135 @@
 import type {
   CryptoPort,
   DeviceKeyMaterial,
+  DeviceRevocationRecord,
   LocalRevision,
   RemoteOperation,
   RemotePort,
-  TrustedCheckpoint,
 } from "../model"
 import type { JournalPort } from "../storage/contracts"
 import { checkpointFormats, initialCheckpoint } from "./checkpoints"
+import {
+  acceptVerifiedLogPage,
+  advanceVerifiedLogCursor,
+  remoteOperationType,
+  verifiedLogCursor,
+} from "./verified-log"
 
-export interface HistoryBackfillResult {
+interface HistoryBackfillResult {
   added: number
   throughCursor: number
 }
 
 export class HistoryBackfillService {
+  private running: Promise<HistoryBackfillResult> | null = null
+
   constructor(
     private readonly journal: JournalPort,
     private readonly remote: RemotePort,
     private readonly crypto: CryptoPort,
   ) {}
 
-  async backfill(device: DeviceKeyMaterial): Promise<HistoryBackfillResult> {
+  backfill(device: DeviceKeyMaterial): Promise<HistoryBackfillResult> {
+    if (this.running) return this.running
+    const running = this.runBackfill(device).finally(() => {
+      if (this.running === running) this.running = null
+    })
+    this.running = running
+    return running
+  }
+
+  private async runBackfill(device: DeviceKeyMaterial): Promise<HistoryBackfillResult> {
     if (!device.trustedCheckpointAuthorized) {
       throw new Error("Re-pair this legacy device before downloading complete history")
     }
     const trustedInitialFormat = checkpointFormats(device.trustedCheckpoint).initialLogFormat
-    let checkpoint =
-      (await this.journal.getHistoryCheckpoint()) ?? initialCheckpoint(trustedInitialFormat)
-    let targetCursor: number | null = null
+    const liveCheckpoint = await this.journal.getCheckpoint()
+    const maximumTargetCursor = liveCheckpoint?.cursor ?? Number.MAX_SAFE_INTEGER
+    const revocations = new Map(
+      (await this.journal.listDeviceRevocations()).map((record) => [record.deviceId, record]),
+    )
+    let currentDevice = device
+    let log = verifiedLogCursor(
+      (await this.journal.getHistoryCheckpoint()) ?? initialCheckpoint(trustedInitialFormat),
+    )
     let added = 0
-    while (targetCursor === null || checkpoint.cursor < targetCursor) {
-      const page = await this.remote.getChanges(checkpoint.cursor, checkpoint)
-      const throughCursor: number = targetCursor === null ? page.latestCursor : targetCursor
-      targetCursor = throughCursor
-      if (throughCursor < device.trustedCheckpoint.cursor) {
-        throw new Error("Server omitted history protected by the signed checkpoint")
-      }
-      const operations = page.operations.filter((operation) => operation.cursor <= throughCursor)
-      if (operations.length === 0 && checkpoint.cursor < throughCursor) {
-        throw new Error("Server omitted operations from the history backfill")
-      }
-      for (const operation of operations) {
-        if (operation.cursor !== checkpoint.cursor + 1) {
-          throw new Error(`History is discontinuous at cursor ${operation.cursor}`)
-        }
-        const formats = checkpointFormats(checkpoint)
+    while (log.targetCursor === null || log.checkpoint.cursor < log.targetCursor) {
+      const page = acceptVerifiedLogPage(
+        log,
+        await this.remote.getChanges(log.checkpoint.cursor, log.checkpoint),
+        device.trustedCheckpoint,
+        true,
+        maximumTargetCursor,
+      )
+      log = page.state
+      for (const operation of page.operations) {
+        const formats = checkpointFormats(log.checkpoint)
         await this.crypto.verifyOperationLogLink(
-          device,
+          currentDevice,
           operation,
-          checkpoint.logHash,
+          log.checkpoint.logHash,
           formats.logFormat,
         )
-        if (
-          operation.cursor === device.trustedCheckpoint.cursor &&
-          operation.logHash !== device.trustedCheckpoint.logHash
-        ) {
-          throw new Error("History conflicts with the signed device checkpoint")
+        const authorDeviceId = operationAuthorDeviceId(operation)
+        const authorRevocation = authorDeviceId ? revocations.get(authorDeviceId) : undefined
+        if (authorRevocation && operation.cursor > authorRevocation.cursor) {
+          throw new Error("Historical operation was authored after its device was revoked")
         }
-        const inspected = await this.inspectOperation(device, operation, checkpoint)
-        const nextCheckpoint: TrustedCheckpoint = {
-          cursor: operation.cursor,
-          logHash: operation.logHash,
-          initialLogFormat: formats.initialLogFormat,
-          logFormat: inspected.nextLogFormat ?? formats.logFormat,
+        const nextLog = advanceVerifiedLogCursor(log, operation, device.trustedCheckpoint)
+        const type = remoteOperationType(operation)
+        let revision: LocalRevision | null = null
+        let revocation: DeviceRevocationRecord | undefined
+        if (type === "device-revocation") {
+          revocation = await this.crypto.verifyDeviceRevocation(currentDevice, operation)
+          revocations.set(revocation.deviceId, revocation)
+        } else if (type === "log-format-transition") {
+          await this.crypto.verifyLogFormatUpgrade(currentDevice, operation)
+        } else if (type === "key-epoch") {
+          currentDevice = await this.crypto.applyEpochTransition(
+            currentDevice,
+            operation,
+            log.checkpoint,
+          )
+        } else {
+          revision = await this.inspectFileOperation(currentDevice, operation, type)
         }
-        await this.journal.commitHistoryOperation(inspected.revision, nextCheckpoint)
-        if (inspected.revision) added += 1
-        checkpoint = nextCheckpoint
+        log = nextLog
+        await this.journal.commitHistoryOperation(revision, log.checkpoint, revocation)
+        if (revision) added += 1
       }
     }
-    return { added, throughCursor: checkpoint.cursor }
+    return { added, throughCursor: log.checkpoint.cursor }
   }
 
-  private async inspectOperation(
+  private async inspectFileOperation(
     device: DeviceKeyMaterial,
     operation: RemoteOperation,
-    predecessor: TrustedCheckpoint,
-  ): Promise<{
-    revision: LocalRevision | null
-    nextLogFormat: "canonical-cbor-v1" | null
-  }> {
-    const type = operationType(operation)
-    if (type === "device-revocation") {
-      await this.crypto.verifyDeviceRevocation(device, operation)
-      return { revision: null, nextLogFormat: null }
-    }
-    if (type === "log-format-transition") {
-      const nextLogFormat = await this.crypto.verifyLogFormatUpgrade(device, operation)
-      return { revision: null, nextLogFormat }
-    }
-    if (type === "key-epoch") {
-      await this.crypto.applyEpochTransition(device, operation, predecessor)
-      return { revision: null, nextLogFormat: null }
-    }
+    type: string,
+  ): Promise<LocalRevision> {
     if (type !== "revision" && type !== "restore" && type !== "tombstone") {
       throw new Error("Complete history contains an unknown operation type")
     }
     const metadata = await this.crypto.inspectRevision(device, operation, Number.MAX_SAFE_INTEGER)
     return {
-      revision: {
-        revisionId: metadata.revisionId,
-        fileId: metadata.fileId,
-        path: metadata.path,
-        action: metadata.action,
-        previousPath: metadata.previousPath,
-        parents: metadata.parents,
-        deviceId: metadata.authorDeviceId,
-        createdAt: metadata.createdAt,
-        cursor: operation.cursor,
-        tombstone: metadata.action === "delete",
-        isConflict: false,
-        operation,
-      },
-      nextLogFormat: null,
+      revisionId: metadata.revisionId,
+      fileId: metadata.fileId,
+      path: metadata.path,
+      action: metadata.action,
+      previousPath: metadata.previousPath,
+      parents: metadata.parents,
+      deviceId: metadata.authorDeviceId,
+      createdAt: metadata.createdAt,
+      cursor: operation.cursor,
+      tombstone: metadata.action === "delete",
+      isConflict: false,
+      operation,
     }
   }
 }
 
-function operationType(operation: RemoteOperation): string {
-  const wire = operation.envelope
-  if (typeof wire !== "object" || wire === null || Array.isArray(wire)) {
-    throw new Error("History operation is invalid")
-  }
-  const type = (wire as Record<string, unknown>).type
-  if (typeof type !== "string") throw new Error("History operation type is missing")
-  return type
+function operationAuthorDeviceId(operation: RemoteOperation): string | null {
+  const envelope = operation.envelope
+  if (typeof envelope !== "object" || envelope === null || Array.isArray(envelope)) return null
+  const authorDeviceId = (envelope as Record<string, unknown>).authorDeviceId
+  return typeof authorDeviceId === "string" ? authorDeviceId : null
 }

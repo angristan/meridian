@@ -1,3 +1,14 @@
+import {
+  type PairingApproval,
+  PairingApprovalSchema,
+  type PairingCandidateConfirmation,
+  PairingCandidateConfirmationSchema,
+  type PairingJoin,
+  PairingJoinSchema,
+  type PairingRelease,
+  PairingReleaseSchema,
+} from "@meridian/protocol"
+import * as Schema from "effect/Schema"
 import type { CryptoPort, MeridianSettings, PairingInvitation, PairingStatus } from "../model"
 import { ObsidianHttpTransport } from "../network/obsidian-transport"
 import { MeridianRemoteClient, normalizeEndpoint } from "../network/remote-client"
@@ -9,6 +20,17 @@ import { confirmRemotePairingCompletion } from "./pairing-completion"
 import { createPairingDeepLink, hasConfiguredMeridianIdentity } from "./pairing-link"
 import type { MeridianSecretStorage } from "./secret-storage"
 import { withoutMeridianIdentity } from "./settings-state"
+
+type PairingController = Pick<
+  SyncController,
+  | "confirmPairingOwner"
+  | "createPairing"
+  | "pairingStatus"
+  | "preparePairingApproval"
+  | "rejectPairing"
+  | "releasePairing"
+  | "submitPairingApproval"
+>
 
 export type PairingUiCapability = Pick<
   PairingCoordinator,
@@ -30,7 +52,7 @@ export class PairingCoordinator {
   private readonly polling = new AbortController()
 
   constructor(
-    private readonly getController: () => SyncController | null,
+    private readonly getController: () => PairingController | null,
     private readonly getSettings: () => MeridianSettings,
     private readonly setSettings: (settings: MeridianSettings) => void,
     private readonly saveSettings: () => Promise<void>,
@@ -170,7 +192,12 @@ export class PairingCoordinator {
     }
     const existingJoin = this.secrets.getPendingPairingJoin(pairingId)
     if (this.secrets.getPendingPairing(pairingId) && existingJoin) {
-      await this.submitJoin(remote, pairingId, capability, JSON.parse(existingJoin))
+      await this.submitJoin(
+        remote,
+        pairingId,
+        capability,
+        Schema.decodeUnknownSync(PairingJoinSchema)(JSON.parse(existingJoin)),
+      )
       return
     }
     const joining = await this.crypto.createPairingJoin(
@@ -380,7 +407,7 @@ export class PairingCoordinator {
     }
   }
 
-  private controller(): SyncController {
+  private controller(): PairingController {
     const controller = this.getController()
     if (!controller) throw new Error("Meridian is not connected")
     return controller
@@ -394,7 +421,7 @@ export class PairingCoordinator {
     remote: MeridianRemoteClient,
     pairingId: string,
     capability: string,
-    payload: unknown,
+    payload: PairingJoin,
   ): Promise<void> {
     try {
       await remote.joinPairing(pairingId, payload)
@@ -410,21 +437,11 @@ export class PairingCoordinator {
     }
   }
 
-  private pendingCompletionPayload(pairingId: string): Record<string, unknown> & {
-    capability: string
-  } {
+  private pendingCompletionPayload(pairingId: string): PairingCandidateConfirmation {
     const serialized = this.secrets.getPendingPairingCompletion(pairingId)
     if (!serialized) throw new Error("Pending pairing completion is missing from SecretStorage")
     try {
-      const value: unknown = JSON.parse(serialized)
-      if (
-        typeof value === "object" &&
-        value !== null &&
-        "capability" in value &&
-        typeof value.capability === "string"
-      ) {
-        return { ...value, capability: value.capability }
-      }
+      return Schema.decodeUnknownSync(PairingCandidateConfirmationSchema)(JSON.parse(serialized))
     } catch {
       // Fall through to the stable local-state error below.
     }
@@ -433,8 +450,8 @@ export class PairingCoordinator {
 
   private pendingRelease(pairingId: string): {
     candidatePackage: string
-    approvalPayload: unknown
-    releasePayload: unknown
+    approvalPayload: PairingApproval
+    releasePayload: PairingRelease
     transferHash: string
     verificationPhrase: string
   } {
@@ -456,8 +473,8 @@ export class PairingCoordinator {
       ) {
         return {
           candidatePackage: value.candidatePackage,
-          approvalPayload: value.approvalPayload,
-          releasePayload: value.releasePayload,
+          approvalPayload: Schema.decodeUnknownSync(PairingApprovalSchema)(value.approvalPayload),
+          releasePayload: Schema.decodeUnknownSync(PairingReleaseSchema)(value.releasePayload),
           transferHash: value.transferHash,
           verificationPhrase: value.verificationPhrase,
         }

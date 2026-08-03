@@ -54,14 +54,6 @@ export class TroubleshootingModal extends Modal {
         : "Unavailable while disconnected",
     )
 
-    const exclusions = this.host.settings.selectiveSync
-    if (exclusions.excludedFolders.length > 0 || exclusions.excludedExtensions.length > 0) {
-      this.contentEl.createDiv({
-        cls: "meridian-callout is-warning",
-        text: `Legacy exclusions remain active for ${exclusions.excludedFolders.length} folder rules and ${exclusions.excludedExtensions.length} file-type rules. Meridian preserves them to avoid uploading or deleting files unexpectedly.`,
-      })
-    }
-
     new Setting(this.contentEl).setName("Tools").setHeading()
     new Setting(this.contentEl)
       .setName("Technical log")

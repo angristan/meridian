@@ -18,6 +18,13 @@ export interface ReconciliationCommit {
   fingerprintAuditedAt?: number
 }
 
+export interface LocalEffectsCommit {
+  entries: JournalEntry[]
+  putSnapshots: FileSnapshot[]
+  removeSnapshotPaths: string[]
+  resolvedConflicts: Array<{ id: string; resolvedAt: number }>
+}
+
 export interface PushedRevisionCommit {
   entry: JournalEntry
   revision: LocalRevision
@@ -41,12 +48,11 @@ export interface JournalPort {
   compactLocalStorage(): Promise<LocalCompactionResult>
   putEntry(entry: JournalEntry): Promise<void>
   updateEntry(id: string, state: JournalState, error?: string | null): Promise<void>
+  commitLocalEffects(commit: LocalEffectsCommit): Promise<void>
   putDirtyPath(change: DirtyPath): Promise<void>
   listDirtyPaths(): Promise<DirtyPath[]>
   commitReconciliation(commit: ReconciliationCommit): Promise<void>
   getSnapshots(): Promise<ReadonlyMap<string, FileSnapshot>>
-  putSnapshot(snapshot: FileSnapshot): Promise<void>
-  removeSnapshot(path: string): Promise<void>
   getCursor(): Promise<number>
   getLastSuccessfulSyncAt(): Promise<number | null>
   setLastSuccessfulSyncAt(timestamp: number): Promise<void>
@@ -67,10 +73,10 @@ export interface JournalPort {
   commitHistoryOperation(
     revision: LocalRevision | null,
     checkpoint: TrustedCheckpoint,
+    revocation?: DeviceRevocationRecord,
   ): Promise<void>
   getRetainedRevision(revisionId: string): Promise<LocalRevision | null>
   listRetainedRevisions(): Promise<LocalRevision[]>
   listConflicts(unresolvedOnly?: boolean): Promise<ConflictRecord[]>
-  resolveConflict(id: string): Promise<void>
   clearSnapshots(): Promise<void>
 }

@@ -14,9 +14,9 @@ import type {
   LogFormat,
   PairedDeviceMaterial,
   PairingApprovalMaterial,
-  PairingDeviceDescriptor,
   PairingCapability,
   PairingConfirmationMaterial,
+  PairingDeviceDescriptor,
   PairingJoinMaterial,
   PairingResult,
   PairingStatus,
@@ -30,7 +30,6 @@ import type {
   RetentionAcknowledgement,
   RevisionDraft,
   ScannedFileSnapshot,
-  SelectiveSyncSettings,
   SetupClaim,
   StoragePruneResult,
   TrustedCheckpoint,
@@ -38,7 +37,7 @@ import type {
   VaultScanOptions,
 } from "../src/model"
 import { fingerprint } from "../src/platform/bytes"
-import { isConfigPath, isSelectedForSync, isSyncablePath } from "../src/vault/path-policy"
+import { isConfigPath, isSyncablePath } from "../src/vault/path-policy"
 
 export const TEST_DEVICE: DeviceKeyMaterial = {
   vaultId: "vault-1",
@@ -72,16 +71,14 @@ export class FakeVault implements VaultPort {
 
   async listFiles(
     categories: Record<ConfigCategory, boolean>,
-    selection: SelectiveSyncSettings = { excludedFolders: [], excludedExtensions: [] },
     options: VaultScanOptions = {},
   ): Promise<ScannedFileSnapshot[]> {
-    return this.scanFiles([...this.files.keys()], categories, selection, options)
+    return this.scanFiles([...this.files.keys()], categories, options)
   }
 
   async scanFiles(
     paths: readonly string[],
     categories: Record<ConfigCategory, boolean>,
-    selection: SelectiveSyncSettings = { excludedFolders: [], excludedExtensions: [] },
     options: VaultScanOptions = {},
   ): Promise<ScannedFileSnapshot[]> {
     const snapshots: ScannedFileSnapshot[] = []
@@ -100,10 +97,7 @@ export class FakeVault implements VaultPort {
         })
         continue
       }
-      if (
-        !isSyncablePath(path, this.configDir, categories) ||
-        !isSelectedForSync(path, this.configDir, selection)
-      ) {
+      if (!isSyncablePath(path, this.configDir, categories)) {
         processed += 1
         options.onProgress?.({
           kind: "scan",
@@ -173,28 +167,15 @@ export class FakeVault implements VaultPort {
     return true
   }
 
-  async rename(from: string, to: string): Promise<void> {
-    if (from === to) return
-    const bytes = this.files.get(from)
-    if (!bytes) {
-      if (this.files.has(to)) return
-      throw new Error(`Missing ${from}`)
-    }
-    if (this.files.has(to)) throw new Error(`Rename target already exists: ${to}`)
-    this.files.set(to, bytes)
-    this.files.delete(from)
-  }
-
   async renameIfUnchanged(from: string, to: string, expectedBytes: ArrayBuffer): Promise<boolean> {
     const current = this.files.get(from) ?? null
     if (!sameOptionalBytes(current, expectedBytes)) return false
     if (from !== to && this.files.has(to)) return false
-    await this.rename(from, to)
+    if (from !== to) {
+      this.files.set(to, expectedBytes.slice(0))
+      this.files.delete(from)
+    }
     return true
-  }
-
-  async remove(path: string): Promise<void> {
-    this.files.delete(path)
   }
 
   async exists(path: string): Promise<boolean> {

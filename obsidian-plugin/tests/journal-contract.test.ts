@@ -44,7 +44,6 @@ describe.each(implementations)("$0 journal contract", (_name, createHarness) => 
       const plaintext = new TextEncoder().encode("queued edit").buffer
       await journal.putEntry(
         entry({
-          attempts: 1,
           state: "failed",
           error: "stale",
           preparedRevision: {
@@ -63,6 +62,23 @@ describe.each(implementations)("$0 journal contract", (_name, createHarness) => 
         error: null,
         preparedRevision: { invalidatedByEpoch: true, bytes: plaintext },
       })
+    })
+  })
+
+  it("ignores legacy fingerprint and attempt values", async () => {
+    await withJournal(createHarness, async (journal) => {
+      const legacy = {
+        ...entry(),
+        fingerprint: "legacy-fingerprint",
+        attempts: 7,
+      } as JournalEntry
+      await journal.putEntry(legacy)
+
+      await journal.updateEntry(legacy.id, "failed", "retry")
+
+      expect(await journal.listPending()).toMatchObject([
+        { id: legacy.id, state: "failed", error: "retry" },
+      ])
     })
   })
 
@@ -114,6 +130,68 @@ describe.each(implementations)("$0 journal contract", (_name, createHarness) => 
     })
   })
 
+  it("commits related local effects as one transition", async () => {
+    await withJournal(createHarness, async (journal) => {
+      const conflict = {
+        id: "conflict",
+        sourcePath: "note.md",
+        conflictPath: "note.conflict.md",
+        localRevisionId: null,
+        remoteRevisionId: "remote-revision",
+        createdAt: 1,
+        kind: "text" as const,
+        resolvedAt: null,
+      }
+      await journal.commitAppliedOperation({
+        revision: {
+          revisionId: "remote-revision",
+          fileId: "file",
+          path: "note.md",
+          parents: [],
+          deviceId: "remote",
+          createdAt: 1,
+          cursor: 1,
+          tombstone: false,
+          isConflict: true,
+          operation: null,
+        },
+        entries: [],
+        putSnapshots: [
+          {
+            fileId: "copy",
+            path: "note.conflict.md",
+            fingerprint: "old",
+            size: 3,
+            mtime: 1,
+            kind: "vault",
+          },
+        ],
+        removeSnapshotPaths: [],
+        conflicts: [conflict],
+      })
+      const replacement = {
+        fileId: "file",
+        path: "note.md",
+        fingerprint: "new",
+        size: 3,
+        mtime: 2,
+        kind: "vault" as const,
+      }
+
+      await journal.commitLocalEffects({
+        entries: [entry()],
+        putSnapshots: [replacement],
+        removeSnapshotPaths: ["note.conflict.md"],
+        resolvedConflicts: [{ id: conflict.id, resolvedAt: 2 }],
+      })
+
+      expect(await journal.listPending()).toEqual([entry()])
+      expect([...(await journal.getSnapshots()).values()]).toEqual([replacement])
+      expect(await journal.listConflicts(true)).toEqual([])
+      expect(await journal.listConflicts()).toEqual([{ ...conflict, resolvedAt: 2 }])
+    })
+  })
+
   it("settles a pushed revision with its index and entry effects", async () => {
     await withJournal(createHarness, async (journal) => {
       const snapshot = {
@@ -138,8 +216,12 @@ describe.each(implementations)("$0 journal contract", (_name, createHarness) => 
         isConflict: false,
         operation: null,
       }
-      await journal.putEntry(entry())
-      await journal.putSnapshot({ ...snapshot, path: "note.md" })
+      await journal.commitReconciliation({
+        entries: [entry()],
+        putSnapshots: [{ ...snapshot, path: "note.md" }],
+        removeSnapshotPaths: [],
+        consumeDirtyPaths: [],
+      })
 
       await journal.finishPushedRevision({
         entry: entry({ state: "complete" }),
@@ -151,6 +233,29 @@ describe.each(implementations)("$0 journal contract", (_name, createHarness) => 
       expect(await journal.listPending()).toEqual([])
       expect([...(await journal.getSnapshots()).keys()]).toEqual(["renamed.md"])
       expect(await journal.getRevision("revision")).toEqual(revision)
+    })
+  })
+
+  it("commits history revocations with their checkpoint", async () => {
+    await withJournal(createHarness, async (journal) => {
+      const checkpoint = { cursor: 3, logHash: "hash-3" }
+      const revocation = { deviceId: "revoked", operationId: "operation-3", cursor: 3 }
+
+      await journal.commitHistoryOperation(null, checkpoint, revocation)
+
+      expect(await journal.getHistoryCheckpoint()).toEqual(checkpoint)
+      expect(await journal.getDeviceRevocation("revoked")).toEqual(revocation)
+      await expect(
+        journal.commitHistoryOperation(
+          null,
+          { cursor: 4, logHash: "hash-4" },
+          {
+            ...revocation,
+            cursor: 4,
+          },
+        ),
+      ).rejects.toThrow(/conflicting revocation/)
+      expect(await journal.getHistoryCheckpoint()).toEqual(checkpoint)
     })
   })
 
@@ -177,13 +282,11 @@ function entry(overrides: Partial<JournalEntry> = {}): JournalEntry {
     fileId: "file",
     path: "note.md",
     previousPath: null,
-    fingerprint: "fingerprint",
     baseRevisionId: null,
     parentRevisionIds: [],
     restoreSourceRevisionId: null,
     revisionId: "revision",
     createdAt: 1,
-    attempts: 0,
     state: "queued",
     error: null,
     preparedRevision: null,

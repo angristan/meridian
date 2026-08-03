@@ -12,6 +12,7 @@ import type {
 import type {
   AppliedOperationCommit,
   JournalPort,
+  LocalEffectsCommit,
   PushedRevisionCommit,
   ReconciliationCommit,
 } from "./contracts"
@@ -63,10 +64,19 @@ export class IndexedDbJournal implements JournalPort {
   }
 
   async listPending(): Promise<JournalEntry[]> {
-    const entries = await this.getAll<JournalEntry>("entries")
-    return entries
-      .filter((entry) => entry.state !== "complete")
-      .sort((left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id))
+    const database = this.requireDatabase()
+    const transaction = database.transaction("entries", "readonly")
+    const done = transactionDone(transaction)
+    const state = transaction.objectStore("entries").index("state")
+    const entries = (
+      await Promise.all(
+        PENDING_STATES.map((value) => requestResult<JournalEntry[]>(state.getAll(value))),
+      )
+    ).flat()
+    await done
+    return entries.sort(
+      (left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id),
+    )
   }
 
   async invalidatePreparedRevisions(): Promise<void> {
@@ -116,13 +126,30 @@ export class IndexedDbJournal implements JournalPort {
     const store = transaction.objectStore("entries")
     const entry = await requestResult<JournalEntry | undefined>(store.get(id))
     if (!entry) throw new Error(`Missing journal entry ${id}`)
-    store.put({
-      ...entry,
-      state,
-      error,
-      attempts: state === "failed" ? entry.attempts + 1 : entry.attempts,
-    })
+    store.put({ ...entry, state, error })
     await done
+  }
+
+  async commitLocalEffects(commit: LocalEffectsCommit): Promise<void> {
+    const putSnapshots = commit.putSnapshots.map(cachedSnapshot)
+    const removeSnapshotPaths = [...commit.removeSnapshotPaths]
+    const database = this.requireDatabase()
+    const transaction = database.transaction(["entries", "files", "conflicts"], "readwrite")
+    const entries = transaction.objectStore("entries")
+    const files = transaction.objectStore("files")
+    const conflicts = transaction.objectStore("conflicts")
+    for (const entry of commit.entries) entries.put(entry)
+    for (const snapshot of putSnapshots) files.put(snapshot)
+    for (const path of removeSnapshotPaths) files.delete(path)
+    for (const resolution of commit.resolvedConflicts) {
+      const conflict = await requestResult<ConflictRecord | undefined>(conflicts.get(resolution.id))
+      if (conflict) conflicts.put({ ...conflict, resolvedAt: resolution.resolvedAt })
+    }
+    await transactionDone(transaction)
+
+    const snapshotIndex = this.requireSnapshotIndex()
+    for (const snapshot of putSnapshots) snapshotIndex.set(snapshot.path, snapshot)
+    for (const path of removeSnapshotPaths) snapshotIndex.delete(path)
   }
 
   async putDirtyPath(change: DirtyPath): Promise<void> {
@@ -171,21 +198,6 @@ export class IndexedDbJournal implements JournalPort {
   async getSnapshots(): Promise<ReadonlyMap<string, FileSnapshot>> {
     if (!this.snapshotView) throw new Error("Sync journal is not open")
     return this.snapshotView
-  }
-
-  async putSnapshot(snapshot: FileSnapshot): Promise<void> {
-    const replacement = cachedSnapshot(snapshot)
-    await this.put("files", replacement)
-    this.requireSnapshotIndex().set(replacement.path, replacement)
-  }
-
-  async removeSnapshot(path: string): Promise<void> {
-    const database = this.requireDatabase()
-    const transaction = database.transaction("files", "readwrite")
-    const done = transactionDone(transaction)
-    transaction.objectStore("files").delete(path)
-    await done
-    this.requireSnapshotIndex().delete(path)
   }
 
   async getCursor(): Promise<number> {
@@ -252,11 +264,20 @@ export class IndexedDbJournal implements JournalPort {
   }
 
   async putDeviceRevocation(revocation: DeviceRevocationRecord): Promise<void> {
-    const existing = await this.getDeviceRevocation(revocation.deviceId)
+    const database = this.requireDatabase()
+    const transaction = database.transaction("revocations", "readwrite")
+    const done = transactionDone(transaction)
+    const store = transaction.objectStore("revocations")
+    const existing = await requestResult<DeviceRevocationRecord | undefined>(
+      store.get(revocation.deviceId),
+    )
     if (existing && existing.cursor !== revocation.cursor) {
+      transaction.abort()
+      await done.catch(() => undefined)
       throw new Error("Device has conflicting revocation records")
     }
-    await this.put("revocations", revocation)
+    store.put(revocation)
+    await done
   }
 
   async finishPushedRevision(commit: PushedRevisionCommit): Promise<void> {
@@ -311,10 +332,15 @@ export class IndexedDbJournal implements JournalPort {
   }
 
   async listRevisions(path?: string): Promise<LocalRevision[]> {
-    const revisions = await this.getAll<LocalRevision>("revisions")
-    return sortRevisions(
-      revisions.filter((revision) => path === undefined || revision.path === path),
+    if (path === undefined) return sortRevisions(await this.getAll<LocalRevision>("revisions"))
+    const database = this.requireDatabase()
+    const transaction = database.transaction("revisions", "readonly")
+    const done = transactionDone(transaction)
+    const revisions = await requestResult<LocalRevision[]>(
+      transaction.objectStore("revisions").index("path").getAll(path),
     )
+    await done
+    return sortRevisions(revisions)
   }
 
   async listFileRevisions(fileId: string): Promise<LocalRevision[]> {
@@ -335,40 +361,61 @@ export class IndexedDbJournal implements JournalPort {
   async commitHistoryOperation(
     revision: LocalRevision | null,
     checkpoint: TrustedCheckpoint,
+    revocation?: DeviceRevocationRecord,
   ): Promise<void> {
     const database = this.requireDatabase()
-    const transaction = database.transaction(["history-revisions", "meta"], "readwrite")
+    const transaction = database.transaction(
+      ["history-revisions", "meta", "revocations"],
+      "readwrite",
+    )
+    const done = transactionDone(transaction)
+    if (revocation) {
+      const revocations = transaction.objectStore("revocations")
+      const existing = await requestResult<DeviceRevocationRecord | undefined>(
+        revocations.get(revocation.deviceId),
+      )
+      if (existing && existing.cursor !== revocation.cursor) {
+        transaction.abort()
+        await done.catch(() => undefined)
+        throw new Error("Device has conflicting revocation records")
+      }
+      revocations.put(revocation)
+    }
     if (revision) transaction.objectStore("history-revisions").put(revision)
     transaction.objectStore("meta").put({
       key: "history-checkpoint",
       value: checkpoint,
     } satisfies MetadataRecord)
-    await transactionDone(transaction)
+    await done
   }
 
   async getRetainedRevision(revisionId: string): Promise<LocalRevision | null> {
-    const current = await this.getRevision(revisionId)
-    if (current) return current
     const database = this.requireDatabase()
-    const transaction = database.transaction("history-revisions", "readonly")
+    const transaction = database.transaction(["revisions", "history-revisions"], "readonly")
     const done = transactionDone(transaction)
-    const revision = await requestResult<LocalRevision | undefined>(
-      transaction.objectStore("history-revisions").get(revisionId),
+    const current = await requestResult<LocalRevision | undefined>(
+      transaction.objectStore("revisions").get(revisionId),
     )
+    const history = current
+      ? undefined
+      : await requestResult<LocalRevision | undefined>(
+          transaction.objectStore("history-revisions").get(revisionId),
+        )
     await done
-    return revision ?? null
+    return current ?? history ?? null
   }
 
   async listRetainedRevisions(): Promise<LocalRevision[]> {
-    const byId = new Map(
-      (await this.getAll<LocalRevision>("history-revisions")).map((revision) => [
-        revision.revisionId,
-        revision,
-      ]),
-    )
-    for (const revision of await this.getAll<LocalRevision>("revisions")) {
-      byId.set(revision.revisionId, revision)
-    }
+    const database = this.requireDatabase()
+    const transaction = database.transaction(["revisions", "history-revisions"], "readonly")
+    const done = transactionDone(transaction)
+    const [history, current] = await Promise.all([
+      requestResult<LocalRevision[]>(transaction.objectStore("history-revisions").getAll()),
+      requestResult<LocalRevision[]>(transaction.objectStore("revisions").getAll()),
+    ])
+    await done
+    const byId = new Map(history.map((revision) => [revision.revisionId, revision]))
+    for (const revision of current) byId.set(revision.revisionId, revision)
     return sortRevisions([...byId.values()])
   }
 
@@ -377,16 +424,6 @@ export class IndexedDbJournal implements JournalPort {
     return conflicts
       .filter((conflict) => !unresolvedOnly || conflict.resolvedAt === null)
       .sort((left, right) => right.createdAt - left.createdAt)
-  }
-
-  async resolveConflict(id: string): Promise<void> {
-    const database = this.requireDatabase()
-    const transaction = database.transaction("conflicts", "readwrite")
-    const done = transactionDone(transaction)
-    const store = transaction.objectStore("conflicts")
-    const conflict = await requestResult<ConflictRecord | undefined>(store.get(id))
-    if (conflict) store.put({ ...conflict, resolvedAt: Date.now() })
-    await done
   }
 
   async clearSnapshots(): Promise<void> {
@@ -470,6 +507,7 @@ export class IndexedDbJournal implements JournalPort {
 }
 
 const COMPACTION_BATCH_SIZE = 500
+const PENDING_STATES: readonly JournalState[] = ["queued", "uploading", "committing", "failed"]
 
 class ReadonlyMapView<Key, Value> implements ReadonlyMap<Key, Value> {
   readonly [Symbol.toStringTag] = "ReadonlyMap"

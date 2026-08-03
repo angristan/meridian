@@ -1,16 +1,15 @@
 import type {
   DeletedFileRecord,
   DeviceKeyMaterial,
-  JournalEntry,
   LocalRevision,
   RevisionComparison,
   RevisionPreview,
   SyncActivity,
   VaultPort,
 } from "../model"
-import { fingerprint, randomId } from "../platform/bytes"
 import type { JournalPort } from "../storage/contracts"
 import { revisionActivity } from "./activity"
+import { queuedEntry } from "./queued-entry"
 import { buildLineDiff } from "./revision-diff"
 import { revisionHeads } from "./revision-heads"
 import type { RevisionLoader } from "./revision-loader"
@@ -18,7 +17,7 @@ import { snapshotFor } from "./snapshots"
 
 const MAX_TEXT_PREVIEW_BYTES = 1024 * 1024
 
-export interface RestoreResult {
+interface RestoreResult {
   readonly message: string
   readonly queued: number
 }
@@ -200,23 +199,15 @@ export class HistoryService {
     }
     const currentBytes = await this.readOptional(path)
     const parents = uniqueIds(heads.map((revision) => revision.revisionId))
-    const entry: JournalEntry = {
-      id: randomId(),
+    const entry = queuedEntry({
       action: "restore",
       fileId: source.fileId,
       path,
       previousPath: null,
-      fingerprint: await fingerprint(decrypted.bytes),
       baseRevisionId: heads.length === 1 ? (heads[0]?.revisionId ?? null) : null,
       parentRevisionIds: parents,
       restoreSourceRevisionId: source.revisionId,
-      revisionId: randomId(),
-      createdAt: Date.now(),
-      attempts: 0,
-      state: "queued",
-      error: null,
-      preparedRevision: null,
-    }
+    })
     const replaced = await this.vault.replaceIfUnchanged(
       path,
       currentBytes,
@@ -224,10 +215,12 @@ export class HistoryService {
       decrypted.isText,
     )
     if (!replaced) throw new Error(`Restore path ${path} changed while preparing the restore`)
-    await this.journal.putEntry(entry)
-    await this.journal.putSnapshot(
-      await snapshotFor(path, source.fileId, decrypted.bytes, this.vault.configDir),
-    )
+    await this.journal.commitLocalEffects({
+      entries: [entry],
+      putSnapshots: [await snapshotFor(path, source.fileId, decrypted.bytes, this.vault.configDir)],
+      removeSnapshotPaths: [],
+      resolvedConflicts: [],
+    })
     return {
       message: "Restored revision queued for sync",
       queued: (await this.journal.listPending()).length,

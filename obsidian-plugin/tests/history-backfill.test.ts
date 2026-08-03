@@ -2,8 +2,9 @@ import "fake-indexeddb/auto"
 import { describe, expect, it } from "vitest"
 import { IndexedDbJournal } from "../src/storage/indexed-db-journal"
 import { MemoryJournal } from "../src/storage/memory-journal"
+import { SyncController } from "../src/sync/controller"
 import { HistoryBackfillService } from "../src/sync/history-backfill-service"
-import { FakeCrypto, FakeRemote, TEST_DEVICE } from "./fakes"
+import { ALL_CATEGORIES, FakeCrypto, FakeRemote, FakeVault, TEST_DEVICE } from "./fakes"
 
 function addHistory(remote: FakeRemote): void {
   remote.addRemoteRevision(
@@ -67,6 +68,152 @@ describe("HistoryBackfillService", () => {
       initialLogFormat: "legacy-http-v1",
       logFormat: "legacy-http-v1",
     })
+  })
+
+  it("shares one in-flight complete-history download", async () => {
+    const remote = new FakeRemote()
+    addHistory(remote)
+    const barrier = remote.blockNextChangesAfterRead()
+    const service = new HistoryBackfillService(new MemoryJournal(), remote, new FakeCrypto())
+
+    const first = service.backfill(TEST_DEVICE)
+    const second = service.backfill(TEST_DEVICE)
+    await barrier.started
+
+    expect(remote.getChangesCount).toBe(1)
+    barrier.release()
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      { added: 2, throughCursor: 2 },
+      { added: 2, throughCursor: 2 },
+    ])
+    expect(remote.getChangesCount).toBe(1)
+  })
+
+  it("matches live traversal across legacy-to-canonical history", async () => {
+    const remote = new FakeRemote()
+    remote.addLogFormatTransition()
+    remote.addRemoteRevision(
+      {
+        operationId: "canonical-operation",
+        revisionId: "canonical-revision",
+        fileId: "canonical-file",
+        action: "upsert",
+        path: "canonical.md",
+        previousPath: null,
+        parents: [],
+        authorDeviceId: TEST_DEVICE.deviceId,
+        blobId: "canonical-blob",
+        isText: true,
+      },
+      new TextEncoder().encode("canonical content").buffer,
+    )
+    const liveJournal = new MemoryJournal()
+    const controller = new SyncController({
+      vault: new FakeVault(),
+      journal: liveJournal,
+      remote,
+      crypto: new FakeCrypto(),
+      categories: () => ALL_CATEGORIES,
+      onStatus: () => {},
+    })
+    await controller.start(TEST_DEVICE)
+
+    const historyJournal = new MemoryJournal()
+    await new HistoryBackfillService(historyJournal, remote, new FakeCrypto()).backfill(TEST_DEVICE)
+
+    expect(await historyJournal.getHistoryCheckpoint()).toEqual(await liveJournal.getCheckpoint())
+    expect(await liveJournal.getCheckpoint()).toMatchObject({
+      cursor: 2,
+      initialLogFormat: "legacy-http-v1",
+      logFormat: "canonical-cbor-v1",
+    })
+    controller.stop()
+  })
+
+  it("does not backfill operations beyond the live checkpoint", async () => {
+    const remote = new FakeRemote()
+    addHistory(remote)
+    const journal = new MemoryJournal()
+    await journal.setCheckpoint({ cursor: 1, logHash: "hash-1" })
+
+    await expect(
+      new HistoryBackfillService(journal, remote, new FakeCrypto()).backfill(TEST_DEVICE),
+    ).resolves.toEqual({ added: 1, throughCursor: 1 })
+    expect((await journal.listRetainedRevisions()).map((revision) => revision.revisionId)).toEqual([
+      "revision-one",
+    ])
+  })
+
+  it("carries epoch state through one history traversal", async () => {
+    class EpochTrackingCrypto extends FakeCrypto {
+      inspectedEpochSequences: number[] = []
+
+      override async inspectRevision(...args: Parameters<FakeCrypto["inspectRevision"]>) {
+        this.inspectedEpochSequences.push(args[0].epochSequence)
+        return super.inspectRevision(...args)
+      }
+    }
+    const remote = new FakeRemote()
+    await remote.commit({
+      type: "key-epoch",
+      operationId: "epoch-operation",
+      authorDeviceId: TEST_DEVICE.deviceId,
+    })
+    remote.addRemoteRevision(
+      {
+        operationId: "new-epoch-operation",
+        revisionId: "new-epoch-revision",
+        fileId: "new-epoch-file",
+        action: "upsert",
+        path: "new-epoch.md",
+        previousPath: null,
+        parents: [],
+        authorDeviceId: TEST_DEVICE.deviceId,
+        blobId: "new-epoch-blob",
+        isText: true,
+      },
+      new TextEncoder().encode("new epoch").buffer,
+    )
+    const journal = new MemoryJournal()
+    await journal.setCheckpoint({ cursor: 2, logHash: "hash-2" })
+    const crypto = new EpochTrackingCrypto()
+
+    await new HistoryBackfillService(journal, remote, crypto).backfill(TEST_DEVICE)
+
+    expect(crypto.inspectedEpochSequences).toEqual([1])
+  })
+
+  it("persists revocations and rejects later history from that author", async () => {
+    const remote = new FakeRemote()
+    await remote.commit({
+      type: "device-revocation",
+      operationId: "revoke-device",
+      authorDeviceId: TEST_DEVICE.deviceId,
+      subjectDeviceId: "revoked-device",
+    })
+    remote.addRemoteRevision(
+      {
+        operationId: "revoked-operation",
+        revisionId: "revoked-revision",
+        fileId: "revoked-file",
+        action: "upsert",
+        path: "revoked.md",
+        previousPath: null,
+        parents: [],
+        authorDeviceId: "revoked-device",
+        blobId: "revoked-blob",
+        isText: true,
+      },
+      new TextEncoder().encode("invalid").buffer,
+    )
+    const journal = new MemoryJournal()
+    await journal.setCheckpoint({ cursor: 2, logHash: "hash-2" })
+    const service = new HistoryBackfillService(journal, remote, new FakeCrypto())
+
+    await expect(service.backfill(TEST_DEVICE)).rejects.toThrow(/after its device was revoked/)
+    expect(await journal.getHistoryCheckpoint()).toMatchObject({ cursor: 1 })
+    expect(await journal.getDeviceRevocation("revoked-device")).toMatchObject({ cursor: 1 })
+    await expect(service.backfill(TEST_DEVICE)).rejects.toThrow(/after its device was revoked/)
   })
 
   it("resumes after an interrupted metadata inspection", async () => {

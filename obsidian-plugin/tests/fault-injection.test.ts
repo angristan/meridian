@@ -5,21 +5,21 @@ import type {
   EncryptedBlob,
   JournalState,
   ScannedFileSnapshot,
-  SelectiveSyncSettings,
   TrustedCheckpoint,
   VaultScanOptions,
 } from "../src/model"
-import { fingerprint as fingerprintBytes } from "../src/platform/bytes"
 import {
-  planIndexCooperatively,
   type IndexPlan,
   type IndexPlanningInput,
+  planIndexCooperatively,
   type SyncComputePort,
 } from "../src/platform/background-sync"
+import { fingerprint as fingerprintBytes } from "../src/platform/bytes"
 import type { AppliedOperationCommit, PushedRevisionCommit } from "../src/storage/contracts"
 import { IndexedDbJournal } from "../src/storage/indexed-db-journal"
 import { MemoryJournal } from "../src/storage/memory-journal"
 import { SyncController } from "../src/sync/controller"
+import { ALL_CATEGORIES, FakeCrypto, FakeRemote, FakeVault, TEST_DEVICE } from "./fakes"
 import {
   campaignConfiguration,
   clearFailureTrace,
@@ -28,7 +28,6 @@ import {
   persistFailureTrace,
   traceEvent,
 } from "./fault-campaign"
-import { ALL_CATEGORIES, FakeCrypto, FakeRemote, FakeVault, TEST_DEVICE } from "./fakes"
 import { seedLegacyIndexedDbRevision } from "./journal-fixtures"
 
 class BlockingVault extends FakeVault {
@@ -49,7 +48,6 @@ class BlockingVault extends FakeVault {
 
   override async listFiles(
     categories: Record<ConfigCategory, boolean>,
-    selection: SelectiveSyncSettings = { excludedFolders: [], excludedExtensions: [] },
     options: VaultScanOptions = {},
   ): Promise<ScannedFileSnapshot[]> {
     const gate = this.gate
@@ -58,7 +56,7 @@ class BlockingVault extends FakeVault {
       gate.entered()
       await gate.wait
     }
-    return super.listFiles(categories, selection, options)
+    return super.listFiles(categories, options)
   }
 }
 
@@ -134,8 +132,12 @@ class PostCommitCrashJournal extends IndexedDbJournal {
     }
 
     // Recreate partial states written by older releases so restart compatibility remains covered.
-    if (commit.snapshot) await super.putSnapshot(commit.snapshot)
-    for (const path of commit.removeSnapshotPaths) await super.removeSnapshot(path)
+    await super.commitReconciliation({
+      entries: [],
+      putSnapshots: commit.snapshot ? [commit.snapshot] : [],
+      removeSnapshotPaths: commit.removeSnapshotPaths,
+      consumeDirtyPaths: [],
+    })
     if (this.boundary === "snapshot") this.crash()
     await seedLegacyIndexedDbRevision(this.legacyDatabaseName, commit.revision)
     this.crash()
@@ -229,14 +231,14 @@ describe("deterministic local fault injection", () => {
   it("does not clear the snapshot index during an active sync", async () => {
     const vault = new BlockingVault({ "note.md": "safe content" })
     const journal = new ObservedJournal()
-    const controller = new SyncController(
-      vault,
-      journal,
-      new FakeRemote(),
-      new FakeCrypto(),
-      () => ALL_CATEGORIES,
-      () => {},
-    )
+    const controller = new SyncController({
+      vault: vault,
+      journal: journal,
+      remote: new FakeRemote(),
+      crypto: new FakeCrypto(),
+      categories: () => ALL_CATEGORIES,
+      onStatus: () => {},
+    })
     await controller.start(TEST_DEVICE)
 
     const gate = vault.blockNextFullScan()
@@ -262,14 +264,14 @@ describe("deterministic local fault injection", () => {
     const vault = new FakeVault({ "note.md": "durable content" })
     const remote = new IdempotentCommitRemote(true)
     const firstJournal = new IndexedDbJournal(databaseName)
-    const first = new SyncController(
-      vault,
-      firstJournal,
-      remote,
-      new FakeCrypto(),
-      () => ALL_CATEGORIES,
-      () => {},
-    )
+    const first = new SyncController({
+      vault: vault,
+      journal: firstJournal,
+      remote: remote,
+      crypto: new FakeCrypto(),
+      categories: () => ALL_CATEGORIES,
+      onStatus: () => {},
+    })
 
     await first.start(TEST_DEVICE)
     expect(first.getStatus().error).toMatch(/Injected response loss after commit/)
@@ -282,14 +284,14 @@ describe("deterministic local fault injection", () => {
     await first.quiesce()
 
     const restartedJournal = new IndexedDbJournal(databaseName)
-    const restarted = new SyncController(
-      vault,
-      restartedJournal,
-      remote,
-      new FakeCrypto(),
-      () => ALL_CATEGORIES,
-      () => {},
-    )
+    const restarted = new SyncController({
+      vault: vault,
+      journal: restartedJournal,
+      remote: remote,
+      crypto: new FakeCrypto(),
+      categories: () => ALL_CATEGORIES,
+      onStatus: () => {},
+    })
     await restarted.start(TEST_DEVICE)
 
     expect(remote.attempts).toHaveLength(2)
@@ -324,14 +326,14 @@ describe("deterministic local fault injection", () => {
       const vault = new FakeVault({ "note.md": "baseline content" })
       const remote = new IdempotentCommitRemote()
       const baselineJournal = new IndexedDbJournal(databaseName)
-      const baseline = new SyncController(
-        vault,
-        baselineJournal,
-        remote,
-        new FakeCrypto(),
-        () => ALL_CATEGORIES,
-        () => {},
-      )
+      const baseline = new SyncController({
+        vault: vault,
+        journal: baselineJournal,
+        remote: remote,
+        crypto: new FakeCrypto(),
+        categories: () => ALL_CATEGORIES,
+        onStatus: () => {},
+      })
       await baseline.start(TEST_DEVICE)
       expect(await baselineJournal.getCheckpoint()).toMatchObject({ cursor: 1 })
       await baseline.quiesce()
@@ -340,14 +342,14 @@ describe("deterministic local fault injection", () => {
       const updatedFingerprint = await fingerprintBytes(updatedBytes)
       vault.files.set("note.md", updatedBytes)
       const crashingJournal = new PostCommitCrashJournal(databaseName, boundary)
-      const first = new SyncController(
-        vault,
-        crashingJournal,
-        remote,
-        new FakeCrypto(),
-        () => ALL_CATEGORIES,
-        () => {},
-      )
+      const first = new SyncController({
+        vault: vault,
+        journal: crashingJournal,
+        remote: remote,
+        crypto: new FakeCrypto(),
+        categories: () => ALL_CATEGORIES,
+        onStatus: () => {},
+      })
 
       await first.start(TEST_DEVICE)
       expect(first.getStatus().error).toMatch(new RegExp(`Injected crash after ${boundary}`))
@@ -375,14 +377,14 @@ describe("deterministic local fault injection", () => {
       await first.quiesce()
 
       const restartedJournal = new IndexedDbJournal(databaseName)
-      const restarted = new SyncController(
-        vault,
-        restartedJournal,
-        remote,
-        new FakeCrypto(),
-        () => ALL_CATEGORIES,
-        () => {},
-      )
+      const restarted = new SyncController({
+        vault: vault,
+        journal: restartedJournal,
+        remote: remote,
+        crypto: new FakeCrypto(),
+        categories: () => ALL_CATEGORIES,
+        onStatus: () => {},
+      })
       await restarted.start(TEST_DEVICE)
 
       const expectedAttempts = boundary === "revision" || boundary === "snapshot" ? 3 : 2
@@ -433,14 +435,14 @@ describe("deterministic local fault injection", () => {
       new TextEncoder().encode("remote content").buffer,
     )
     const crashingJournal = new PostApplyCrashJournal(databaseName)
-    const first = new SyncController(
-      vault,
-      crashingJournal,
-      remote,
-      new FakeCrypto(),
-      () => ALL_CATEGORIES,
-      () => {},
-    )
+    const first = new SyncController({
+      vault: vault,
+      journal: crashingJournal,
+      remote: remote,
+      crypto: new FakeCrypto(),
+      categories: () => ALL_CATEGORIES,
+      onStatus: () => {},
+    })
 
     await first.start(TEST_DEVICE)
 
@@ -454,14 +456,14 @@ describe("deterministic local fault injection", () => {
     await first.quiesce()
 
     const restartedJournal = new IndexedDbJournal(databaseName)
-    const restarted = new SyncController(
-      vault,
-      restartedJournal,
-      remote,
-      new FakeCrypto(),
-      () => ALL_CATEGORIES,
-      () => {},
-    )
+    const restarted = new SyncController({
+      vault: vault,
+      journal: restartedJournal,
+      remote: remote,
+      crypto: new FakeCrypto(),
+      categories: () => ALL_CATEGORIES,
+      onStatus: () => {},
+    })
     await restarted.start(TEST_DEVICE)
 
     expect(await restartedJournal.getCheckpoint()).toMatchObject({ cursor: 1 })
@@ -478,27 +480,27 @@ describe("deterministic local fault injection", () => {
     const vault = new FakeVault({ "note.md": "baseline content" })
     const remote = new IdempotentCommitRemote()
     const baselineJournal = new IndexedDbJournal(databaseName)
-    const baseline = new SyncController(
-      vault,
-      baselineJournal,
-      remote,
-      new FakeCrypto(),
-      () => ALL_CATEGORIES,
-      () => {},
-    )
+    const baseline = new SyncController({
+      vault: vault,
+      journal: baselineJournal,
+      remote: remote,
+      crypto: new FakeCrypto(),
+      categories: () => ALL_CATEGORIES,
+      onStatus: () => {},
+    })
     await baseline.start(TEST_DEVICE)
     await baseline.quiesce()
 
     vault.files.set("note.md", new TextEncoder().encode("committed local update").buffer)
     const revisionCrashJournal = new PostCommitCrashJournal(databaseName, "revision")
-    const revisionCrash = new SyncController(
-      vault,
-      revisionCrashJournal,
-      remote,
-      new FakeCrypto(),
-      () => ALL_CATEGORIES,
-      () => {},
-    )
+    const revisionCrash = new SyncController({
+      vault: vault,
+      journal: revisionCrashJournal,
+      remote: remote,
+      crypto: new FakeCrypto(),
+      categories: () => ALL_CATEGORIES,
+      onStatus: () => {},
+    })
     await revisionCrash.start(TEST_DEVICE)
     expect(revisionCrash.getStatus().error).toMatch(/Injected crash after revision/)
     const committedLocal = (await revisionCrashJournal.listRevisions("note.md")).find(
@@ -524,14 +526,14 @@ describe("deterministic local fault injection", () => {
     )
 
     const recoveredJournal = new IndexedDbJournal(databaseName)
-    const recovered = new SyncController(
-      vault,
-      recoveredJournal,
-      remote,
-      new FakeCrypto(),
-      () => ALL_CATEGORIES,
-      () => {},
-    )
+    const recovered = new SyncController({
+      vault: vault,
+      journal: recoveredJournal,
+      remote: remote,
+      crypto: new FakeCrypto(),
+      categories: () => ALL_CATEGORIES,
+      onStatus: () => {},
+    })
     await recovered.start(TEST_DEVICE)
 
     expect(vault.text("note.md")).toBe("remote descendant")
@@ -550,14 +552,14 @@ describe("deterministic local fault injection", () => {
     const vault = new FakeVault({ "note.md": "delete after baseline" })
     const remote = new IdempotentCommitRemote()
     const baselineJournal = new IndexedDbJournal(databaseName)
-    const baseline = new SyncController(
-      vault,
-      baselineJournal,
-      remote,
-      new FakeCrypto(),
-      () => ALL_CATEGORIES,
-      () => {},
-    )
+    const baseline = new SyncController({
+      vault: vault,
+      journal: baselineJournal,
+      remote: remote,
+      crypto: new FakeCrypto(),
+      categories: () => ALL_CATEGORIES,
+      onStatus: () => {},
+    })
     await baseline.start(TEST_DEVICE)
     expect(await baselineJournal.getCheckpoint()).toMatchObject({ cursor: 1 })
     const baselineSnapshot = (await baselineJournal.getSnapshots()).get("note.md")
@@ -566,32 +568,37 @@ describe("deterministic local fault injection", () => {
 
     vault.files.delete("note.md")
     const revisionCrashJournal = new PostCommitCrashJournal(databaseName, "revision")
-    const revisionCrash = new SyncController(
-      vault,
-      revisionCrashJournal,
-      remote,
-      new FakeCrypto(),
-      () => ALL_CATEGORIES,
-      () => {},
-    )
+    const revisionCrash = new SyncController({
+      vault: vault,
+      journal: revisionCrashJournal,
+      remote: remote,
+      crypto: new FakeCrypto(),
+      categories: () => ALL_CATEGORIES,
+      onStatus: () => {},
+    })
     await revisionCrash.start(TEST_DEVICE)
     expect(revisionCrash.getStatus().error).toMatch(/Injected crash after revision/)
     expect(await revisionCrashJournal.getCheckpoint()).toMatchObject({ cursor: 1 })
     // Older revision-first releases could stop with the committed marker but this stale snapshot.
     if (!baselineSnapshot) throw new Error("Baseline snapshot is missing")
-    await revisionCrashJournal.putSnapshot(baselineSnapshot)
+    await revisionCrashJournal.commitReconciliation({
+      entries: [],
+      putSnapshots: [baselineSnapshot],
+      removeSnapshotPaths: [],
+      consumeDirtyPaths: [],
+    })
     expect((await revisionCrashJournal.getSnapshots()).has("note.md")).toBe(true)
     await revisionCrash.quiesce()
 
     const checkpointCrashJournal = new PostCommitCrashJournal(databaseName, "checkpoint")
-    const checkpointCrash = new SyncController(
-      vault,
-      checkpointCrashJournal,
-      remote,
-      new FakeCrypto(),
-      () => ALL_CATEGORIES,
-      () => {},
-    )
+    const checkpointCrash = new SyncController({
+      vault: vault,
+      journal: checkpointCrashJournal,
+      remote: remote,
+      crypto: new FakeCrypto(),
+      categories: () => ALL_CATEGORIES,
+      onStatus: () => {},
+    })
     await checkpointCrash.start(TEST_DEVICE)
     expect(checkpointCrash.getStatus().error).toMatch(/Injected crash after checkpoint/)
     expect(await checkpointCrashJournal.getCheckpoint()).toMatchObject({ cursor: 2 })
@@ -599,14 +606,14 @@ describe("deterministic local fault injection", () => {
     await checkpointCrash.quiesce()
 
     const recoveredJournal = new IndexedDbJournal(databaseName)
-    const recovered = new SyncController(
-      vault,
-      recoveredJournal,
-      remote,
-      new FakeCrypto(),
-      () => ALL_CATEGORIES,
-      () => {},
-    )
+    const recovered = new SyncController({
+      vault: vault,
+      journal: recoveredJournal,
+      remote: remote,
+      crypto: new FakeCrypto(),
+      categories: () => ALL_CATEGORIES,
+      onStatus: () => {},
+    })
     await recovered.start(TEST_DEVICE)
     expect(remote.operations).toHaveLength(2)
     expect(await recoveredJournal.listPending()).toEqual([])
@@ -625,13 +632,14 @@ describe("deterministic local fault injection", () => {
     const remote = new FakeRemote()
     const compute = new PausedPlanCompute()
     const controller = new SyncController(
-      vault,
-      journal,
-      remote,
-      new FakeCrypto(),
-      () => ALL_CATEGORIES,
-      () => {},
-      undefined,
+      {
+        vault: vault,
+        journal: journal,
+        remote: remote,
+        crypto: new FakeCrypto(),
+        categories: () => ALL_CATEGORIES,
+        onStatus: () => {},
+      },
       { compute },
     )
     await controller.start(TEST_DEVICE)
@@ -726,14 +734,14 @@ async function runSeededRestartCampaign(seed: number, steps: number): Promise<vo
       const faultJournal = isPostCommitBoundary(fault)
         ? new PostCommitCrashJournal(databaseName, fault)
         : new IndexedDbJournal(databaseName)
-      const faulted = new SyncController(
-        vault,
-        faultJournal,
-        remote,
-        new FakeCrypto(),
-        () => ALL_CATEGORIES,
-        () => {},
-      )
+      const faulted = new SyncController({
+        vault: vault,
+        journal: faultJournal,
+        remote: remote,
+        crypto: new FakeCrypto(),
+        categories: () => ALL_CATEGORIES,
+        onStatus: () => {},
+      })
       activeController = faulted
       await faulted.start(TEST_DEVICE)
       const faultStatus = faulted.getStatus()
@@ -764,14 +772,14 @@ async function runSeededRestartCampaign(seed: number, steps: number): Promise<vo
       })
 
       const recoveredJournal = new IndexedDbJournal(databaseName)
-      const recovered = new SyncController(
-        vault,
-        recoveredJournal,
-        remote,
-        new FakeCrypto(),
-        () => ALL_CATEGORIES,
-        () => {},
-      )
+      const recovered = new SyncController({
+        vault: vault,
+        journal: recoveredJournal,
+        remote: remote,
+        crypto: new FakeCrypto(),
+        categories: () => ALL_CATEGORIES,
+        onStatus: () => {},
+      })
       activeController = recovered
       await recovered.start(TEST_DEVICE)
       const operationsBeforeNoop = remote.operations.length

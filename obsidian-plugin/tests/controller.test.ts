@@ -9,8 +9,8 @@ import type {
   RemoteOperation,
   RevisionDraft,
   ScannedFileSnapshot,
-  SelectiveSyncSettings,
   SyncStatus,
+  VaultScanOptions,
 } from "../src/model"
 import type {
   IndexPlan,
@@ -100,14 +100,14 @@ describe("SyncController", () => {
     }
 
     const journal = new PausedDirtyJournal()
-    const controller = new SyncController(
-      new FakeVault(),
-      journal,
-      new FakeRemote(),
-      new FakeCrypto(),
-      () => ALL_CATEGORIES,
-      () => {},
-    )
+    const controller = new SyncController({
+      vault: new FakeVault(),
+      journal: journal,
+      remote: new FakeRemote(),
+      crypto: new FakeCrypto(),
+      categories: () => ALL_CATEGORIES,
+      onStatus: () => {},
+    })
     await controller.start(TEST_DEVICE)
 
     const recording = controller.recordVaultChange("note.md")
@@ -133,22 +133,22 @@ describe("SyncController", () => {
 
       override listFiles(
         categories: Record<ConfigCategory, boolean>,
-        selection?: SelectiveSyncSettings,
+        options?: VaultScanOptions,
       ): Promise<ScannedFileSnapshot[]> {
         this.fullScans += 1
-        return super.listFiles(categories, selection)
+        return super.listFiles(categories, options)
       }
     }
 
     const vault = new CountingVault({ "note.md": "initial" })
-    const controller = new SyncController(
-      vault,
-      new FailingDirtyJournal(),
-      new FakeRemote(),
-      new FakeCrypto(),
-      () => ALL_CATEGORIES,
-      () => {},
-    )
+    const controller = new SyncController({
+      vault: vault,
+      journal: new FailingDirtyJournal(),
+      remote: new FakeRemote(),
+      crypto: new FakeCrypto(),
+      categories: () => ALL_CATEGORIES,
+      onStatus: () => {},
+    })
     await controller.start(TEST_DEVICE)
     vault.fullScans = 0
 
@@ -162,15 +162,15 @@ describe("SyncController", () => {
   it("publishes a renamed device without reconnecting", async () => {
     const remote = new FakeRemote()
     let deviceName = "MacBook"
-    const controller = new SyncController(
-      new FakeVault(),
-      new MemoryJournal(),
-      remote,
-      new FakeCrypto(),
-      () => ALL_CATEGORIES,
-      () => {},
-      () => ({ deviceName, platform: "macOS" }),
-    )
+    const controller = new SyncController({
+      vault: new FakeVault(),
+      journal: new MemoryJournal(),
+      remote: remote,
+      crypto: new FakeCrypto(),
+      categories: () => ALL_CATEGORIES,
+      onStatus: () => {},
+      deviceDescriptor: () => ({ deviceName, platform: "macOS" }),
+    })
 
     await controller.start(TEST_DEVICE)
     expect(remote.deviceDescriptors).toEqual([{ deviceName: "MacBook", platform: "macOS" }])
@@ -189,14 +189,14 @@ describe("SyncController", () => {
     const journal = new MemoryJournal()
     const remote = new FakeRemote()
     const statuses: string[] = []
-    const controller = new SyncController(
-      vault,
-      journal,
-      remote,
-      new FakeCrypto(),
-      () => ALL_CATEGORIES,
-      (status) => statuses.push(status.phase),
-    )
+    const controller = new SyncController({
+      vault: vault,
+      journal: journal,
+      remote: remote,
+      crypto: new FakeCrypto(),
+      categories: () => ALL_CATEGORIES,
+      onStatus: (status) => statuses.push(status.phase),
+    })
 
     await controller.start(TEST_DEVICE)
 
@@ -227,14 +227,14 @@ describe("SyncController", () => {
     const vault = new FakeVault()
     const journal = new MemoryJournal()
     const remote = new FakeRemote()
-    const controller = new SyncController(
-      vault,
-      journal,
-      remote,
-      new FakeCrypto(),
-      () => ALL_CATEGORIES,
-      () => {},
-    )
+    const controller = new SyncController({
+      vault: vault,
+      journal: journal,
+      remote: remote,
+      crypto: new FakeCrypto(),
+      categories: () => ALL_CATEGORIES,
+      onStatus: () => {},
+    })
 
     await controller.start(TEST_DEVICE)
     expect(remote.retentionAcknowledgements).toHaveLength(1)
@@ -250,14 +250,14 @@ describe("SyncController", () => {
     expect(remote.retentionAcknowledgements).toHaveLength(2)
     controller.stop()
 
-    const restarted = new SyncController(
-      vault,
-      journal,
-      remote,
-      new FakeCrypto(),
-      () => ALL_CATEGORIES,
-      () => {},
-    )
+    const restarted = new SyncController({
+      vault: vault,
+      journal: journal,
+      remote: remote,
+      crypto: new FakeCrypto(),
+      categories: () => ALL_CATEGORIES,
+      onStatus: () => {},
+    })
     await restarted.start(TEST_DEVICE)
     expect(remote.retentionAcknowledgements).toHaveLength(2)
     restarted.stop()
@@ -280,14 +280,14 @@ describe("SyncController", () => {
 
     const journal = new MemoryJournal()
     const remote = new FlakyRetentionRemote()
-    const controller = new SyncController(
-      new FakeVault(),
-      journal,
-      remote,
-      new FakeCrypto(),
-      () => ALL_CATEGORIES,
-      () => {},
-    )
+    const controller = new SyncController({
+      vault: new FakeVault(),
+      journal: journal,
+      remote: remote,
+      crypto: new FakeCrypto(),
+      categories: () => ALL_CATEGORIES,
+      onStatus: () => {},
+    })
 
     await controller.start(TEST_DEVICE)
     expect(await journal.getLastRetentionAcknowledgementKey()).toBeNull()
@@ -302,13 +302,14 @@ describe("SyncController", () => {
     const syncedAt = 1_725_000_000_000
     const firstStatuses: SyncStatus[] = []
     const first = new SyncController(
-      new FakeVault(),
-      journal,
-      new FakeRemote(),
-      new FakeCrypto(),
-      () => ALL_CATEGORIES,
-      (status) => firstStatuses.push(status),
-      undefined,
+      {
+        vault: new FakeVault(),
+        journal: journal,
+        remote: new FakeRemote(),
+        crypto: new FakeCrypto(),
+        categories: () => ALL_CATEGORIES,
+        onStatus: (status) => firstStatuses.push(status),
+      },
       { now: () => syncedAt },
     )
 
@@ -323,14 +324,14 @@ describe("SyncController", () => {
       }
     }
     const restartedStatuses: SyncStatus[] = []
-    const restarted = new SyncController(
-      new FakeVault(),
-      journal,
-      new UnavailableRemote(),
-      new FakeCrypto(),
-      () => ALL_CATEGORIES,
-      (status) => restartedStatuses.push(status),
-    )
+    const restarted = new SyncController({
+      vault: new FakeVault(),
+      journal: journal,
+      remote: new UnavailableRemote(),
+      crypto: new FakeCrypto(),
+      categories: () => ALL_CATEGORIES,
+      onStatus: (status) => restartedStatuses.push(status),
+    })
 
     await restarted.start(TEST_DEVICE)
 
@@ -361,14 +362,14 @@ describe("SyncController", () => {
     const journal = new FullJournal()
     const remote = new FakeRemote()
     const statuses: SyncStatus[] = []
-    const controller = new SyncController(
-      vault,
-      journal,
-      remote,
-      new FakeCrypto(),
-      () => ALL_CATEGORIES,
-      (status) => statuses.push(status),
-    )
+    const controller = new SyncController({
+      vault: vault,
+      journal: journal,
+      remote: remote,
+      crypto: new FakeCrypto(),
+      categories: () => ALL_CATEGORIES,
+      onStatus: (status) => statuses.push(status),
+    })
 
     await controller.start(TEST_DEVICE)
 
@@ -389,33 +390,33 @@ describe("SyncController", () => {
 
       override listFiles(
         categories: Record<ConfigCategory, boolean>,
-        selection?: SelectiveSyncSettings,
+        options?: VaultScanOptions,
       ): Promise<ScannedFileSnapshot[]> {
         this.fullScans += 1
-        return super.listFiles(categories, selection)
+        return super.listFiles(categories, options)
       }
 
       override scanFiles(
         paths: readonly string[],
         categories: Record<ConfigCategory, boolean>,
-        selection?: SelectiveSyncSettings,
+        options?: VaultScanOptions,
       ): Promise<ScannedFileSnapshot[]> {
         this.targetedScans.push([...paths])
-        return super.scanFiles(paths, categories, selection)
+        return super.scanFiles(paths, categories, options)
       }
     }
 
     const vault = new CountingVault({ "note.md": "initial", "other.md": "untouched" })
     const journal = new MemoryJournal()
     const remote = new FakeRemote()
-    const controller = new SyncController(
-      vault,
-      journal,
-      remote,
-      new FakeCrypto(),
-      () => ALL_CATEGORIES,
-      () => {},
-    )
+    const controller = new SyncController({
+      vault: vault,
+      journal: journal,
+      remote: remote,
+      crypto: new FakeCrypto(),
+      categories: () => ALL_CATEGORIES,
+      onStatus: () => {},
+    })
     await controller.start(TEST_DEVICE)
     vault.targetedScans.length = 0
 
@@ -461,13 +462,14 @@ describe("SyncController", () => {
     let pending: EpochTransitionMaterial | null = null
     const persisted: DeviceKeyMaterial[] = []
     const controller = new SyncController(
-      new FakeVault(),
-      journal,
-      remote,
-      new FakeCrypto(),
-      () => ALL_CATEGORIES,
-      () => {},
-      undefined,
+      {
+        vault: new FakeVault(),
+        journal: journal,
+        remote: remote,
+        crypto: new FakeCrypto(),
+        categories: () => ALL_CATEGORIES,
+        onStatus: () => {},
+      },
       {
         persistDevice: async (updated) => {
           persisted.push(updated)
@@ -520,14 +522,14 @@ describe("SyncController", () => {
       }
     }
     const journal = new MemoryJournal()
-    const controller = new SyncController(
-      new FakeVault(),
-      journal,
-      remote,
-      new PredecessorCrypto(),
-      () => ALL_CATEGORIES,
-      () => {},
-    )
+    const controller = new SyncController({
+      vault: new FakeVault(),
+      journal: journal,
+      remote: remote,
+      crypto: new PredecessorCrypto(),
+      categories: () => ALL_CATEGORIES,
+      onStatus: () => {},
+    })
 
     await controller.start(TEST_DEVICE)
 
@@ -573,13 +575,14 @@ describe("SyncController", () => {
     let failPersistence = true
     let persistenceCalls = 0
     const controller = new SyncController(
-      new FakeVault(),
-      journal,
-      remote,
-      new FakeCrypto(),
-      () => ALL_CATEGORIES,
-      () => {},
-      undefined,
+      {
+        vault: new FakeVault(),
+        journal: journal,
+        remote: remote,
+        crypto: new FakeCrypto(),
+        categories: () => ALL_CATEGORIES,
+        onStatus: () => {},
+      },
       {
         persistDevice: async () => {
           persistenceCalls += 1
@@ -655,13 +658,14 @@ describe("SyncController", () => {
     let storedDevice = TEST_DEVICE
     const createController = () =>
       new SyncController(
-        new FakeVault(),
-        journal,
-        remote,
-        new ReplayCrypto(),
-        () => ALL_CATEGORIES,
-        () => {},
-        undefined,
+        {
+          vault: new FakeVault(),
+          journal: journal,
+          remote: remote,
+          crypto: new ReplayCrypto(),
+          categories: () => ALL_CATEGORIES,
+          onStatus: () => {},
+        },
         {
           persistDevice: async (device) => {
             storedDevice = device
@@ -700,14 +704,14 @@ describe("SyncController", () => {
         verifiedFormats.push(logFormat)
       }
     }
-    const controller = new SyncController(
-      vault,
-      journal,
-      remote,
-      new FormatTrackingCrypto(),
-      () => ALL_CATEGORIES,
-      () => {},
-    )
+    const controller = new SyncController({
+      vault: vault,
+      journal: journal,
+      remote: remote,
+      crypto: new FormatTrackingCrypto(),
+      categories: () => ALL_CATEGORIES,
+      onStatus: () => {},
+    })
 
     await controller.start(TEST_DEVICE)
 
@@ -724,13 +728,14 @@ describe("SyncController", () => {
   it("reports bounded progress while scanning local files", async () => {
     const statuses: SyncStatus[] = []
     const controller = new SyncController(
-      new FakeVault({ "a.md": "a", "b.md": "b" }),
-      new MemoryJournal(),
-      new FakeRemote(),
-      new FakeCrypto(),
-      () => ALL_CATEGORIES,
-      (status) => statuses.push(status),
-      undefined,
+      {
+        vault: new FakeVault({ "a.md": "a", "b.md": "b" }),
+        journal: new MemoryJournal(),
+        remote: new FakeRemote(),
+        crypto: new FakeCrypto(),
+        categories: () => ALL_CATEGORIES,
+        onStatus: (status) => statuses.push(status),
+      },
       { progressThrottleMs: 0 },
     )
 
@@ -778,13 +783,14 @@ describe("SyncController", () => {
     const journal = new MemoryJournal()
     const remote = new FakeRemote()
     const controller = new SyncController(
-      vault,
-      journal,
-      remote,
-      new FakeCrypto(),
-      () => ALL_CATEGORIES,
-      () => {},
-      undefined,
+      {
+        vault: vault,
+        journal: journal,
+        remote: remote,
+        crypto: new FakeCrypto(),
+        categories: () => ALL_CATEGORIES,
+        onStatus: () => {},
+      },
       { compute },
     )
     await controller.start(TEST_DEVICE)
@@ -806,24 +812,24 @@ describe("SyncController", () => {
 
       override listFiles(
         categories: Record<ConfigCategory, boolean>,
-        selection?: SelectiveSyncSettings,
+        options?: VaultScanOptions,
       ): Promise<ScannedFileSnapshot[]> {
         this.fullScans += 1
-        return super.listFiles(categories, selection)
+        return super.listFiles(categories, options)
       }
     }
 
     const vault = new CountingVault({ "note.md": "initial" })
     const journal = new MemoryJournal()
     const remote = new FakeRemote()
-    const controller = new SyncController(
-      vault,
-      journal,
-      remote,
-      new FakeCrypto(),
-      () => ALL_CATEGORIES,
-      () => {},
-    )
+    const controller = new SyncController({
+      vault: vault,
+      journal: journal,
+      remote: remote,
+      crypto: new FakeCrypto(),
+      categories: () => ALL_CATEGORIES,
+      onStatus: () => {},
+    })
     await controller.start(TEST_DEVICE)
 
     vault.files.set("note.md", new TextEncoder().encode("missed event").buffer)
@@ -843,14 +849,14 @@ describe("SyncController", () => {
     const vault = new FakeVault()
     const journal = new MemoryJournal()
     const remote = new FakeRemote()
-    const controller = new SyncController(
-      vault,
-      journal,
-      remote,
-      new FakeCrypto(),
-      () => ALL_CATEGORIES,
-      () => {},
-    )
+    const controller = new SyncController({
+      vault: vault,
+      journal: journal,
+      remote: remote,
+      crypto: new FakeCrypto(),
+      categories: () => ALL_CATEGORIES,
+      onStatus: () => {},
+    })
 
     await controller.start(TEST_DEVICE)
     await journal.putEntry({
@@ -859,13 +865,11 @@ describe("SyncController", () => {
       fileId: identity,
       path: "deleted.md",
       previousPath: null,
-      fingerprint: null,
       baseRevisionId: null,
       parentRevisionIds: [],
       restoreSourceRevisionId: null,
       revisionId: "delete-revision",
       createdAt: 1,
-      attempts: 0,
       state: "queued",
       error: null,
       preparedRevision: null,
@@ -887,14 +891,14 @@ describe("SyncController", () => {
     const vault = new FakeVault({ "note.bin": "base" })
     const journal = new MemoryJournal()
     const remote = new FakeRemote()
-    const controller = new SyncController(
-      vault,
-      journal,
-      remote,
-      new FakeCrypto(),
-      () => ALL_CATEGORIES,
-      () => {},
-    )
+    const controller = new SyncController({
+      vault: vault,
+      journal: journal,
+      remote: remote,
+      crypto: new FakeCrypto(),
+      categories: () => ALL_CATEGORIES,
+      onStatus: () => {},
+    })
 
     await controller.start(TEST_DEVICE)
     const base = (await journal.listRevisions("note.bin"))[0]
@@ -963,14 +967,14 @@ describe("SyncController", () => {
       },
       remoteBytes,
     )
-    const controller = new SyncController(
-      vault,
-      journal,
-      remote,
-      new FakeCrypto(),
-      () => ALL_CATEGORIES,
-      () => {},
-    )
+    const controller = new SyncController({
+      vault: vault,
+      journal: journal,
+      remote: remote,
+      crypto: new FakeCrypto(),
+      categories: () => ALL_CATEGORIES,
+      onStatus: () => {},
+    })
 
     await controller.start(TEST_DEVICE)
 
@@ -1041,14 +1045,14 @@ describe("SyncController", () => {
       },
       remoteBytes,
     )
-    const controller = new SyncController(
-      vault,
-      journal,
-      remote,
-      new FakeCrypto(),
-      () => ALL_CATEGORIES,
-      () => {},
-    )
+    const controller = new SyncController({
+      vault: vault,
+      journal: journal,
+      remote: remote,
+      crypto: new FakeCrypto(),
+      categories: () => ALL_CATEGORIES,
+      onStatus: () => {},
+    })
 
     await controller.start(TEST_DEVICE)
 
@@ -1099,14 +1103,14 @@ describe("SyncController", () => {
       },
       null,
     )
-    const controller = new SyncController(
-      vault,
-      journal,
-      remote,
-      new FakeCrypto(),
-      () => ALL_CATEGORIES,
-      () => {},
-    )
+    const controller = new SyncController({
+      vault: vault,
+      journal: journal,
+      remote: remote,
+      crypto: new FakeCrypto(),
+      categories: () => ALL_CATEGORIES,
+      onStatus: () => {},
+    })
 
     await controller.start(TEST_DEVICE)
 
@@ -1148,14 +1152,14 @@ describe("SyncController", () => {
     const vault = new FakeVault({ "local.md": "local content" })
     const journal = new MemoryJournal()
     const remote = new ConcurrentCommitRemote()
-    const controller = new SyncController(
-      vault,
-      journal,
-      remote,
-      new FakeCrypto(),
-      () => ALL_CATEGORIES,
-      () => {},
-    )
+    const controller = new SyncController({
+      vault: vault,
+      journal: journal,
+      remote: remote,
+      crypto: new FakeCrypto(),
+      categories: () => ALL_CATEGORIES,
+      onStatus: () => {},
+    })
 
     await controller.start(TEST_DEVICE)
 
@@ -1179,14 +1183,14 @@ describe("SyncController", () => {
     const vault = new FakeVault({ "first.md": "first", "second.md": "second" })
     const journal = new MemoryJournal()
     const remote = new PartiallyFailingRemote()
-    const controller = new SyncController(
-      vault,
-      journal,
-      remote,
-      new FakeCrypto(),
-      () => ALL_CATEGORIES,
-      () => {},
-    )
+    const controller = new SyncController({
+      vault: vault,
+      journal: journal,
+      remote: remote,
+      crypto: new FakeCrypto(),
+      categories: () => ALL_CATEGORIES,
+      onStatus: () => {},
+    })
 
     await controller.start(TEST_DEVICE)
 
@@ -1234,14 +1238,14 @@ describe("SyncController", () => {
     const journal = new MemoryJournal()
     const remote = new AmbiguousCommitRemote()
     const crypto = new CountingCrypto()
-    const controller = new SyncController(
-      vault,
-      journal,
-      remote,
-      crypto,
-      () => ALL_CATEGORIES,
-      () => {},
-    )
+    const controller = new SyncController({
+      vault: vault,
+      journal: journal,
+      remote: remote,
+      crypto: crypto,
+      categories: () => ALL_CATEGORIES,
+      onStatus: () => {},
+    })
 
     await controller.start(TEST_DEVICE)
     expect(await journal.listPending()).toHaveLength(1)
@@ -1281,13 +1285,11 @@ describe("SyncController", () => {
       fileId: randomId(),
       path: "note.md",
       previousPath: null,
-      fingerprint: null,
       baseRevisionId: null,
       parentRevisionIds: [],
       restoreSourceRevisionId: null,
       revisionId: randomId(),
       createdAt: 1,
-      attempts: 1,
       state: "failed",
       error: "Operation wrapper does not match its canonical signed envelope",
       preparedRevision: {
@@ -1298,14 +1300,14 @@ describe("SyncController", () => {
     })
     const crypto = new RecordingCrypto()
     const remote = new FakeRemote()
-    const controller = new SyncController(
-      new FakeVault({ "note.md": "queued content" }),
-      journal,
-      remote,
-      crypto,
-      () => ALL_CATEGORIES,
-      () => {},
-    )
+    const controller = new SyncController({
+      vault: new FakeVault({ "note.md": "queued content" }),
+      journal: journal,
+      remote: remote,
+      crypto: crypto,
+      categories: () => ALL_CATEGORIES,
+      onStatus: () => {},
+    })
 
     await controller.start(TEST_DEVICE)
 
@@ -1354,27 +1356,25 @@ describe("SyncController", () => {
       fileId,
       path: "note.md",
       previousPath: null,
-      fingerprint: await fingerprint(oldBytes),
       baseRevisionId: null,
       parentRevisionIds: [],
       restoreSourceRevisionId: null,
       revisionId,
       createdAt: 1,
-      attempts: 0,
       state: "uploading",
       error: null,
       preparedRevision: { action: "upsert", bytes: oldBytes, encrypted: prepared },
     })
     await journal.putDirtyPath({ path: "note.md", token: "newer-edit", observedAt: 2 })
     const remote = new FakeRemote()
-    const controller = new SyncController(
-      vault,
-      journal,
-      remote,
-      crypto,
-      () => ALL_CATEGORIES,
-      () => {},
-    )
+    const controller = new SyncController({
+      vault: vault,
+      journal: journal,
+      remote: remote,
+      crypto: crypto,
+      categories: () => ALL_CATEGORIES,
+      onStatus: () => {},
+    })
 
     await controller.start(TEST_DEVICE)
 
@@ -1408,13 +1408,15 @@ describe("SyncController", () => {
     }
     const statuses: SyncStatus[] = []
     const controller = new SyncController(
-      vault,
-      journal,
-      remote,
-      new FakeCrypto(),
-      () => ALL_CATEGORIES,
-      (status) => statuses.push(structuredClone(status)),
-      () => ({ deviceName: "Test", platform: "Test" }),
+      {
+        vault: vault,
+        journal: journal,
+        remote: remote,
+        crypto: new FakeCrypto(),
+        categories: () => ALL_CATEGORIES,
+        onStatus: (status) => statuses.push(structuredClone(status)),
+        deviceDescriptor: () => ({ deviceName: "Test", platform: "Test" }),
+      },
       { progressThrottleMs: 0 },
     )
 
@@ -1455,13 +1457,15 @@ describe("SyncController", () => {
     const remote = new FakeRemote()
     const statuses: SyncStatus[] = []
     const controller = new SyncController(
-      vault,
-      journal,
-      remote,
-      new FakeCrypto(),
-      () => ALL_CATEGORIES,
-      (status) => statuses.push(structuredClone(status)),
-      () => ({ deviceName: "Test", platform: "Test" }),
+      {
+        vault: vault,
+        journal: journal,
+        remote: remote,
+        crypto: new FakeCrypto(),
+        categories: () => ALL_CATEGORIES,
+        onStatus: (status) => statuses.push(structuredClone(status)),
+        deviceDescriptor: () => ({ deviceName: "Test", platform: "Test" }),
+      },
       { progressThrottleMs: 0 },
     )
 
@@ -1518,14 +1522,14 @@ describe("SyncController", () => {
       new TextEncoder().encode("remote content").buffer,
     )
     const barrier = remote.blockNextChangesAfterRead()
-    const controller = new SyncController(
-      vault,
-      journal,
-      remote,
-      new FakeCrypto(),
-      () => ALL_CATEGORIES,
-      () => {},
-    )
+    const controller = new SyncController({
+      vault: vault,
+      journal: journal,
+      remote: remote,
+      crypto: new FakeCrypto(),
+      categories: () => ALL_CATEGORIES,
+      onStatus: () => {},
+    })
 
     const starting = controller.start(TEST_DEVICE)
     await barrier.started
@@ -1546,14 +1550,14 @@ describe("SyncController", () => {
     const journal = new MemoryJournal()
     const remote = new FakeRemote()
     const barrier = remote.blockNextBlobUploadAfterWrite()
-    const controller = new SyncController(
-      vault,
-      journal,
-      remote,
-      new FakeCrypto(),
-      () => ALL_CATEGORIES,
-      () => {},
-    )
+    const controller = new SyncController({
+      vault: vault,
+      journal: journal,
+      remote: remote,
+      crypto: new FakeCrypto(),
+      categories: () => ALL_CATEGORIES,
+      onStatus: () => {},
+    })
 
     const starting = controller.start(TEST_DEVICE)
     await barrier.started
@@ -1569,14 +1573,14 @@ describe("SyncController", () => {
     const vault = new FakeVault()
     const journal = new MemoryJournal()
     const remote = new FakeRemote()
-    const controller = new SyncController(
-      vault,
-      journal,
-      remote,
-      new FakeCrypto(),
-      () => ALL_CATEGORIES,
-      () => {},
-    )
+    const controller = new SyncController({
+      vault: vault,
+      journal: journal,
+      remote: remote,
+      crypto: new FakeCrypto(),
+      categories: () => ALL_CATEGORIES,
+      onStatus: () => {},
+    })
     await controller.start(TEST_DEVICE)
 
     remote.addRemoteRevision(
@@ -1612,14 +1616,14 @@ describe("SyncController", () => {
     const vault = new FakeVault()
     const journal = new MemoryJournal()
     const remote = new FakeRemote()
-    const controller = new SyncController(
-      vault,
-      journal,
-      remote,
-      new FakeCrypto(),
-      () => ALL_CATEGORIES,
-      () => {},
-    )
+    const controller = new SyncController({
+      vault: vault,
+      journal: journal,
+      remote: remote,
+      crypto: new FakeCrypto(),
+      categories: () => ALL_CATEGORIES,
+      onStatus: () => {},
+    })
     await controller.start(TEST_DEVICE)
 
     const barrier = remote.blockNextChangesAfterRead()
@@ -1669,14 +1673,14 @@ describe("SyncController", () => {
       new TextEncoder().encode("untrusted rollback").buffer,
     )
     const statuses: Array<{ phase: string; error: string | null }> = []
-    const controller = new SyncController(
-      vault,
-      journal,
-      remote,
-      new FakeCrypto(),
-      () => ALL_CATEGORIES,
-      (status) => statuses.push(status),
-    )
+    const controller = new SyncController({
+      vault: vault,
+      journal: journal,
+      remote: remote,
+      crypto: new FakeCrypto(),
+      categories: () => ALL_CATEGORIES,
+      onStatus: (status) => statuses.push(status),
+    })
 
     await controller.start({
       ...TEST_DEVICE,
@@ -1744,14 +1748,14 @@ describe("SyncController", () => {
       },
       new TextEncoder().encode("renamed content").buffer,
     )
-    const controller = new SyncController(
-      vault,
-      journal,
-      remote,
-      new FakeCrypto(),
-      () => ALL_CATEGORIES,
-      () => {},
-    )
+    const controller = new SyncController({
+      vault: vault,
+      journal: journal,
+      remote: remote,
+      crypto: new FakeCrypto(),
+      categories: () => ALL_CATEGORIES,
+      onStatus: () => {},
+    })
 
     await controller.start(TEST_DEVICE)
 
@@ -1780,14 +1784,14 @@ describe("SyncController", () => {
       },
       new TextEncoder().encode("remote content").buffer,
     )
-    const controller = new SyncController(
-      vault,
-      journal,
-      remote,
-      new FakeCrypto(),
-      () => ALL_CATEGORIES,
-      () => {},
-    )
+    const controller = new SyncController({
+      vault: vault,
+      journal: journal,
+      remote: remote,
+      crypto: new FakeCrypto(),
+      categories: () => ALL_CATEGORIES,
+      onStatus: () => {},
+    })
 
     await controller.start(TEST_DEVICE)
 
@@ -1816,14 +1820,14 @@ describe("SyncController", () => {
       },
       new TextEncoder().encode("remote content").buffer,
     )
-    const controller = new SyncController(
-      vault,
-      journal,
-      remote,
-      new FakeCrypto(),
-      () => ALL_CATEGORIES,
-      () => {},
-    )
+    const controller = new SyncController({
+      vault: vault,
+      journal: journal,
+      remote: remote,
+      crypto: new FakeCrypto(),
+      categories: () => ALL_CATEGORIES,
+      onStatus: () => {},
+    })
 
     await controller.start(TEST_DEVICE)
 
@@ -1868,14 +1872,14 @@ describe("SyncController", () => {
       },
       new TextEncoder().encode("second content").buffer,
     )
-    const controller = new SyncController(
-      vault,
-      journal,
-      remote,
-      new FakeCrypto(),
-      () => ALL_CATEGORIES,
-      () => {},
-    )
+    const controller = new SyncController({
+      vault: vault,
+      journal: journal,
+      remote: remote,
+      crypto: new FakeCrypto(),
+      categories: () => ALL_CATEGORIES,
+      onStatus: () => {},
+    })
 
     await controller.start(TEST_DEVICE)
 
@@ -1923,14 +1927,14 @@ describe("SyncController", () => {
       },
       new TextEncoder().encode("child content").buffer,
     )
-    const controller = new SyncController(
-      vault,
-      journal,
-      remote,
-      new FakeCrypto(),
-      () => ALL_CATEGORIES,
-      () => {},
-    )
+    const controller = new SyncController({
+      vault: vault,
+      journal: journal,
+      remote: remote,
+      crypto: new FakeCrypto(),
+      categories: () => ALL_CATEGORIES,
+      onStatus: () => {},
+    })
 
     await controller.start(TEST_DEVICE)
 
@@ -2001,14 +2005,14 @@ describe("SyncController", () => {
       },
       remoteBytes,
     )
-    const controller = new SyncController(
-      vault,
-      journal,
-      remote,
-      new FakeCrypto(),
-      () => ALL_CATEGORIES,
-      () => {},
-    )
+    const controller = new SyncController({
+      vault: vault,
+      journal: journal,
+      remote: remote,
+      crypto: new FakeCrypto(),
+      categories: () => ALL_CATEGORIES,
+      onStatus: () => {},
+    })
 
     await controller.start(TEST_DEVICE)
 
@@ -2066,14 +2070,14 @@ describe("SyncController", () => {
       },
       new TextEncoder().encode("incoming content").buffer,
     )
-    const controller = new SyncController(
-      vault,
-      journal,
-      remote,
-      new FakeCrypto(),
-      () => ALL_CATEGORIES,
-      () => {},
-    )
+    const controller = new SyncController({
+      vault: vault,
+      journal: journal,
+      remote: remote,
+      crypto: new FakeCrypto(),
+      categories: () => ALL_CATEGORIES,
+      onStatus: () => {},
+    })
 
     await controller.start(TEST_DEVICE)
 
@@ -2141,14 +2145,14 @@ describe("SyncController", () => {
       isConflict: false,
       operation: null,
     })
-    const controller = new SyncController(
-      vault,
-      journal,
-      remote,
-      new FakeCrypto(),
-      () => ALL_CATEGORIES,
-      () => {},
-    )
+    const controller = new SyncController({
+      vault: vault,
+      journal: journal,
+      remote: remote,
+      crypto: new FakeCrypto(),
+      categories: () => ALL_CATEGORIES,
+      onStatus: () => {},
+    })
     await controller.start(TEST_DEVICE)
 
     await controller.restoreRevision("revision-old")
@@ -2218,14 +2222,14 @@ describe("SyncController", () => {
         },
       },
     })
-    const controller = new SyncController(
-      vault,
-      journal,
-      remote,
-      new FakeCrypto(),
-      () => ALL_CATEGORIES,
-      () => {},
-    )
+    const controller = new SyncController({
+      vault: vault,
+      journal: journal,
+      remote: remote,
+      crypto: new FakeCrypto(),
+      categories: () => ALL_CATEGORIES,
+      onStatus: () => {},
+    })
     await controller.start(TEST_DEVICE)
 
     await expect(controller.restoreRevision("source-revision")).rejects.toThrow(
@@ -2280,14 +2284,14 @@ describe("SyncController", () => {
       },
       matchingBytes,
     )
-    const controller = new SyncController(
-      vault,
-      journal,
-      remote,
-      new FakeCrypto(),
-      () => ALL_CATEGORIES,
-      () => {},
-    )
+    const controller = new SyncController({
+      vault: vault,
+      journal: journal,
+      remote: remote,
+      crypto: new FakeCrypto(),
+      categories: () => ALL_CATEGORIES,
+      onStatus: () => {},
+    })
 
     await controller.start(TEST_DEVICE)
 
@@ -2344,14 +2348,14 @@ describe("SyncController", () => {
       },
       remoteBytes,
     )
-    const controller = new SyncController(
-      vault,
-      journal,
-      remote,
-      new FakeCrypto(),
-      () => ALL_CATEGORIES,
-      () => {},
-    )
+    const controller = new SyncController({
+      vault: vault,
+      journal: journal,
+      remote: remote,
+      crypto: new FakeCrypto(),
+      categories: () => ALL_CATEGORIES,
+      onStatus: () => {},
+    })
 
     await controller.start(TEST_DEVICE)
 
@@ -2367,7 +2371,7 @@ describe("SyncController", () => {
     controller.stop()
   })
 
-  it("records excluded remote revisions without changing local files", async () => {
+  it("applies remote revisions for every syncable path", async () => {
     const vault = new FakeVault()
     const journal = new MemoryJournal()
     const remote = new FakeRemote()
@@ -2386,31 +2390,26 @@ describe("SyncController", () => {
       },
       new TextEncoder().encode("remote private content").buffer,
     )
-    const controller = new SyncController(
-      vault,
-      journal,
-      remote,
-      new FakeCrypto(),
-      () => ALL_CATEGORIES,
-      () => {},
-      undefined,
-      {
-        selection: () => ({
-          excludedFolders: ["Archive/private"],
-          excludedExtensions: [],
-        }),
-      },
-    )
+    const controller = new SyncController({
+      vault: vault,
+      journal: journal,
+      remote: remote,
+      crypto: new FakeCrypto(),
+      categories: () => ALL_CATEGORIES,
+      onStatus: () => {},
+    })
 
     await controller.start(TEST_DEVICE)
 
-    expect(vault.text("Archive/private/note.md")).toBeNull()
+    expect(vault.text("Archive/private/note.md")).toBe("remote private content")
     await expect(journal.getRevision("excluded-revision")).resolves.toMatchObject({
       path: "Archive/private/note.md",
       cursor: 1,
     })
     await expect(journal.getCursor()).resolves.toBe(1)
-    expect(await journal.getSnapshots()).toEqual(new Map())
+    expect((await journal.getSnapshots()).get("Archive/private/note.md")?.fileId).toBe(
+      "excluded-file",
+    )
     controller.stop()
   })
 
@@ -2461,13 +2460,11 @@ describe("SyncController", () => {
       fileId: identity,
       path: "note.md",
       previousPath: null,
-      fingerprint: await fingerprint(localBytes),
       baseRevisionId: "base-revision",
       parentRevisionIds: ["base-revision"],
       restoreSourceRevisionId: null,
       revisionId: "local-revision",
       createdAt: 2,
-      attempts: 0,
       state: "uploading",
       error: null,
       preparedRevision: {
@@ -2492,14 +2489,14 @@ describe("SyncController", () => {
       },
       null,
     )
-    const controller = new SyncController(
-      vault,
-      journal,
-      remote,
-      new FakeCrypto(),
-      () => ALL_CATEGORIES,
-      () => {},
-    )
+    const controller = new SyncController({
+      vault: vault,
+      journal: journal,
+      remote: remote,
+      crypto: new FakeCrypto(),
+      categories: () => ALL_CATEGORIES,
+      onStatus: () => {},
+    })
 
     await controller.start(TEST_DEVICE)
 
@@ -2517,14 +2514,14 @@ describe("SyncController", () => {
     const vault = new FakeVault()
     const journal = new MemoryJournal()
     const remote = new FakeRemote()
-    const controller = new SyncController(
-      vault,
-      journal,
-      remote,
-      new FakeCrypto(),
-      () => ALL_CATEGORIES,
-      () => {},
-    )
+    const controller = new SyncController({
+      vault: vault,
+      journal: journal,
+      remote: remote,
+      crypto: new FakeCrypto(),
+      categories: () => ALL_CATEGORIES,
+      onStatus: () => {},
+    })
     await controller.start(TEST_DEVICE)
 
     await controller.revokeDevice({

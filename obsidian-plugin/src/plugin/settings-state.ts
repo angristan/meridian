@@ -1,19 +1,17 @@
 import {
   DEFAULT_SETTINGS,
+  type LegacySelectiveSyncRules,
   type MeridianSettings,
   type PendingDeviceRemoval,
   type PendingEpochTransition,
   type PendingPairingCompletion,
 } from "../model"
-import { normalizeExcludedExtension, normalizeExcludedFolder } from "../vault/path-policy"
 
 export function normalizeSettings(loaded: unknown): MeridianSettings {
   const value = isRecord(loaded) ? loaded : {}
   const loadedCategories = isRecord(value.configCategories) ? value.configCategories : {}
-  const loadedSelection = isRecord(value.selectiveSync) ? value.selectiveSync : {}
   return {
     ...structuredClone(DEFAULT_SETTINGS),
-    ...value,
     enabled: typeof value.enabled === "boolean" ? value.enabled : true,
     endpoint: typeof value.endpoint === "string" ? value.endpoint : "",
     vaultId: typeof value.vaultId === "string" ? value.vaultId : "",
@@ -25,13 +23,7 @@ export function normalizeSettings(loaded: unknown): MeridianSettings {
     pollIntervalSeconds: boundedNumber(value.pollIntervalSeconds, 15, 300, 45),
     scanIntervalMinutes: boundedNumber(value.scanIntervalMinutes, 1, 30, 5),
     maxFileSizeMiB: boundedNumber(value.maxFileSizeMiB, 16, 128, 64),
-    selectiveSync: {
-      excludedFolders: normalizedList(loadedSelection.excludedFolders, normalizeExcludedFolder),
-      excludedExtensions: normalizedList(
-        loadedSelection.excludedExtensions,
-        normalizeExcludedExtension,
-      ),
-    },
+    legacySelectiveSync: legacySelectiveSync(value.legacySelectiveSync ?? value.selectiveSync),
     configCategories: {
       ...DEFAULT_SETTINGS.configCategories,
       main: booleanValue(loadedCategories.main, true),
@@ -54,7 +46,20 @@ export function withoutMeridianIdentity(settings: MeridianSettings): MeridianSet
     pendingDeviceRemoval: null,
     pendingPairingCompletion: null,
     pendingEpochTransition: null,
+    legacySelectiveSync: null,
   }
+}
+
+export function settingsForStorage(settings: MeridianSettings): Record<string, unknown> {
+  const { legacySelectiveSync, ...stored } = settings
+  return legacySelectiveSync ? { ...stored, selectiveSync: legacySelectiveSync } : stored
+}
+
+export function assertSelectiveSyncRemoved(settings: MeridianSettings): void {
+  if (!settings.legacySelectiveSync) return
+  throw new Error(
+    "Selective-sync rules must be cleared and fully synced with Meridian 1.11.13 before upgrading",
+  )
 }
 
 function pendingEpochTransition(value: unknown): PendingEpochTransition | null {
@@ -119,13 +124,27 @@ function pendingDeviceRemoval(value: unknown): PendingDeviceRemoval | null {
   }
 }
 
-function normalizedList(value: unknown, normalize: (item: string) => string | null): string[] {
+function legacySelectiveSync(value: unknown): LegacySelectiveSyncRules | null {
+  if (!isRecord(value)) return null
+  const excludedFolders = boundedStrings(value.excludedFolders)
+  const excludedExtensions = boundedStrings(value.excludedExtensions)
+  return excludedFolders.length > 0 || excludedExtensions.length > 0
+    ? { excludedFolders, excludedExtensions }
+    : null
+}
+
+function boundedStrings(value: unknown): string[] {
   if (!Array.isArray(value)) return []
-  const normalized = value
-    .filter((item): item is string => typeof item === "string")
-    .map(normalize)
-    .filter((item): item is string => item !== null)
-  return [...new Set(normalized)].sort().slice(0, 200)
+  return [
+    ...new Set(
+      value
+        .filter((item): item is string => typeof item === "string")
+        .map((item) => item.trim())
+        .filter((item) => item.length > 0),
+    ),
+  ]
+    .sort()
+    .slice(0, 200)
 }
 
 function boundedNumber(value: unknown, minimum: number, maximum: number, fallback: number): number {

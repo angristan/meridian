@@ -3,14 +3,15 @@ import type {
   CryptoPort,
   DeviceKeyMaterial,
   LocalRevision,
+  PairingApproval,
   PairingApprovalMaterial,
   PairingCapability,
   PairingDeviceDescriptor,
+  PairingRelease,
   PairingStatus,
   RemoteDevice,
   RemotePort,
   ScanSyncProgress,
-  SelectiveSyncSettings,
   SyncReason,
   SyncStatus,
   TrustedCheckpoint,
@@ -41,10 +42,19 @@ import { PushEngine } from "./push-engine"
 import { Reconciler } from "./reconciler"
 import { RevisionLoader } from "./revision-loader"
 
+export interface SyncControllerDependencies {
+  vault: VaultPort
+  journal: JournalPort
+  remote: RemotePort
+  crypto: CryptoPort
+  categories: () => Record<ConfigCategory, boolean>
+  onStatus: (status: SyncStatus) => void
+  deviceDescriptor?: () => PairingDeviceDescriptor
+}
+
 export interface SyncControllerOptions {
   progressThrottleMs?: number
   now?: () => number
-  selection?: () => SelectiveSyncSettings
   compute?: SyncComputePort
   persistDevice?: (device: DeviceKeyMaterial) => Promise<void>
   epochTransition?: EpochTransitionStore
@@ -72,39 +82,34 @@ export class SyncController {
   private readonly progressThrottleMs: number
   private readonly now: () => number
   private readonly compute: SyncComputePort
-  private readonly selection: () => SelectiveSyncSettings
   private readonly epochTransitions: EpochTransitionCoordinator
   private readonly persistDevice: (device: DeviceKeyMaterial) => Promise<void>
+  private readonly vault: VaultPort
+  private readonly journal: JournalPort
+  private readonly remote: RemotePort
+  private readonly crypto: CryptoPort
+  private readonly categories: () => Record<ConfigCategory, boolean>
+  private readonly onStatus: (status: SyncStatus) => void
+  private readonly deviceDescriptor: () => PairingDeviceDescriptor
   private status: SyncStatus = { ...INITIAL_STATUS }
 
-  constructor(
-    private readonly vault: VaultPort,
-    private readonly journal: JournalPort,
-    private readonly remote: RemotePort,
-    private readonly crypto: CryptoPort,
-    private readonly categories: () => Record<ConfigCategory, boolean>,
-    private readonly onStatus: (status: SyncStatus) => void,
-    private readonly deviceDescriptor: () => PairingDeviceDescriptor = () => ({
-      deviceName: "Meridian device",
-      platform: "Unknown",
-    }),
-    options: SyncControllerOptions = {},
-  ) {
+  constructor(dependencies: SyncControllerDependencies, options: SyncControllerOptions = {}) {
+    const { vault, journal, remote, crypto, categories, onStatus } = dependencies
+    this.vault = vault
+    this.journal = journal
+    this.remote = remote
+    this.crypto = crypto
+    this.categories = categories
+    this.onStatus = onStatus
+    this.deviceDescriptor =
+      dependencies.deviceDescriptor ??
+      (() => ({ deviceName: "Meridian device", platform: "Unknown" }))
     this.progressThrottleMs = options.progressThrottleMs ?? 200
     this.now = options.now ?? Date.now
-    this.selection = options.selection ?? (() => ({ excludedFolders: [], excludedExtensions: [] }))
     this.compute = options.compute ?? new BackgroundSyncCompute()
     this.persistDevice = options.persistDevice ?? (async () => {})
     const revisionLoader = new RevisionLoader(remote, crypto, () => vault.maxFileBytes())
-    const applier = new OperationApplier(
-      vault,
-      journal,
-      remote,
-      crypto,
-      revisionLoader,
-      categories,
-      this.selection,
-    )
+    const applier = new OperationApplier(vault, journal, remote, crypto, revisionLoader, categories)
     this.reconciler = new Reconciler(vault, journal, this.compute)
     this.historyService = new HistoryService(vault, journal, revisionLoader)
     this.historyBackfill = new HistoryBackfillService(journal, remote, crypto)
@@ -405,7 +410,7 @@ export class SyncController {
     return prepared
   }
 
-  async submitPairingApproval(pairingId: string, payload: unknown): Promise<void> {
+  async submitPairingApproval(pairingId: string, payload: PairingApproval): Promise<void> {
     await this.remote.approvePairing(pairingId, payload)
   }
 
@@ -413,7 +418,7 @@ export class SyncController {
     await this.remote.confirmPairingOwner(pairingId)
   }
 
-  async releasePairing(pairingId: string, payload: unknown): Promise<void> {
+  async releasePairing(pairingId: string, payload: PairingRelease): Promise<void> {
     await this.remote.releasePairing(pairingId, payload)
   }
 
@@ -475,7 +480,6 @@ export class SyncController {
   }
 
   private async runOnce(reason: SyncReason): Promise<void> {
-    const device = this.requireDevice()
     const previousFailure =
       this.status.phase === "error"
         ? { message: this.status.message, error: this.status.error }
@@ -499,8 +503,8 @@ export class SyncController {
         }),
     }
     const result = requiresFullScan(reason)
-      ? await this.reconciler.reconcile(this.categories(), this.selection(), reconcileOptions)
-      : await this.reconciler.reconcileDirty(this.categories(), this.selection(), reconcileOptions)
+      ? await this.reconciler.reconcile(this.categories(), reconcileOptions)
+      : await this.reconciler.reconcileDirty(this.categories(), reconcileOptions)
     if (this.stopRequested) return
     const pending = await this.journal.listPending()
     this.updateStatus({
@@ -528,31 +532,7 @@ export class SyncController {
       return
     }
 
-    if (!networkAvailable()) throw new Error("No network connection")
-    await this.authenticate(device)
-    if (this.stopRequested) return
-
-    this.updateStatus({ phase: "pulling", message: "Downloading changes", progress: null })
-    const pull = await this.pullEngine.pull(
-      device,
-      (progress) =>
-        this.updateProgress({
-          phase: this.stopRequested ? "pausing" : "pulling",
-          message: this.stopRequested
-            ? "Pausing after the current safe boundary"
-            : "Downloading changes",
-          cursor: progress.currentCursor,
-          progress,
-        }),
-      () => this.stopRequested,
-    )
-    this.device = pull.device
-    if (pull.stopped || this.stopRequested) return
-    await this.conflictService.resolveEquivalent()
-    if (await this.epochTransitions.resumePrepared(this.requireDevice())) {
-      this.rerunReason = mergeSyncReasons(this.rerunReason, "notification")
-      return
-    }
+    if (!(await this.pullChanges(this.requireDevice()))) return
 
     this.updateStatus({ phase: "pushing", message: "Uploading local changes", progress: null })
     const push = await this.pushEngine.push(
@@ -591,6 +571,35 @@ export class SyncController {
       error: null,
       progress: null,
     })
+  }
+
+  private async pullChanges(device: DeviceKeyMaterial): Promise<boolean> {
+    if (!networkAvailable()) throw new Error("No network connection")
+    await this.authenticate(device)
+    if (this.stopRequested) return false
+
+    this.updateStatus({ phase: "pulling", message: "Downloading changes", progress: null })
+    const pull = await this.pullEngine.pull(
+      device,
+      (progress) =>
+        this.updateProgress({
+          phase: this.stopRequested ? "pausing" : "pulling",
+          message: this.stopRequested
+            ? "Pausing after the current safe boundary"
+            : "Downloading changes",
+          cursor: progress.currentCursor,
+          progress,
+        }),
+      () => this.stopRequested,
+    )
+    this.device = pull.device
+    if (pull.stopped || this.stopRequested) return false
+    await this.conflictService.resolveEquivalent()
+    if (await this.epochTransitions.resumePrepared(this.requireDevice())) {
+      this.rerunReason = mergeSyncReasons(this.rerunReason, "notification")
+      return false
+    }
+    return true
   }
 
   private async acknowledgeRetention(): Promise<void> {

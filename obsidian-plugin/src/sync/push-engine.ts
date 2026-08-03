@@ -13,7 +13,7 @@ import { snapshotFor } from "./snapshots"
 
 const CHUNK_SIZE = 4 * 1024 * 1024
 
-export interface PushResult {
+interface PushResult {
   stopped: boolean
   committed: boolean
   error: Error | null

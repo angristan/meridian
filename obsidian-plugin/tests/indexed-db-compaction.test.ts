@@ -19,13 +19,11 @@ function entry(id: string, state: JournalEntry["state"]): JournalEntry {
     fileId: "file-1",
     path: "note.md",
     previousPath: null,
-    fingerprint: "fingerprint",
     baseRevisionId: null,
     parentRevisionIds: [],
     restoreSourceRevisionId: null,
     revisionId: `revision-${id}`,
     createdAt: 1,
-    attempts: 0,
     state,
     error: state === "failed" ? "retry" : null,
     preparedRevision:
@@ -169,7 +167,12 @@ describe("IndexedDB lossless compaction", () => {
       mtime: 1,
       kind: "vault",
     }
-    await journal.putSnapshot(first)
+    await journal.commitReconciliation({
+      entries: [],
+      putSnapshots: [first],
+      removeSnapshotPaths: [],
+      consumeDirtyPaths: [],
+    })
     first.fingerprint = "mutated-after-write"
 
     const view = await journal.getSnapshots()
